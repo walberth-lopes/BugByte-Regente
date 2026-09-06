@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""O motor de ponta a ponta, contra os criterios de success do produto.
+"""The engine end to end, against the product's success criteria.
 
-Cada teste aqui corresponde a uma promessa: descobrir trabalho, make o grafo,
-achar paralelismo, isolar workers, persistir estado, detectar falha, pedir
-intervencao e **retomar execucao interrompida**.
+Every test here corresponds to a promise: discover work, build the graph, find
+parallelism, isolate workers, persist state, detect failure, ask for
+intervention and **resume interrupted execution**.
+
 """
 
 from __future__ import annotations
@@ -38,7 +39,7 @@ def write_task(folder: Path, key: str, **fields) -> None:
 
 @pytest.fixture
 def bench(tmp_path):
-    """Monta um motor completo em disco temporario."""
+    """Assembles a complete engine on temporary disk."""
     tasks_dir = tmp_path / "tasks"
     tasks_dir.mkdir()
 
@@ -65,10 +66,10 @@ def bench(tmp_path):
     return make
 
 
-# ---- descoberta e baseline ----------------------------------------------
+# ---- discovery and baseline ---------------------------------------------
 
 def test_first_pass_records_is_not_dispatches(bench):
-    """Ligar o motor num backlog cheio nao pode virar tempestade de workers."""
+    """Switching the engine on against a full backlog must not become a worker storm."""
     for k in ("A-1", "A-2", "A-3"):
         write_task(bench.tasks, k)
     orq, store = bench()
@@ -110,7 +111,7 @@ def test_task_not_duplicate_between_ticks(bench):
 
 
 def test_failure_of_adapter_not_becomes_absence_of_work(bench):
-    """O error precisa aparecer. Board vazio e board quebrado sao coisas diferentes."""
+    """The error has to show. An empty board and a broken board are different things."""
     write_task(bench.tasks, "A-1")
     orq, store = bench()
     orq.tick()
@@ -120,7 +121,7 @@ def test_failure_of_adapter_not_becomes_absence_of_work(bench):
     assert "adapter" in rel.errors[0]
 
 
-# ---- grafo e paralelismo -------------------------------------------------
+# ---- graph and parallelism -----------------------------------------------
 
 def test_dependency_declared_becomes_graph(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
@@ -130,7 +131,7 @@ def test_dependency_declared_becomes_graph(bench):
     orq, store = bench()
     orq.tick()
 
-    plan = orq.plan()  # ainda em DISCOVERED: nada pronto
+    plan = orq.plan()  # still in DISCOVERED: nothing ready
     assert not plan.dispatch
 
     orq._analyze(type("R", (), {"analyzed": 0})())
@@ -140,7 +141,7 @@ def test_dependency_declared_becomes_graph(bench):
 
 
 def test_resource_shared_serializes(bench):
-    """Duas tasks na mesma migration nao podem sair no mesmo tick."""
+    """Two tasks on the same migration must not go out in the same tick."""
     write_task(bench.tasks, "A-1", resources=["migration:api"], priority=1)
     write_task(bench.tasks, "A-2", resources=["migration:api"], priority=2)
     orq, store = bench(limits=Limits(max_workers=4))
@@ -192,7 +193,7 @@ def test_each_worker_tem_area_own(bench):
         assert (Path(a) / "run.json").is_file()
 
 
-# ---- persistencia e retomada --------------------------------------------
+# ---- persistence and resumption -----------------------------------------
 
 def test_state_survives_to_process(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
@@ -201,19 +202,19 @@ def test_state_survives_to_process(bench):
     orq.tick()
     store.close()
 
-    orq2, store2 = bench()          # processo novo, mesmo banco
+    orq2, store2 = bench()          # new process, same database
     t = store2.tasks("wks_teste")[0]
     assert t.key == "A-1"
     assert t.state is TaskState.TESTING
 
 
 def test_worker_dead_returns_the_task_to_the_queue(bench):
-    """O criterio de morte e o lease vencido, nao a ausencia de processo."""
+    """The criterion for death is the expired lease, not the absence of a process."""
     write_task(bench.tasks, "A-1", resources=["repo:a"])
     orq, store = bench(script={"A-1": {"ok": True, "resumo": "feito"}})
     orq.tick()
 
-    # Simula um worker que travou: run vivo, lease ja vencido.
+    # Simulates a worker that hung: a live run, a lease already expired.
     orq._analyze(type("R", (), {"analyzed": 0})())
     task = store.tasks("wks_teste")[0]
     store.transition(task.id, TaskState.ASSIGNED, actor="teste")
@@ -228,8 +229,9 @@ def test_worker_dead_returns_the_task_to_the_queue(bench):
     rel = orq.tick()
     assert rel.recovered == ("A-1",)
     assert store.run(run.id).state is RunState.INTERRUPTED
-    # Recuperar e devolver a fila, e a fila anda no mesmo tick: o trabalho volta
-    # a andar sozinho, sem esperar o proximo ciclo nem intervencao.
+    # Recovering means returning to the queue, and the queue moves in the same
+    # tick: the work starts moving on its own, without waiting for the next cycle
+    # or for intervention.
     assert rel.dispatched == ("A-1",)
     assert store.task(task.id).state is TaskState.TESTING
     assert store.acquire_lease("repo:a", "outro", "wks_teste", 60) is not None, \
@@ -252,7 +254,7 @@ def test_lease_expired_can_ser_taken(bench):
     assert store.acquire_lease("repo:a", "run_2", "wks_teste", 60) is not None
 
 
-# ---- falha, escada e escalonamento ---------------------------------------
+# ---- failure, ladder and escalation --------------------------------------
 
 def test_first_failure_retries_without_bothering_the_owner(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
@@ -375,10 +377,13 @@ def test_every_transition_leaves_trail(bench):
 
 
 def test_task_recovered_returns_the_ser_schedulable(bench):
-    """O buraco que quase passou: recuperar mudando o rotulo, sem devolver a fila.
+    """The hole that nearly got through: recovering by changing the label without
+    returning to the queue.
 
-    Uma task que volta do crash para um estado ATIVO nao e despachada por
-    ninguem -- fica viva no papel e parada de verdade, sem error que acuse.
+    A task that comes back from a crash into an ACTIVE state is dispatched by
+    nobody -- it stays alive on paper and stopped in practice, with no error to
+    flag it.
+
     """
     from regente.core.states import ACTIVE
     from regente.engine.supervisor import resume_state
@@ -388,7 +393,7 @@ def test_task_recovered_returns_the_ser_schedulable(bench):
 
 
 def test_area_of_work_is_of_task_is_survives_the_resume(bench):
-    """O WIP da tentativa anterior precisa estar la quando o worker volta."""
+    """The previous attempt's WIP has to be there when the worker comes back."""
     write_task(bench.tasks, "A-1", resources=["repo:a"])
     orq, store = bench(script={"A-1": {"ok": False, "resumo": "caiu"}})
     orq.tick()
@@ -405,16 +410,17 @@ def test_area_of_work_is_of_task_is_survives_the_resume(bench):
     assert (Path(runs[1].workspace_path) / "wip.txt").is_file(), "o WIP foi jogado fora"
 
 
-# ---- relevancia: o que a ORIGEM diz sobre o trabalho ---------------------
-# Os dois testes abaixo travam defeitos encontrados rodando contra um board
-# real. Nenhum dado inventado os teria revelado: eles so aparecem quando o
-# provedor descreve trabalho que ja tem gente nele.
+# ---- relevance: what the SOURCE says about the work ----------------------
+# The two tests below lock down defects found by running against a real board.
+# No invented data would have revealed them: they only appear when the provider
+# describes work that already has people on it.
 
 def test_not_dispatches_work_that_already_tem_someone(bench):
-    """Um agente por cima de uma pessoa e o pior desfecho possivel.
+    """An agent on top of a person is the worst possible outcome.
 
-    Medido contra o board real: duas issues em CODING foram despachadas no
-    primeiro tick antes desta guarda existir.
+    Measured against the real board: two issues in CODING were dispatched on the
+    first tick before this guard existed.
+
     """
     write_task(bench.tasks, "A-1", status="TO DO", resources=["repo:a"])
     write_task(bench.tasks, "A-2", status="CODING", resources=["repo:b"])
@@ -431,7 +437,7 @@ def test_not_dispatches_work_that_already_tem_someone(bench):
 
 
 def test_status_unknown_not_is_dispatched(bench):
-    """Nao saber se alguem esta na task custa um adiamento, nunca um atropelo."""
+    """Not knowing whether somebody is on the task costs a deferral, never a collision."""
     write_task(bench.tasks, "A-9", status="AGUARDANDO JURIDICO", resources=["repo:x"])
     orq, store = bench()
     orq.tick()
@@ -442,7 +448,7 @@ def test_status_unknown_not_is_dispatched(bench):
 
 
 def test_change_in_source_releases_the_work(bench):
-    """A pessoa devolveu a task ao board; o motor precisa notar sozinho."""
+    """The person returned the task to the board; the engine has to notice on its own."""
     write_task(bench.tasks, "A-1", status="REVIEWING", resources=["repo:a"])
     orq, store = bench()
     orq.tick(); orq.tick()
@@ -456,7 +462,7 @@ def test_change_in_source_releases_the_work(bench):
 
 
 def test_block_by_failure_not_is_undone_by_status_external(bench):
-    """So quem foi bloqueado PELA ORIGEM volta por mudanca da origem."""
+    """Only what was blocked BY THE SOURCE comes back through a change at the source."""
     write_task(bench.tasks, "A-1", status="TO DO", resources=["repo:a"])
     orq, store = bench()
     orq.tick(); orq.tick()
@@ -478,8 +484,10 @@ def test_work_finished_in_source_not_enters(bench):
 
 
 def test_hierarchy_not_becomes_dependency(bench):
-    """95 de 100 issues do board real tinham mae. Se hierarquia bloqueasse,
-    o motor nao despacharia nada."""
+    """95 of 100 issues on the real board had a parent. If hierarchy blocked, the
+    engine would dispatch nothing.
+
+    """
     write_task(bench.tasks, "MAE-1", status="TO DO", resources=["repo:m"])
     write_task(bench.tasks, "F-1", status="TO DO", resources=["repo:a"],
                  related=["MAE-1"])
@@ -493,7 +501,7 @@ def test_hierarchy_not_becomes_dependency(bench):
 
 
 def test_database_old_migrates_in_instead_of_refusing(tmp_path):
-    """Bump de esquema sem migracao transforma a promessa de estado em pegadinha."""
+    """A schema bump without a migration turns the state promise into a trap."""
     import sqlite3
     from regente.engine.store_sqlite import SqliteStore
 
@@ -513,14 +521,14 @@ def test_database_old_migrates_in_instead_of_refusing(tmp_path):
     s = SqliteStore(path)
     s.migrate()
     s.verify()
-    # E o comportamento NOVO vale depois da subida.
+    # And the NEW behaviour holds after the upgrade.
     assert s.acquire_lease("repo:x", "run_a", "wks_a", 60) is not None
     assert s.acquire_lease("repo:x", "run_b", "wks_b", 60) is not None
     s.close()
 
 
 def test_database_of_version_future_is_refused(tmp_path):
-    """Descer de versao em silencio corromperia o estado."""
+    """Silently downgrading a version would corrupt the state."""
     import sqlite3
     import pytest as _pytest
     from regente.core.errors import CorruptedState

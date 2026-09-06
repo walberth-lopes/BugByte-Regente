@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Resolucao de alvo e cadeia de execucao. Puro, sem I/O.
+"""Target resolution and the execution chain. Pure, no I/O.
 
-O que estes testes protegem, acima de tudo: **o motor nao adivinha onde uma task
-roda.** Ambiguidade e ausencia sao desfechos legitimos, e trocar qualquer um dos
-dois por um chute e o defeito mais caro que este elo poderia ter -- porque o
-resultado nao seria um error, seria codigo escrito no repositorio errado.
+What these tests protect above all: **the engine does not guess where a task
+runs.** Ambiguity and absence are legitimate outcomes, and swapping either of
+them for a guess is the most expensive defect this link could have -- because the
+result would not be an error, it would be code written into the wrong repository.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ REPOS = [repo("acme/api"), repo("acme/web"), repo("acme/worker")]
 
 
 # ---------------------------------------------------------------------------
-# Resolucao de alvo
+# Target resolution
 # ---------------------------------------------------------------------------
 
 def test_without_evidence_is_missing_is_not_a_guess():
@@ -74,9 +74,9 @@ def test_map_accepts_name_short_when_not_ha_ambiguity():
 
 
 def test_name_short_ambiguous_not_enters_in_index():
-    """Dois repositorios chamados `api` em orgs diferentes nao podem ser
-    resolvidos por nome curto -- isso seria reintroduzir o chute pela port
-    dos fundos."""
+    """Two repositories called `api` in different orgs cannot be resolved by
+    short name -- that would reintroduce the guess through the back
+    door."""
     repos = REPOS + [repo("outra/api")]
     a = TargetResolver(by_task={"K-1": "api"}).resolve(task("K-1"), repos)
     assert a.confidence is Confidence.ABSENT
@@ -92,14 +92,14 @@ def test_branch_existente_is_evidence_observed():
 
 
 def test_branch_casa_by_word_whole():
-    """`K-1` nao pode casar com `K-11`: seria trabalho no repositorio errado."""
+    """`K-1` must not match `K-11`: that would be work in the wrong repository."""
     a = TargetResolver().resolve(
         task("K-1"), REPOS, branches={"acme/api": [Branch(name="feat/K-11-outra")]})
     assert a.confidence is Confidence.ABSENT
 
 
 def test_declarado_beats_observed():
-    """Uma branch pode ser resto de tentativa abandonada; um mapa e afirmacao."""
+    """A branch can be the leftovers of an abandoned attempt; a map is a statement."""
     a = TargetResolver(by_task={"K-1": "acme/web"}).resolve(
         task("K-1"), REPOS, branches={"acme/api": [Branch(name="feat/K-1-x")]})
     assert a.confidence is Confidence.DECLARED
@@ -134,7 +134,7 @@ def test_every_evidence_is_auditable():
 
 
 def test_target_that_not_exists_in_provider_is_ignored():
-    """Mapa apontando para repositorio inexistente nao pode virar alvo fantasma."""
+    """A map pointing at a non-existent repository must not become a ghost target."""
     a = TargetResolver(by_task={"K-1": "acme/nao-existe"}).resolve(task("K-1"), REPOS)
     assert a.confidence is Confidence.ABSENT
 
@@ -189,7 +189,7 @@ def test_repositorio_archived_not_receives_work():
 
 
 def test_repositorio_without_branch_base_not_receives_work():
-    """Derivar da base errada produz um PR de conflito que ninguem pediu."""
+    """Deriving from the wrong base produces a conflict PR nobody asked for."""
     repos = [repo("acme/api", base="")]
     r = build([task("K-1")], repos=repos,
               resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))

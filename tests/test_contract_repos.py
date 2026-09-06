@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Contrato do RepositoryProvider. Vale para TODO adapter, presente e futuro.
+"""The RepositoryProvider contract. Holds for EVERY adapter, present and future.
 
-Roda contra dois provedores deliberadamente do tipo mais diferente possivel:
-processo local sobre repositorios git de verdade, e CLI contra a hospedagem
-remota. Se o contrato vale para os dois, ele nao esta escrito em volta de um.
+It runs against two providers deliberately of the most different kind possible: a
+local process over real git repositories, and a CLI against the remote hosting.
+If the contract holds for both, it is not written around either one.
 
-O provedor local roda sobre repositorios git REAIS criados na hora -- nao ha
-simulacao de git em lugar nenhum. O remoto exige rede e credencial, entao roda
-sob marcador: `pytest -m rede`. A suite padrao continua rapida e offline, e o
-contrato continua sendo o mesmo codigo nos dois casos.
+The local provider runs over REAL git repositories created on the spot -- there
+is no simulation of git anywhere. The remote one requires a network and a
+credential, so it runs under a marker: `pytest -m rede`. The default suite stays
+fast and offline, and the contract stays the same code in both cases.
+
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ def _git(cwd: Path, *args: str) -> None:
 
 def _cria_repo(root: Path, diretorio: str, remoto: str | None,
                base: str = "main", branches: tuple[str, ...] = ()) -> Path:
-    """Cria um repositorio git DE VERDADE. Nada aqui e simulado."""
+    """Creates a REAL git repository. Nothing here is simulated."""
     p = root / diretorio
     p.mkdir(parents=True)
     _git(p, "init", "-q", "-b", base)
@@ -46,8 +47,8 @@ def _cria_repo(root: Path, diretorio: str, remoto: str | None,
         _git(p, "branch", b)
     if remoto:
         _git(p, "remote", "add", "origin", remoto)
-        # `origin/HEAD` sem fetch: o adapter precisa achar a base mesmo assim,
-        # e este e o estado de um clone recem-configurado.
+        # `origin/HEAD` without a fetch: the adapter has to find the base anyway,
+        # and this is the state of a freshly configured clone.
         _git(p, "update-ref", f"refs/remotes/origin/{base}", "HEAD")
         _git(p, "symbolic-ref", "refs/remotes/origin/HEAD",
              f"refs/remotes/origin/{base}")
@@ -76,7 +77,7 @@ NETWORK = pytest.mark.skipif(
 
 
 # ---------------------------------------------------------------------------
-# Identidade -- o nucleo do contrato
+# Identity -- the core of the contract
 # ---------------------------------------------------------------------------
 
 def test_declares_the_that_is(provider):
@@ -92,8 +93,10 @@ def test_list_returns_repositorios(provider):
 
 
 def test_identity_vem_of_remote_not_of_directory(provider):
-    """O defeito que este teste impede foi medido no disco real: o diretorio
-    `scamchecker-legado` aponta para o repositorio `scamchecker`."""
+    """The defect this test prevents was measured on the real disk: the directory
+    `scamchecker-legado` points at the repository `scamchecker`.
+
+    """
     por_dir = {r.data["directory"]: r for r in provider.list_repositories()}
     assert por_dir["api"].ref.key == "acme/servico-api"
     assert por_dir["api"].data.get("diretorio_diverge_do_repo") is True
@@ -112,7 +115,7 @@ def test_identity_carries_the_provider(provider):
 
 
 def test_resource_is_scoped_pelo_workspace(provider):
-    """Repositorio homonimo em dois clientes precisa dar recursos DIFERENTES."""
+    """A repository of the same name in two clients must give DIFFERENT resources."""
     r = provider.list_repositories()[0]
     a = r.ref.resource("wks_a")
     b = r.ref.resource("wks_b")
@@ -121,7 +124,7 @@ def test_resource_is_scoped_pelo_workspace(provider):
 
 
 def test_without_remote_ainda_tem_identity(provider):
-    """Ausencia de remoto nao pode virar ausencia de repositorio."""
+    """The absence of a remote must not become the absence of a repository."""
     chaves = {r.ref.key for r in provider.list_repositories()}
     assert any(k.startswith("local/") for k in chaves)
 
@@ -139,7 +142,7 @@ def test_repositorio_missing_raises(provider):
 
 
 # ---------------------------------------------------------------------------
-# Branch base -- presumir 'main' custa o trabalho inteiro
+# Base branch -- assuming 'main' costs the whole job
 # ---------------------------------------------------------------------------
 
 def test_branch_base_is_read_never_assumed(provider):
@@ -149,7 +152,7 @@ def test_branch_base_is_read_never_assumed(provider):
 
 
 def test_branch_current_not_is_confused_with_the_base(provider, clones):
-    """Dos 12 clones reais examinados, 11 estavam numa branch de trabalho."""
+    """Of the 12 real clones examined, 11 were on a work branch."""
     _git(clones / "api", "checkout", "-q", "feat/K-1-coisa")
     r = provider.get_repository("acme/servico-api")
     assert r.data["branch_corrente"] == "feat/K-1-coisa"
@@ -169,7 +172,7 @@ def test_filter_of_branch(provider):
 
 
 # ---------------------------------------------------------------------------
-# Capacidades: poder e permissao sao coisas diferentes
+# Capabilities: power and permission are different things
 # ---------------------------------------------------------------------------
 
 def test_declares_capabilities(provider):
@@ -185,12 +188,12 @@ def test_not_declares_capacidade_of_write_neste_milestone(provider):
 
 
 def test_capacidade_missing_is_declared_is_not_simulated(provider):
-    """Git puro nao tem pull request -- e o adapter precisa DIZER isso."""
+    """Plain git has no pull requests -- and the adapter has to SAY so."""
     assert not provider.list_repositories()[0].can(RepoCapability.READ_PULL_REQUESTS)
 
 
 # ---------------------------------------------------------------------------
-# Shadow mode: por INVOCACAO, nunca por verbo
+# Shadow mode: per INVOCATION, never per verb
 # ---------------------------------------------------------------------------
 
 PORT_WRITE_OPS = [
@@ -205,7 +208,7 @@ PORT_WRITE_OPS = [
 
 @pytest.mark.parametrize("operation,args", PORT_WRITE_OPS)
 def test_write_not_esta_implemented(provider, operation, args):
-    """O contrato existe; a implementacao nao. As duas coisas sao visiveis."""
+    """The contract exists; the implementation does not. Both are visible."""
     with pytest.raises(NotImplementedError):
         getattr(provider, operation)(*args)
 
@@ -217,8 +220,10 @@ def test_write_not_esta_implemented(provider, operation, args):
     ["checkout", "x"], ["reset", "--hard"], ["clean", "-fd"],
 ])
 def test_git_refuses_invocation_that_writes(provider, clones, invocation):
-    """Cada um destes comeca com um verbo que tem forma de leitura -- e por isso
-    um allowlist por verbo os deixaria passar."""
+    """Each of these starts with a verb that has a read form -- which is why an
+    allowlist by verb would let them through.
+
+    """
     with pytest.raises(ReadOnlyRefused):
         provider._git(clones / "api", *invocation)
 
@@ -234,7 +239,7 @@ def test_git_refuses_invocation_that_writes(provider, clones, invocation):
     ["release", "create"], ["workflow", "run"], ["secret", "set"],
 ])
 def test_cli_refuses_invocation_that_writes(invocation):
-    """`repo delete` atravessou um allowlist por verbo em 06/09/2026. Nunca mais."""
+    """`repo delete` crossed a verb-level allowlist on 06/09/2026. Never again."""
     ok, reason = cli_e_leitura(invocation)
     assert not ok, f"'{' '.join(invocation)}' passou pelo portao"
     assert reason
@@ -260,7 +265,7 @@ def test_git_allows_read(invocation):
 
 
 # ---------------------------------------------------------------------------
-# Dados ausentes, malformados e indisponibilidade
+# Missing data, malformed data and unavailability
 # ---------------------------------------------------------------------------
 
 def test_root_missing_is_error_not_list_empty(tmp_path):
@@ -276,11 +281,12 @@ def test_directory_without_git_is_ignored_without_breaking(provider, clones):
 
 
 def test_timeout_becomes_error_of_adapter(provider, clones, monkeypatch):
-    """Testa a TRADUCAO do timeout, nao a corrida.
+    """Tests the TRANSLATION of the timeout, not the race.
 
-    Um teste que confia em `timeout=0` disparar de fato depende de o processo
-    ser mais lento que a granularidade do relogio -- e portanto falha de vez em
-    quando, na maquina errada, sem ninguem entender por que.
+    A test that relies on `timeout=0` actually firing depends on the process being
+    slower than the clock's granularity -- and therefore fails every so often, on
+    the wrong machine, with nobody understanding why.
+
     """
     def estoura(*a, **k):
         raise subprocess.TimeoutExpired(cmd="git", timeout=0.1)
@@ -306,12 +312,12 @@ def test_le_file_of_base_by_padrao(provider):
     ("/caminho/local/repo", "local/repo"),
 ])
 def test_identity_exits_of_qualquer_forma_of_url(url, esperado):
-    """`git@host:org/repo.git` nao e uma URL valida e escapa de todo parser."""
+    """`git@host:org/repo.git` is not a valid URL and escapes every parser."""
     assert _org_repo(url) == esperado
 
 
 # ---------------------------------------------------------------------------
-# O outro provedor -- mesmo contrato, rede de verdade
+# The other provider -- same contract, a real network
 # ---------------------------------------------------------------------------
 
 @NETWORK

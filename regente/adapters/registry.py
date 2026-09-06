@@ -43,7 +43,7 @@ def available(cap: Capability | None = None) -> dict[str, list[str]]:
     return output
 
 
-# ---- fabricas embutidas -------------------------------------------------
+# ---- built-in factories -------------------------------------------------
 
 def _tasks_filesystem(o: dict[str, Any]) -> Port:
     from .tasks.filesystem import FilesystemTasks
@@ -61,12 +61,13 @@ def _workspace_worktree(o: dict[str, Any]) -> Port:
 
 
 def _tasks_jira(o: dict[str, Any]) -> Port:
-    """Jira Cloud, somente leitura.
+    """Jira Cloud, read only.
 
-    Dois transportes pelo mesmo adapter: `http` fala com o site de verdade,
-    `instantaneo` reproduz respostas reais gravadas. O adapter e identico nos
-    dois casos -- e por isso o teste de contrato exercita o mesmo codigo que
-    roda contra a rede.
+    Two transports through the same adapter: `http` talks to the real site,
+    `instantaneo` replays real recorded responses. The adapter is identical in
+    both cases -- which is why the contract test exercises the same code that
+    runs against the network. The transport names are configuration values and
+    stay as they are.
     """
     from .tasks.jira import JiraTasks
     from .tasks.transport import HttpTransport, SnapshotTransport
@@ -79,7 +80,7 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
             directory=Path(o["snapshots"]), observer=observer)
     elif modo == "http":
         site = o["site"].rstrip("/")
-        secrets = o["segredos"]           # SecretProvider, injetado pela composicao
+        secrets = o["segredos"]           # SecretProvider, injected by the composition
         ref_usuario = o.get("user_ref") or "env:JIRA_EMAIL"
         ref_token = o.get("token_ref") or "env:JIRA_API_TOKEN"
         transport = HttpTransport(

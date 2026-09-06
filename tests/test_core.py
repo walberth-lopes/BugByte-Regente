@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Maquina de estados, policy, risco, grafo e scheduler -- tudo sem I/O."""
+"""State machine, policy, risk, graph and scheduler -- all without I/O."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from regente.core.scheduling import Candidate, Limits, plan
 from regente.core.states import S, require, can, resumable_from
 
 
-# ---- maquina de estados -------------------------------------------------
+# ---- state machine ------------------------------------------------------
 
 def test_path_happy_full():
     path = [S.DISCOVERED, S.ANALYZING, S.READY, S.ASSIGNED, S.IMPLEMENTING,
@@ -41,7 +41,7 @@ def test_qa_rejected_returns_to_code():
 
 
 def test_escalating_is_always_possible():
-    """O motor nunca fica sem a opcao de parar e perguntar."""
+    """The engine is never left without the option of stopping to ask."""
     for state in S:
         if state in (S.DONE, S.CANCELLED, S.WAITING_HUMAN):
             continue
@@ -54,7 +54,7 @@ def test_waiting_human_returns_to_where_paused():
 
 
 def test_human_not_teleport_task():
-    """Aprovar um deploy nao e o mesmo que declarar a task pronta."""
+    """Approving a deploy is not the same as declaring the task finished."""
     assert not can(S.WAITING_HUMAN, S.DONE, pausado_em=S.IMPLEMENTING)
     assert S.DONE not in resumable_from(S.IMPLEMENTING)
 
@@ -98,7 +98,7 @@ def test_production_asks_human():
 
 
 def test_deny_beats_allow():
-    """Uma regra permissiva nao anula uma proibicao."""
+    """A permissive rule does not cancel out a prohibition."""
     regras = RULES + [{"name": "liberou_tudo", "effect": "ALLOW", "match": {"action": "*"}}]
     d = PolicyEngine.from_config(regras).decide(ctx("db.write"))
     assert d.effect == Effect.DENY
@@ -120,7 +120,7 @@ def test_action_unknown_requires_the_level_max():
     assert required_level("capacidade.inventada") is AutonomyLevel.L4
 
 
-# ---- risco ---------------------------------------------------------------
+# ---- risk ----------------------------------------------------------------
 
 def test_production_is_high():
     a = RiskEngine().assess({"action": "deploy.staging", "environment": "production"})
@@ -152,14 +152,14 @@ def test_factor_of_client_adds_is_not_replaces():
     r = RiskEngine.from_config([{"name": "faturamento", "level": "HIGH",
                               "field": "paths", "matches": ["*cobranca*"]}])
     assert r.assess({"paths": ["src/cobranca/x.py"]}).level is RiskLevel.HIGH
-    # o fator da base continua vivo
+    # the base factor is still alive
     assert r.assess({"environment": "production"}).level is RiskLevel.HIGH
 
 
-# ---- grafo ---------------------------------------------------------------
+# ---- graph ---------------------------------------------------------------
 
 def grafo_diamante() -> DependencyGraph:
-    """A e B em paralelo; C depende dos dois. D e E em serie, a parte."""
+    """A and B in parallel; C depends on both. D and E in series, apart."""
     g = DependencyGraph()
     g.link("C", "A")
     g.link("C", "B")
@@ -205,7 +205,7 @@ def test_dispatches_in_parallel_when_not_ha_conflict():
 
 
 def test_not_parallelize_who_touches_the_same_resource():
-    """O caso que produz dois workers na mesma migration."""
+    """The case that produces two workers on the same migration."""
     g = DependencyGraph()
     for n in "AB":
         g.add(n)

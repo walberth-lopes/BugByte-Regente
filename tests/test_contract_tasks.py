@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Contrato do TaskProvider. Vale para TODO adapter, presente e futuro.
+"""The TaskProvider contract. It holds for EVERY adapter, present and future.
 
-A suite roda contra cada implementacao registrada em `PROVEDORES`. Adicionar um
-provedor novo e adicionar uma linha la -- e se ele nao passar, ele nao esta
-pronto, por mais que os testes proprios dele passem.
+The suite runs against each implementation registered in `PROVEDORES`. Adding a
+new provider means adding a line there -- and if it does not pass, it is not
+ready, however well its own tests do.
 
-Por que contrato e nao teste de unidade: teste de unidade prova que o adapter
-faz o que o autor dele imaginou. Contrato prova que ele faz o que o **motor
-espera** -- que e a unica coisa que impede o Core de precisar saber com qual
-provedor esta falando.
+Why a contract and not a unit test: a unit test proves the adapter does what its
+author imagined. A contract proves it does what the **engine expects** -- which
+is the only thing that keeps the Core from needing to know which provider it is
+talking to.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ KEYS = json.loads((SNAPSHOTS / "KEYS.json").read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
-# As implementacoes sob contrato
+# The implementations under contract
 # ---------------------------------------------------------------------------
 
 def _monta_filesystem(tmp_path: Path) -> tuple[TaskProvider, str]:
@@ -68,7 +68,7 @@ def provider(request, tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Identidade e descoberta
+# Identity and discovery
 # ---------------------------------------------------------------------------
 
 def test_declares_the_that_is(provider):
@@ -102,14 +102,14 @@ def test_get_returns_the_same_task_that_the_list(provider):
 
 
 def test_task_missing_raises_is_not_returns_none(provider):
-    """Ausencia precisa ser error. `None` silencioso vira 'nao havia trabalho'."""
+    """Absence has to be an error. A silent `None` becomes 'there was no work'."""
     port, _ = provider
     with pytest.raises(AdapterError):
         port.get_task("NAO-EXISTE-999")
 
 
 # ---------------------------------------------------------------------------
-# Normalizacao
+# Normalisation
 # ---------------------------------------------------------------------------
 
 def test_status_is_of_vocabulario_of_motor(provider):
@@ -119,13 +119,13 @@ def test_status_is_of_vocabulario_of_motor(provider):
 
 
 def test_status_raw_is_preserved(provider):
-    """Sem ele, uma situacao DESCONHECIDA nao diz o que apareceu no board."""
+    """Without it, a DESCONHECIDA status does not say what showed up on the board."""
     port, _ = provider
     assert any(t.external_status for t in port.list_tasks())
 
 
 def test_status_desconhecido_not_is_coerced(provider):
-    """O pecado que este teste impede: mapear o desconhecido para o vizinho."""
+    """The sin this test prevents: mapping the unknown onto its neighbour."""
     port, _ = provider
     desconhecidas = [t for t in port.list_tasks()
                      if t.status is ExternalStatus.UNKNOWN]
@@ -151,7 +151,7 @@ def test_link_declares_if_blocks(provider):
 
 
 def test_hierarchy_never_is_block(provider):
-    """Subtarefa nao espera a mae. Confundir isso trava um board inteiro."""
+    """A subtask does not wait for its parent. Confusing this locks a whole board."""
     port, _ = provider
     for t in port.list_tasks():
         for v in t.links:
@@ -163,7 +163,7 @@ def test_anomaly_is_reportada_is_not_fixed(provider):
     port, _ = provider
     items = port.list_tasks()
     assert any(t.anomalies for t in items), "a fixture precisa ter dado torto"
-    # Dado torto nao derruba a listagem: ele vira relato.
+    # Crooked data does not bring the listing down: it becomes a report.
     assert len(items) >= 3
 
 
@@ -185,12 +185,12 @@ WRITE_OPS = ("update_task", "transition_task", "add_comment", "add_label")
 
 @pytest.mark.parametrize("operation", WRITE_OPS)
 def test_nenhuma_write_is_executed(provider, operation):
-    """Todo provedor sob shadow precisa RECUSAR escrita, nao ignora-la.
+    """Every provider under shadow must REFUSE a write, not ignore it.
 
-    `filesystem` implementa escrita de verdade e nao esta em shadow -- por isso
-    o contrato exige apenas que a operacao seja explicita: ou recusa, ou faz. O
-    que nao pode existir e o meio-termo silencioso: aceitar a chamada, nao fazer
-    nada e devolver success.
+    `filesystem` implements real writing and is not under shadow -- which is why
+    the contract only requires the operation to be explicit: either it refuses,
+    or it does it. What must not exist is the silent middle ground: accepting the
+    call, doing nothing and returning success.
     """
     port, key = provider
     if port.name == "filesystem":
@@ -200,7 +200,7 @@ def test_nenhuma_write_is_executed(provider, operation):
 
 
 def test_transporte_of_read_not_tem_verb_of_write():
-    """A garantia real do shadow: nao ha funcao que mute o sistema externo."""
+    """The real guarantee of the shadow: no function mutates the external system."""
     from regente.adapters.tasks import transport as t
     for classe in (t.HttpTransport, t.SnapshotTransport):
         metodos = {m for m in dir(classe) if not m.startswith("_")}
@@ -209,7 +209,7 @@ def test_transporte_of_read_not_tem_verb_of_write():
 
 
 # ---------------------------------------------------------------------------
-# Paginacao, resiliencia e falhas -- especificos de quem fala com rede
+# Pagination, resilience and failures -- specific to those that talk to a network
 # ---------------------------------------------------------------------------
 
 def _jira(**kw) -> JiraTasks:
@@ -218,7 +218,7 @@ def _jira(**kw) -> JiraTasks:
 
 
 def test_pagination_walks_all_the_pages():
-    """Paginar errado devolve a primeira pagina para sempre."""
+    """Paginating wrong returns the first page for ever."""
     port = _jira()
     items = port.list_tasks()
     assert len(items) == KEYS["total"], (
@@ -240,8 +240,8 @@ def test_pagination_respects_ceiling_of_pages():
     MalformedResponse("corpo nao e JSON"),
 ])
 def test_failure_of_provider_sobe_como_error_of_adapter(error):
-    """O motor nao pode quebrar porque o provedor caiu -- nem confundir queda
-    com ausencia de trabalho."""
+    """The engine must not break because the provider went down -- nor confuse
+    an outage with an absence of work."""
     port = _jira(failures={"search": error})
     with pytest.raises(AdapterError):
         port.list_tasks()
@@ -270,7 +270,7 @@ def test_snapshot_missing_is_not_found_is_not_list_empty():
 
 
 def test_response_of_kind_wrong_is_refused(tmp_path):
-    """200 com corpo valido mas de forma errada nao pode virar 'zero tasks'."""
+    """A 200 with a valid body of the wrong shape must not become 'zero tasks'."""
     (tmp_path / "rest_api_3_search_jql.json").write_text("[]", encoding="utf-8")
     port = JiraTasks(transport=SnapshotTransport(directory=tmp_path))
     with pytest.raises(AdapterError):
@@ -287,7 +287,7 @@ def test_issue_without_key_is_refused(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Observabilidade
+# Observability
 # ---------------------------------------------------------------------------
 
 def test_every_call_produces_registry_diagnosable():
