@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import os
 from pathlib import Path
 
 from regente.app.container import Engine
+from regente.cli import REPORTS_DIR, _report_path, _write_report
 
 CLI = Path(__file__).resolve().parents[1] / "regente" / "cli.py"
 
@@ -90,6 +92,49 @@ def test_every_subcommand_has_a_handler():
     """A subcommand without `fn` fails with AttributeError inside `main`."""
     dests, handlers = _declared()
     assert set(dests) == set(handlers), sorted(set(dests) ^ set(handlers))
+
+
+def test_bare_output_name_goes_to_reports():
+    """`--output r.txt` is a NAME, not a location: it must not land in the root.
+
+    This is the case that actually happened -- a report written beside the
+    source, untracked, one `git add -A` from being committed.
+    """
+    assert _report_path("r.txt") == Path(REPORTS_DIR) / "r.txt"
+    assert _report_path("SHADOW-REPORT.txt") == Path(REPORTS_DIR) / "SHADOW-REPORT.txt"
+
+
+def test_output_with_a_directory_is_respected():
+    """A caller who typed a place gets that place, including `.`."""
+    assert _report_path("docs/r.txt") == Path("docs/r.txt")
+    assert _report_path(os.path.join("docs", "r.txt")) == Path("docs") / "r.txt"
+
+    # `./r.txt` means HERE. pathlib normalises the `./` away, so the rule has to
+    # look at the raw string -- otherwise "here" is indistinguishable from a
+    # bare name and this would be silently relocated.
+    assert _report_path("./r.txt") == Path("./r.txt")
+    assert _report_path("./r.txt").parent != Path(REPORTS_DIR)
+
+
+def test_absolute_output_is_never_relocated(tmp_path):
+    """An absolute path is unambiguous; relocating it would be user-hostile."""
+    target = tmp_path / "r.txt"
+    assert _report_path(str(target)) == target
+
+
+def test_write_report_creates_the_directory_and_reports_where(tmp_path, monkeypatch):
+    """The path printed back has to be where the bytes went, not what was typed."""
+    monkeypatch.chdir(tmp_path)
+
+    written = _write_report("r.txt", "hello")
+    assert written == Path(REPORTS_DIR) / "r.txt"
+    assert (tmp_path / REPORTS_DIR / "r.txt").read_text(encoding="utf-8") == "hello"
+    assert not (tmp_path / "r.txt").exists()
+
+    # A directory the caller named is created too, rather than raising.
+    written = _write_report("deep/nested/r.txt", "hello")
+    assert written == Path("deep/nested/r.txt")
+    assert (tmp_path / "deep" / "nested" / "r.txt").read_text(encoding="utf-8") == "hello"
 
 
 def test_engine_attributes_the_cli_uses_exist():

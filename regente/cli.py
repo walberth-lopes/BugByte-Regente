@@ -22,6 +22,35 @@ from .engine import chain, escalation, shadow
 
 DEFAULT_CONFIG_FILE = "regente.yaml"
 
+#: Where a report goes when `--output` names a file and not a place.
+REPORTS_DIR = "reports"
+
+
+def _report_path(value: str) -> Path:
+    """Resolve `--output`. A bare filename lands in `reports/`.
+
+    A report written into the repository root is one `git add -A` away from
+    being committed, and it has already happened. So a value with no directory
+    in it is treated as a NAME, not a location, and goes where generated files
+    belong -- `reports/` is gitignored.
+
+    Anything carrying a separator is a location the caller chose on purpose and
+    is used exactly as given: `docs/x.txt`, `./x.txt`, `/tmp/x.txt`. The check is
+    on the raw string because pathlib normalises `./x.txt` to `x.txt`, which
+    would otherwise make "here" indistinguishable from a bare name.
+    """
+    if Path(value).is_absolute() or "/" in value or "\\" in value:
+        return Path(value)
+    return Path(REPORTS_DIR) / value
+
+
+def _write_report(value: str, text: str) -> Path:
+    """Write, creating the directory. Returns where it actually went."""
+    path = _report_path(value)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
 
 def _force_utf8() -> None:
     # Without this, a title with an accent brings the command down on the Windows console.
@@ -238,9 +267,9 @@ def cmd_sombra(args) -> int:
             eu=args.eu)
         print(shadow.render(r))
         if args.output:
-            Path(args.output).write_text(shadow.render(r), encoding="utf-8")
+            written = _write_report(args.output, shadow.render(r))
             print()
-            print(f"  written to {args.output}")
+            print(f"  written to {written}")
         return 0 if not r.provider_errors else 2
     finally:
         motor.close()
@@ -294,9 +323,9 @@ def cmd_cadeia(args) -> int:
             organization=cfg.organization, client=cfg.client)
         print(chain.render(rel, limit=args.limit))
         if args.output:
-            Path(args.output).write_text(chain.render(rel, limit=200), encoding="utf-8")
+            written = _write_report(args.output, chain.render(rel, limit=200))
             print()
-            print(f"  written to {args.output}")
+            print(f"  written to {written}")
         return 0
     finally:
         motor.close()
@@ -328,7 +357,9 @@ def cmd_mission(args) -> int:
         print(outcome.measurements.render())
         if args.output:
             report = outcome.briefing.render() + "\n\n" + outcome.measurements.render()
-            Path(args.output).write_text(report, encoding="utf-8")
+            written = _write_report(args.output, report)
+            print()
+            print(f"  written to {written}")
         return 0
     finally:
         engine.close()
@@ -400,7 +431,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("sombra", help="see the real work without touching anything")
     p.add_argument("--mine", action="store_true", help="only what is assigned to me")
     p.add_argument("--eu", help="assignee name to count as 'mine'")
-    p.add_argument("--output", help="write the report to this file")
+    p.add_argument("--output", metavar="FILE",
+                   help="write the report here; a bare name goes to reports/")
     p.set_defaults(fn=cmd_sombra)
 
     p = sub.add_parser("repos", help="visible repositories, without touching anything")
@@ -411,13 +443,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--sem-branches", action="store_true",
                    help="skip reading branches (faster, less evidence)")
-    p.add_argument("--output", help="write the report to this file")
+    p.add_argument("--output", metavar="FILE",
+                   help="write the report here; a bare name goes to reports/")
     p.set_defaults(fn=cmd_cadeia)
 
     p = sub.add_parser("mission", help="select one task, show the briefing, optionally run")
     p.add_argument("--run", action="store_true", help="execute; without it, nothing runs")
     p.add_argument("--task", help="restrict selection to this task key")
-    p.add_argument("--output", help="write briefing and metrics to this file")
+    p.add_argument("--output", metavar="FILE",
+                   help="write briefing and metrics here; a bare name goes to reports/")
     p.set_defaults(fn=cmd_mission)
 
     p = sub.add_parser("rules", help="the rules, limits and adapters in force")
