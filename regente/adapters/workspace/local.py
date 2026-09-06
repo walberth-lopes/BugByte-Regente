@@ -47,6 +47,43 @@ class IsolatedDirectory(WorkspaceProvider):
             return []
         return [WorkArea(id=p.name, path=str(p)) for p in self.root.iterdir() if p.is_dir()]
 
+    # ---- writing history, inside the area only --------------------------
+
+    def head(self, area: WorkArea) -> str:
+        return self._git("rev-parse", "HEAD", cwd=Path(area.path)).strip()
+
+    def is_dirty(self, area: WorkArea) -> bool:
+        return bool(self._git("status", "--porcelain", cwd=Path(area.path)).strip())
+
+    def commit(self, area: WorkArea, message: str,
+               author: tuple[str, str] | None = None) -> str:
+        path = Path(area.path)
+        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
+
+        # Refusing here rather than trusting the caller: the engine builds the
+        # work branch, so being on anything else means something upstream went
+        # wrong, and a commit is a terrible place to find that out.
+        if current in ("HEAD", "main", "master", "develop"):
+            raise AdapterError(
+                f"refused to commit on '{current}': the isolated area must be on "
+                f"its own work branch, never on an integration branch")
+        if area.branch and current != area.branch:
+            raise AdapterError(
+                f"refused to commit: the area is on '{current}' and the run owns "
+                f"'{area.branch}'")
+
+        if not self.is_dirty(area):
+            raise AdapterError("nothing to commit: the area has no changes")
+
+        # `--no-verify` is deliberately NOT used: a repository's own hooks are
+        # part of its rules, and an engine that skips them is writing history
+        # the team did not agree to.
+        name, email = author or ("Regente", "regente@localhost.invalid")
+        self._git("add", "-A", cwd=path)
+        self._git("-c", f"user.name={name}", "-c", f"user.email={email}",
+                  "commit", "-q", "-m", message, cwd=path)
+        return self.head(area)
+
 
 class GitWorktree(WorkspaceProvider):
     name = "worktree"
@@ -179,3 +216,40 @@ class GitClone(WorkspaceProvider):
         if not self.root.is_dir():
             return []
         return [WorkArea(id=p.name, path=str(p)) for p in self.root.iterdir() if p.is_dir()]
+
+    # ---- writing history, inside the area only --------------------------
+
+    def head(self, area: WorkArea) -> str:
+        return self._git("rev-parse", "HEAD", cwd=Path(area.path)).strip()
+
+    def is_dirty(self, area: WorkArea) -> bool:
+        return bool(self._git("status", "--porcelain", cwd=Path(area.path)).strip())
+
+    def commit(self, area: WorkArea, message: str,
+               author: tuple[str, str] | None = None) -> str:
+        path = Path(area.path)
+        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
+
+        # Refusing here rather than trusting the caller: the engine builds the
+        # work branch, so being on anything else means something upstream went
+        # wrong, and a commit is a terrible place to find that out.
+        if current in ("HEAD", "main", "master", "develop"):
+            raise AdapterError(
+                f"refused to commit on '{current}': the isolated area must be on "
+                f"its own work branch, never on an integration branch")
+        if area.branch and current != area.branch:
+            raise AdapterError(
+                f"refused to commit: the area is on '{current}' and the run owns "
+                f"'{area.branch}'")
+
+        if not self.is_dirty(area):
+            raise AdapterError("nothing to commit: the area has no changes")
+
+        # `--no-verify` is deliberately NOT used: a repository's own hooks are
+        # part of its rules, and an engine that skips them is writing history
+        # the team did not agree to.
+        name, email = author or ("Regente", "regente@localhost.invalid")
+        self._git("add", "-A", cwd=path)
+        self._git("-c", f"user.name={name}", "-c", f"user.email={email}",
+                  "commit", "-q", "-m", message, cwd=path)
+        return self.head(area)

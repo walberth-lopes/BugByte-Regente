@@ -92,7 +92,18 @@ class Engine:
             workspace_name=self.workspace.name, workspace_id=self.workspace.id,
             organization=self.config.organization, client=self.config.client)
 
-        selection = planner.select(items, catalog, branches,
+        # Sibling map: tasks sharing a parent. Built here because only the
+        # engine sees the whole board -- a provider answers about one task at a
+        # time and cannot know who its siblings are.
+        by_parent: dict[str, list[str]] = {}
+        for t in items:
+            for link in t.links:
+                if link.kind == "parent":
+                    by_parent.setdefault(link.key, []).append(t.key)
+        siblings = {t.key: [k for k in by_parent.get(p.key, []) if k != t.key]
+                    for t in items for p in t.links if p.kind == "parent"}
+
+        selection = planner.select(items, catalog, branches, siblings=siblings,
                                    branch_is_ahead=self._branch_is_ahead)
         runner = MissionRunner(
             store=self.store, workspace_id=self.workspace.id,
@@ -103,7 +114,9 @@ class Engine:
                           max_cost_usd=self.config.budget.max_cost_usd,
                           max_seconds=self.config.budget.max_seconds),
             permissions=Permissions(read=True, write_code=True, run_tests=True,
-                                    commit=True))
+                                    commit=True),
+            policy=self.policy, autonomy=self.workspace.max_autonomy,
+            organization=self.config.organization, client=self.config.client)
         if not execute:
             from ..engine.runner import MissionOutcome
             if selection.mission is None:

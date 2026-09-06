@@ -29,7 +29,7 @@ def _field(data: dict[str, Any], name: str, legacy: str) -> Any:
     """
     value = data.get(name)
     return value if value is not None else data.get(legacy)
-from ...ports.tasks import (BLOCKS, RELATED, Comment, ExternalTask,
+from ...ports.tasks import (BLOCKS, PARENT, RELATED, Comment, ExternalTask,
                             ExternalStatus, TaskProvider, TaskRef)
 
 
@@ -90,6 +90,12 @@ class FilesystemTasks(TaskProvider):
         ) + tuple(
             TaskRef(key=str(v), kind=RELATED)
             for v in (_field(data, "related", "relacionadas") or [])
+        ) + tuple(
+            # Hierarchy, not order. Without it this format cannot express that
+            # two tasks are siblings -- and sibling evidence is one of the few
+            # honest signals for locating work whose repository nobody declared.
+            TaskRef(key=str(v), kind=PARENT)
+            for v in ([data["parent"]] if data.get("parent") else [])
         )
         raw_status = str(_field(data, "status", "estado") or "TO DO")
         return ExternalTask(

@@ -50,6 +50,33 @@ class WorkspaceProvider(Port):
     def list_areas(self) -> list[WorkArea]:
         return []
 
+    # ---- writing history inside the area --------------------------------
+
+    def commit(self, area: WorkArea, message: str,
+               author: tuple[str, str] | None = None) -> str:
+        """Record the area's current state on its own branch. Returns the SHA.
+
+        Lives on THIS port and not on the repository port because the area is
+        this provider's artefact -- it is the only component that knows how the
+        area was materialised, and therefore the only one that can write to it
+        without guessing.
+
+        Implementations must refuse to commit onto the base branch. The engine
+        already builds a work branch, so landing on the base can only mean
+        something went wrong upstream, and a commit is the wrong place to
+        discover it.
+        """
+        raise NotImplementedError
+
+    def head(self, area: WorkArea) -> str:
+        """Current commit of the area. Used to prove what a run produced."""
+        raise NotImplementedError
+
+    def is_dirty(self, area: WorkArea) -> bool:
+        """Are there uncommitted changes? Distinguishes 'nothing to commit' from
+        'the commit silently did nothing'."""
+        raise NotImplementedError
+
 
 @dataclass(frozen=True, slots=True)
 class RunRequest:

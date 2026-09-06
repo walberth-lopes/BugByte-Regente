@@ -1,0 +1,100 @@
+MILESTONE 5 FINAL PROOF
+=======================
+
+WHAT THIS PROVES
+  The engine selects a real mission, determines safely where to work, provides
+  minimal context, runs an agent, validates the result and produces a persistent
+  isolated change -- without human intervention during the run.
+
+    orchestrator -> mission selection -> target resolution -> workspace isolation
+    -> AgentRunner -> structured outcome -> baseline-aware testing -> validation
+    -> verdict -> commit -> persistence
+
+WHAT THIS DOES NOT PROVE
+  Anything about a language model. The agent is a DETERMINISTIC process applying
+  a declared edit. No headless coding agent exists on this machine, and a
+  reproducible run is what proves a harness. Swapping it for a real coding agent
+  is a configuration line and touches no Core code.
+
+  This is an AgentRunner integration proof, not a CoderAgent autonomous proof.
+
+TARGET REPOSITORIES
+  Real git repositories with real tests. In both paths one test failed before the
+  run, for a reason stated in the task. Path B additionally carries a plausible
+  distractor repository that the engine had to examine and reject.
+
+============================================================
+ MILESTONE 5 FINAL PROOF
+============================================================
+
+PATH A: DECLARED target
+------------------------------------------------------------
+  verdict:      READY_FOR_REVIEW
+  test result:  PASSED
+  commit:       ce09c7342e4c9f37b9bbc189e6c7541f8027cf2d
+  branch:       regente/slug-1
+  OK    source main unchanged                      27e672daeab61007e5b90648ea919ff3128b4ebf
+  OK    source working tree clean                  0
+  OK    no branch leaked into source               main
+  OK    no worktree in source                      1
+  OK    area base branch unmoved                   27e672daeab61007e5b90648ea919ff3128b4ebf
+  OK    task file untouched                        TO DO
+  target source: DECLARED  (DECLARED never promotes: nothing was discovered)
+
+PATH B: DISCOVERED target
+------------------------------------------------------------
+  verdict:      READY_FOR_REVIEW
+  test result:  PASSED
+  commit:       da215dc09de3698baa9452f7fd0708b39b626380
+  branch:       regente/sg-91
+  OK    source main unchanged                      fe638f1f06aff1dd2f9b2d253169f91acdc0eab6
+  OK    source working tree clean                  0
+  OK    no worktree in source                      1
+  OK    distractor repo untouched                  0
+  OK    area base branch unmoved                   fe638f1f06aff1dd2f9b2d253169f91acdc0eab6
+  OK    task file untouched                        TO DO
+  target source: VALIDATED   confidence OBSERVED  strength 40
+    evidence:    sibling_branch: 'feat/SG-90-related-work' belongs to sibling SG-90
+    evidence:    module: contains 'src/normalize.py', named by the task
+    rejected:    acme/billing: examined; no evidence linked it to this task
+
+NEGATIVE 1: agent edits, validation fails
+------------------------------------------------------------
+  verdict:      REGRESSED
+  OK    agent DID edit the file                    1
+  OK    NO COMMIT                                  0
+  OK    source main unchanged                      fe638f1f06aff1dd2f9b2d253169f91acdc0eab6
+  OK    task file untouched                        TO DO
+  target NOT promoted: DISCOVERED
+  commit events: 0
+
+NEGATIVE 2: agent tries to escape its workspace
+------------------------------------------------------------
+  verdict:      FAILED
+  OK    source file byte-identical                 114cd886e87eacaafb831629b85e26fb
+  OK    no OWNED marker in source                  0
+  OK    source main unchanged                      fe638f1f06aff1dd2f9b2d253169f91acdc0eab6
+  OK    NO COMMIT                                  0
+
+GLOBAL: forbidden mutations, across every run above
+------------------------------------------------------------
+  OK    no push (no remote reachable)              https://github.com/acme/slugger.git
+  (the remote is a non-existent URL; any push would have failed loudly)
+  OK    no PR / merge / deploy                     0
+
+============================================================
+
+READING THE TWO PATHS
+  Path A used a DECLARED target and was never promoted -- nothing was discovered,
+  so there is nothing to confirm.
+
+  Path B discovered its target from two independent signals, recorded the
+  rejected alternative with its reason, and was promoted to VALIDATED only
+  because the repository's own tests went from red to green after a change in it.
+  Had the baseline been green, promotion would have been refused: staying green
+  demonstrates nothing about whether the target was right.
+
+  Negative 1 is the important one. The agent edited the file AND reported
+  "ready to commit". The engine still refused: validation failed, so no commit,
+  no promotion, no external mutation. The agent's opinion never entered the
+  decision.
