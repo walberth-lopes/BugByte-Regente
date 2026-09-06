@@ -21,14 +21,14 @@ providers:
     name: filesystem
     directory: ./tasks
   workspace_provider:
-    name: diretorio
+    name: directory
   runner:
     name: script
   notification:
     name: console
 
 projects:
-  - name: padrao
+  - name: default
     default_environment: staging
 
 limits:
