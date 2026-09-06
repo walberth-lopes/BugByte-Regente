@@ -38,8 +38,8 @@ def _modulos(pasta: str) -> list[Path]:
     return sorted((RAIZ / pasta).rglob("*.py"))
 
 
-def _imports(caminho: Path) -> list[str]:
-    arvore = ast.parse(caminho.read_text(encoding="utf-8"), filename=str(caminho))
+def _imports(path: Path) -> list[str]:
+    arvore = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     nomes: list[str] = []
     for no in ast.walk(arvore):
         if isinstance(no, ast.Import):
@@ -49,32 +49,32 @@ def _imports(caminho: Path) -> list[str]:
     return nomes
 
 
-def test_core_nao_importa_io():
+def test_core_not_imports_io():
     faltas = []
     for arq in _modulos("core"):
-        for nome in _imports(arq):
-            raiz = nome.lstrip(".").split(".", 1)[0]
-            if raiz in IO_PROIBIDO:
-                faltas.append(f"{arq.name} importa {nome}")
+        for name in _imports(arq):
+            root = name.lstrip(".").split(".", 1)[0]
+            if root in IO_PROIBIDO:
+                faltas.append(f"{arq.name} importa {name}")
     assert not faltas, "o dominio precisa ser puro:\n  " + "\n  ".join(faltas)
 
 
-def test_core_nao_importa_adapters_nem_engine():
+def test_core_not_imports_adapters_nor_engine():
     faltas = []
     for arq in _modulos("core"):
-        for nome in _imports(arq):
-            if "adapters" in nome or "engine" in nome or "ports" in nome:
-                faltas.append(f"{arq.name} importa {nome}")
+        for name in _imports(arq):
+            if "adapters" in name or "engine" in name or "ports" in name:
+                faltas.append(f"{arq.name} importa {name}")
     assert not faltas, "core nao pode depender das bordas:\n  " + "\n  ".join(faltas)
 
 
-def test_engine_nao_importa_adapters():
+def test_engine_not_imports_adapters():
     """O motor conhece PORTAS. Quem escolhe implementacao e a raiz de composicao."""
     faltas = []
     for arq in _modulos("engine"):
-        for nome in _imports(arq):
-            if "adapters" in nome:
-                faltas.append(f"{arq.name} importa {nome}")
+        for name in _imports(arq):
+            if "adapters" in name:
+                faltas.append(f"{arq.name} importa {name}")
     assert not faltas, "engine so pode falar com ports:\n  " + "\n  ".join(faltas)
 
 
@@ -85,9 +85,9 @@ def _linhas_de_prosa(arq: Path) -> set[int]:
     a regra fica registrada. O que nao pode e o nome virar codigo: um import, um
     valor default, um literal de comparacao.
     """
-    texto = arq.read_text(encoding="utf-8")
+    text = arq.read_text(encoding="utf-8")
     prosa: set[int] = set()
-    for n, linha in enumerate(texto.splitlines(), 1):
+    for n, linha in enumerate(text.splitlines(), 1):
         if linha.lstrip().startswith("#"):
             prosa.add(n)
 
@@ -95,7 +95,7 @@ def _linhas_de_prosa(arq: Path) -> set[int]:
     # string qualquer no meio do codigo continua valendo como codigo, senao
     # `provider = "algum-fornecedor"` escaparia justamente por ser string.
     portadores = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
-    for no in ast.walk(ast.parse(texto, filename=str(arq))):
+    for no in ast.walk(ast.parse(text, filename=str(arq))):
         if not isinstance(no, portadores) or not no.body:
             continue
         primeiro = no.body[0]
@@ -106,8 +106,8 @@ def _linhas_de_prosa(arq: Path) -> set[int]:
     return prosa
 
 
-def test_nenhum_fornecedor_no_codigo_do_core_nem_do_engine():
-    padrao = re.compile("|".join(FORNECEDORES), re.IGNORECASE)
+def test_no_vendor_in_code_of_core_nor_of_engine():
+    default_value = re.compile("|".join(FORNECEDORES), re.IGNORECASE)
     faltas = []
     for pasta in ("core", "engine", "ports"):
         for arq in _modulos(pasta):
@@ -115,28 +115,28 @@ def test_nenhum_fornecedor_no_codigo_do_core_nem_do_engine():
             for n, linha in enumerate(arq.read_text(encoding="utf-8").splitlines(), 1):
                 if n in prosa:
                     continue
-                achado = padrao.search(linha.split("#", 1)[0])
+                achado = default_value.search(linha.split("#", 1)[0])
                 if achado:
                     faltas.append(f"{pasta}/{arq.name}:{n} menciona '{achado.group()}'")
     assert not faltas, ("nome de ferramenta so existe em adapters/:\n  "
                         + "\n  ".join(faltas))
 
 
-def test_registro_e_o_unico_a_importar_adapters():
+def test_registry_is_the_only_the_importar_adapters():
     """Um segundo lugar importando adapter e o comeco do acoplamento."""
     culpados = []
     for arq in RAIZ.rglob("*.py"):
         relativo = arq.relative_to(RAIZ).as_posix()
         if relativo.startswith("adapters/"):
             continue
-        if any("adapters" in nome for nome in _imports(arq)):
+        if any("adapters" in name for name in _imports(arq)):
             culpados.append(relativo)
     assert culpados == ["adapters/registry.py"] or culpados == ["app/container.py"] or set(culpados) <= {
         "app/container.py", "cli.py"}, (
         f"quem importa adapters fora do registro: {culpados}")
 
 
-def test_trocar_de_provedor_so_toca_em_adapter_e_configuracao():
+def test_swapping_of_provider_only_touches_in_adapter_is_configuration():
     """A revisao arquitetural do Marco 3, escrita como teste.
 
     Pergunta: se amanha o provedor de tasks for outro completamente diferente,
@@ -157,7 +157,7 @@ def test_trocar_de_provedor_so_toca_em_adapter_e_configuracao():
         rel = arq.relative_to(RAIZ).as_posix()
         if rel.startswith("adapters/"):
             continue
-        if any("adapters" in nome for nome in _imports(arq)):
+        if any("adapters" in name for name in _imports(arq)):
             escolhem.add(rel)
     assert escolhem == {"app/container.py", "cli.py"}, (
         f"quem mais escolhe implementacao: {escolhem - {'app/container.py', 'cli.py'}}")
@@ -174,11 +174,11 @@ def test_trocar_de_provedor_so_toca_em_adapter_e_configuracao():
     # 3. Cada capacidade ja tem mais de uma implementacao possivel -- e uma
     #    abstracao com um unico implementador nunca foi testada de verdade.
     import regente.adapters.registry as reg
-    assert len(reg.disponiveis()["tasks"]) >= 2, (
+    assert len(reg.available()["tasks"]) >= 2, (
         "TaskProvider com um adapter so nao prova nada")
 
 
-def test_repositoryprovider_nao_conhece_fornecedor():
+def test_repositoryprovider_not_knows_vendor():
     """A contraprova do Marco 4, no mesmo formato do Marco 3.
 
     Trocar a hospedagem de codigo por outra completamente diferente deve exigir
@@ -193,18 +193,18 @@ def test_repositoryprovider_nao_conhece_fornecedor():
         assert not achado, f"ports/repository.py:{n} conhece '{achado.group()}'"
 
     import regente.adapters.registry as reg
-    assert len(reg.disponiveis()["repository"]) >= 2, (
+    assert len(reg.available()["repository"]) >= 2, (
         "RepositoryProvider com um adapter so nao prova nada")
 
 
-def test_resolucao_de_alvo_nao_conhece_fornecedor():
+def test_resolution_of_target_not_knows_vendor():
     """O elo task->repositorio e o mais tentador de acoplar: e onde daria vontade
     de olhar `nameWithOwner` ou um campo de um board especifico."""
-    for nome in ("alvo.py", "cadeia.py"):
-        arq = RAIZ / "engine" / nome
+    for name in ("target.py", "chain.py"):
+        arq = RAIZ / "engine" / name
         prosa = _linhas_de_prosa(arq)
         for n, linha in enumerate(arq.read_text(encoding="utf-8").splitlines(), 1):
             if n in prosa:
                 continue
             achado = re.search("|".join(FORNECEDORES), linha, re.IGNORECASE)
-            assert not achado, f"engine/{nome}:{n} conhece '{achado.group()}'"
+            assert not achado, f"engine/{name}:{n} conhece '{achado.group()}'"

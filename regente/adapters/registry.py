@@ -21,43 +21,43 @@ Fabrica = Callable[[dict[str, Any]], Port]
 _REGISTRO: dict[tuple[Capability, str], Fabrica] = {}
 
 
-def registra(cap: Capability, nome: str, fabrica: Fabrica) -> None:
-    _REGISTRO[(cap, nome)] = fabrica
+def register(cap: Capability, name: str, fabrica: Fabrica) -> None:
+    _REGISTRO[(cap, name)] = fabrica
 
 
-def cria(cap: Capability, nome: str, opcoes: dict[str, Any] | None = None) -> Port:
-    chave = (cap, nome)
-    if chave not in _REGISTRO:
-        disponiveis = sorted(n for (c, n) in _REGISTRO if c == cap)
+def create(cap: Capability, name: str, options: dict[str, Any] | None = None) -> Port:
+    key = (cap, name)
+    if key not in _REGISTRO:
+        available = sorted(n for (c, n) in _REGISTRO if c == cap)
         raise KeyError(
-            f"nao existe adapter '{nome}' para {cap.value}. "
-            f"Disponiveis: {', '.join(disponiveis) or 'nenhum'}")
-    return _REGISTRO[chave](opcoes or {})
+            f"nao existe adapter '{name}' para {cap.value}. "
+            f"Disponiveis: {', '.join(available) or 'nenhum'}")
+    return _REGISTRO[key](options or {})
 
 
-def disponiveis(cap: Capability | None = None) -> dict[str, list[str]]:
-    saida: dict[str, list[str]] = {}
+def available(cap: Capability | None = None) -> dict[str, list[str]]:
+    output: dict[str, list[str]] = {}
     for (c, n) in sorted(_REGISTRO, key=lambda k: (k[0].value, k[1])):
         if cap is None or c == cap:
-            saida.setdefault(c.value, []).append(n)
-    return saida
+            output.setdefault(c.value, []).append(n)
+    return output
 
 
 # ---- fabricas embutidas -------------------------------------------------
 
 def _tasks_filesystem(o: dict[str, Any]) -> Port:
     from .tasks.filesystem import FilesystemTasks
-    return FilesystemTasks(o["diretorio"])
+    return FilesystemTasks(o["directory"])
 
 
 def _workspace_diretorio(o: dict[str, Any]) -> Port:
-    from .workspace.local import DiretorioIsolado
-    return DiretorioIsolado(o["raiz"])
+    from .workspace.local import IsolatedDirectory
+    return IsolatedDirectory(o["root"])
 
 
 def _workspace_worktree(o: dict[str, Any]) -> Port:
     from .workspace.local import GitWorktree
-    return GitWorktree(clones=o.get("clones", {}), raiz=o["raiz"])
+    return GitWorktree(clones=o.get("clones", {}), root=o["root"])
 
 
 def _tasks_jira(o: dict[str, Any]) -> Port:
@@ -69,24 +69,24 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
     roda contra a rede.
     """
     from .tasks.jira import JiraTasks
-    from .tasks.transporte import TransporteHTTP, TransporteInstantaneo
+    from .tasks.transport import HttpTransport, SnapshotTransport
 
-    observador = o.get("observador")
-    modo = o.get("transporte", "http")
+    observador = o.get("observer")
+    modo = o.get("transport", "http")
     if modo == "instantaneo":
         from pathlib import Path
-        transporte = TransporteInstantaneo(
-            diretorio=Path(o["instantaneos"]), observador=observador)
+        transporte = SnapshotTransport(
+            diretorio=Path(o["snapshots"]), observador=observador)
     elif modo == "http":
         site = o["site"].rstrip("/")
-        segredos = o["segredos"]           # SecretProvider, injetado pela composicao
-        ref_usuario = o.get("usuario_ref") or "env:JIRA_EMAIL"
+        secrets = o["segredos"]           # SecretProvider, injetado pela composicao
+        ref_usuario = o.get("user_ref") or "env:JIRA_EMAIL"
         ref_token = o.get("token_ref") or "env:JIRA_API_TOKEN"
-        transporte = TransporteHTTP(
+        transporte = HttpTransport(
             base_url=site,
-            credencial=lambda: (segredos.resolve(ref_usuario), segredos.resolve(ref_token)),
+            credencial=lambda: (secrets.resolve(ref_usuario), secrets.resolve(ref_token)),
             timeout=int(o.get("timeout", 30)),
-            max_tentativas=int(o.get("max_tentativas", 3)),
+            max_attempts=int(o.get("max_tentativas", 3)),
             observador=observador)
     else:
         raise KeyError(f"transporte desconhecido para jira: {modo!r}. Use http ou instantaneo")
@@ -94,54 +94,54 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
     return JiraTasks(
         transporte=transporte,
         jql=o.get("jql") or "statusCategory != Done ORDER BY updated DESC",
-        recursos_por=o.get("recursos_por", "parent"),
-        max_paginas=int(o.get("max_paginas", 10)),
-        por_pagina=int(o.get("por_pagina", 100)),
+        resources_by=o.get("resources_by", "parent"),
+        max_pages=int(o.get("max_pages", 10)),
+        per_page=int(o.get("per_page", 100)),
         site=o.get("site", ""))
 
 
 def _repos_git_local(o: dict[str, Any]) -> Port:
     from .repos.git_local import GitLocal
-    return GitLocal(raiz=o["raiz"], observador=o.get("observador"),
+    return GitLocal(root=o["root"], observador=o.get("observer"),
                     timeout=int(o.get("timeout", 60)))
 
 
 def _repos_github(o: dict[str, Any]) -> Port:
     from .repos.github import GitHubRepos
-    return GitHubRepos(org=o["org"], caminho_cli=o.get("cli", "gh"),
-                       observador=o.get("observador"),
+    return GitHubRepos(org=o["org"], cli_path=o.get("cli", "gh"),
+                       observador=o.get("observer"),
                        timeout=int(o.get("timeout", 60)),
-                       limite_listagem=int(o.get("limite", 200)))
+                       list_limit=int(o.get("limit", 200)))
 
 
 def _segredos_escopados(o: dict[str, Any]) -> Port:
-    from .segredos import Segredos
-    return Segredos(permitidas=frozenset(o.get("permitidas", ())),
+    from .secrets import ScopedSecrets
+    return ScopedSecrets(allowed_from=frozenset(o.get("allowed", ())),
                     workspace=o.get("workspace", "?"))
 
 
 def _notify_console(o: dict[str, Any]) -> Port:
     from .notify.console import Console
-    return Console(jornal=o.get("jornal"))
+    return Console(journal=o.get("journal"))
 
 
 def _runner_roteiro(o: dict[str, Any]) -> Port:
     from .runner.scripted import ScriptedRunner
-    return ScriptedRunner(roteiro=o.get("roteiro", {}), padrao=o.get("padrao", {"ok": True, "resumo": "sem alteracao"}))
+    return ScriptedRunner(script=o.get("script", {}), default_value=o.get("fallback", {"ok": True, "resumo": "sem alteracao"}))
 
 
 def _runner_comando(o: dict[str, Any]) -> Port:
-    from .runner.scripted import ComandoRunner
-    return ComandoRunner(comando=list(o["comando"]))
+    from .runner.scripted import CommandRunner
+    return CommandRunner(command=list(o["command"]))
 
 
-registra(Capability.TASKS, "filesystem", _tasks_filesystem)
-registra(Capability.TASKS, "jira", _tasks_jira)
-registra(Capability.SECRETS, "escopado", _segredos_escopados)
-registra(Capability.REPOSITORY, "git-local", _repos_git_local)
-registra(Capability.REPOSITORY, "github", _repos_github)
-registra(Capability.WORKSPACE, "diretorio", _workspace_diretorio)
-registra(Capability.WORKSPACE, "worktree", _workspace_worktree)
-registra(Capability.NOTIFICATION, "console", _notify_console)
-registra(Capability.RUNNER, "roteiro", _runner_roteiro)
-registra(Capability.RUNNER, "comando", _runner_comando)
+register(Capability.TASKS, "filesystem", _tasks_filesystem)
+register(Capability.TASKS, "jira", _tasks_jira)
+register(Capability.SECRETS, "escopado", _segredos_escopados)
+register(Capability.REPOSITORY, "git-local", _repos_git_local)
+register(Capability.REPOSITORY, "github", _repos_github)
+register(Capability.WORKSPACE, "diretorio", _workspace_diretorio)
+register(Capability.WORKSPACE, "worktree", _workspace_worktree)
+register(Capability.NOTIFICATION, "console", _notify_console)
+register(Capability.RUNNER, "roteiro", _runner_roteiro)
+register(Capability.RUNNER, "comando", _runner_comando)

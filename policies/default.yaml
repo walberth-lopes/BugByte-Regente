@@ -9,65 +9,65 @@
 # Campos que podem aparecer em `match` (ausente = curinga):
 #   action environment resource organization client workspace project agent risk
 
-regras:
+rules:
   # ---- leitura: aberta ---------------------------------------------------
-  - nome: leitura_geral
-    efeito: ALLOW
+  - name: read_anything
+    effect: ALLOW
     match: {action: "*.read"}
-    motivo: "ler nunca muda o mundo"
+    reason: "ler nunca muda o mundo"
 
-  - nome: leitura_de_tasks
-    efeito: ALLOW
+  - name: read_tasks
+    effect: ALLOW
     match: {action: "task.read*"}
 
   # ---- trabalho no proprio workspace -------------------------------------
-  - nome: escreve_na_propria_area
-    efeito: ALLOW
+  - name: write_in_own_area
+    effect: ALLOW
     match: {action: "workspace.write*"}
-    motivo: "a area do worker e isolada e descartavel"
+    reason: "a area do worker e isolada e descartavel"
 
-  - nome: codigo
-    efeito: ALLOW
+  - name: write_code
+    effect: ALLOW
     match: {action: ["repo.branch*", "repo.commit*"]}
 
   # ---- entrega -----------------------------------------------------------
-  - nome: publica_trabalho
-    efeito: ALLOW
+  - name: publish_work
+    effect: ALLOW
     match: {action: ["repo.push*", "repo.pr*"]}
-    motivo: "PR e a superficie onde um humano ve o trabalho antes de valer"
+    reason: "PR e a superficie onde um humano ve o trabalho antes de valer"
 
-  - nome: comenta_e_transiciona
-    efeito: ALLOW
+  - name: comment_and_transition
+    effect: ALLOW
     match: {action: "task.write*"}
 
   # ---- staging: autonomo -------------------------------------------------
-  - nome: merge_e_deploy_staging
-    efeito: ALLOW
+  - name: merge_and_deploy_staging
+    effect: ALLOW
     match: {action: ["repo.merge", "deploy.staging"], environment: ["staging", "local", "test"]}
-    motivo: "staging existe para quebrar; esperar assinatura aqui e o gargalo que o motor remove"
+    reason: "staging existe para quebrar; esperar assinatura aqui e o gargalo que o motor remove"
 
   # ---- producao: autoridade humana ---------------------------------------
   # Nao e desconfianca do modelo: e onde a organizacao decidiu que a assinatura
   # tem dono. Risco alto NAO entra aqui -- risco compra releitura, nao espera.
-  - nome: producao_pede_assinatura
-    efeito: HUMAN_APPROVAL
+  - name: production_needs_signature
+    effect: HUMAN_APPROVAL
     match: {action: ["repo.merge", "deploy.*", "cloud.write*"], environment: ["prod", "production", "producao"]}
-    motivo: "mudanca em producao tem dono humano"
+    reason: "mudanca em producao tem dono humano"
 
   # ---- proibido ----------------------------------------------------------
   # DENY, e nao HUMAN_APPROVAL, porque nao existe circunstancia em que o motor
   # deva executar isto -- nem com autorizacao. Quem precisa faz com as maos.
-  - nome: nunca_destroi_dado
-    efeito: DENY
+  - name: never_destroys_data
+    effect: DENY
     match: {action: ["db.write*", "db.drop*", "db.delete*", "*.destroy", "*.purge", "*.truncate"]}
-    motivo: "o motor nao escreve em banco; migration passa por deploy, com revisao"
+    reason: "o motor nao escreve em banco; migration passa por deploy, com revisao"
 
-  - nome: nunca_mexe_em_credencial
-    efeito: DENY
+  - name: never_touches_credentials
+    effect: DENY
     match: {resource: ["*secret*", "*credential*", "*iam*", "*.env*"]}
-    motivo: "credencial e infraestrutura critica, nao arquivo"
+    reason: "credencial e infraestrutura critica, nao arquivo"
 
-  - nome: nunca_apaga_producao
-    efeito: DENY
+  - name: never_deletes_in_production
+    effect: DENY
     match: {action: "*.delete*", environment: ["prod", "production", "producao"]}
-    motivo: "apagar em producao nao tem desfazer"
+    reason: "apagar em producao nao tem desfazer"

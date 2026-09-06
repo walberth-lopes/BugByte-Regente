@@ -38,14 +38,14 @@ def agora() -> datetime:
 @dataclass(frozen=True, slots=True)
 class Organization:
     id: str
-    nome: str
+    name: str
 
 
 @dataclass(frozen=True, slots=True)
 class Client:
     id: str
     organization_id: str
-    nome: str
+    name: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,26 +57,26 @@ class Workspace:
     """
     id: str
     client_id: str
-    nome: str
-    autonomia_maxima: AutonomyLevel = AutonomyLevel.L2
-    raiz: str | None = None
+    name: str
+    max_autonomy: AutonomyLevel = AutonomyLevel.L2
+    root: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Project:
     id: str
     workspace_id: str
-    nome: str
-    ambiente_padrao: str = "staging"
-    autonomia_maxima: AutonomyLevel | None = None  # None = herda do workspace
+    name: str
+    default_environment: str = "staging"
+    max_autonomy: AutonomyLevel | None = None  # None = herda do workspace
 
 
 @dataclass(frozen=True, slots=True)
 class Repository:
     id: str
     project_id: str
-    nome: str
-    branch_base: str = "main"
+    name: str
+    base_branch: str = "main"
     url: str | None = None
 
 
@@ -97,25 +97,25 @@ class Task:
     id: str
     workspace_id: str
     project_id: str
-    titulo: str
-    estado: TaskState = TaskState.DISCOVERED
+    title: str
+    state: TaskState = TaskState.DISCOVERED
     externo: ExternalRef | None = None
-    descricao: str = ""
-    prioridade: int = 100                       # menor roda antes
-    risco: RiskLevel | None = None
+    description: str = ""
+    priority: int = 100                       # menor roda antes
+    risk: RiskLevel | None = None
     #: Estado em que a task estava quando pausou para decisao humana.
-    pausada_em: TaskState | None = None
+    paused_at: TaskState | None = None
     #: Chaves de recurso que esta task toca em exclusividade. O scheduler usa
     #: isto para NAO paralelizar dois workers sobre a mesma migration ou o mesmo
     #: arquivo. Ex.: "repo:acme/api", "migration:acme/api", "file:src/auth.py".
-    recursos: tuple[str, ...] = ()
-    tentativas: int = 0
-    criada_em: datetime = field(default_factory=agora)
-    atualizada_em: datetime = field(default_factory=agora)
-    dados: dict[str, Any] = field(default_factory=dict)
+    resources: tuple[str, ...] = ()
+    attempts: int = 0
+    created_at: datetime = field(default_factory=agora)
+    updated_at: datetime = field(default_factory=agora)
+    data: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def chave(self) -> str:
+    def key(self) -> str:
         """Como a task aparece para um humano."""
         return self.externo.key if self.externo else self.id
 
@@ -123,9 +123,9 @@ class Task:
 @dataclass(frozen=True, slots=True)
 class Dependency:
     task_id: str
-    depende_de: str
-    tipo: str = "blocks"     # blocks | subtask | conflito
-    motivo: str = ""
+    depends_on: str
+    kind: str = "blocks"     # blocks | subtask | conflito
+    reason: str = ""
 
 
 class RunState(str, Enum):
@@ -147,19 +147,19 @@ class Run:
     id: str
     task_id: str
     workspace_id: str
-    agente: str
-    estado: RunState = RunState.RUNNING
+    agent: str
+    state: RunState = RunState.RUNNING
     worker: str | None = None
     workspace_path: str | None = None
     branch: str | None = None
-    iniciado_em: datetime = field(default_factory=agora)
-    encerrado_em: datetime | None = None
-    motivo: str = ""
-    custo_usd: float = 0.0
+    started_at: datetime = field(default_factory=agora)
+    ended_at: datetime | None = None
+    reason: str = ""
+    cost_usd: float = 0.0
     tokens: int = 0
-    chamadas_tool: int = 0
-    iteracoes: int = 0
-    dados: dict[str, Any] = field(default_factory=dict)
+    tool_calls: int = 0
+    iterations: int = 0
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,13 +171,13 @@ class Event:
     """
     id: str
     workspace_id: str
-    tipo: str
+    kind: str
     ts: datetime = field(default_factory=agora)
     task_id: str | None = None
     run_id: str | None = None
-    ator: str = "engine"
-    resumo: str = ""
-    dados: dict[str, Any] = field(default_factory=dict)
+    actor: str = "engine"
+    summary: str = ""
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 class ApprovalState(str, Enum):
@@ -189,8 +189,8 @@ class ApprovalState(str, Enum):
 @dataclass(frozen=True, slots=True)
 class Option:
     id: str
-    rotulo: str
-    efeito: str = ""
+    label: str
+    effect: str = ""
 
 
 @dataclass(slots=True)
@@ -204,19 +204,19 @@ class Approval:
     id: str
     workspace_id: str
     task_id: str
-    o_que_aconteceu: str
-    por_que_importa: str
-    o_que_o_agente_tentou: tuple[str, ...] = ()
-    opcoes: tuple[Option, ...] = ()
-    recomendacao: str | None = None      # Option.id
-    risco: RiskLevel = RiskLevel.MEDIUM
-    estado: ApprovalState = ApprovalState.OPEN
+    what_happened: str
+    why_it_matters: str
+    what_was_tried: tuple[str, ...] = ()
+    options: tuple[Option, ...] = ()
+    recommendation: str | None = None      # Option.id
+    risk: RiskLevel = RiskLevel.MEDIUM
+    state: ApprovalState = ApprovalState.OPEN
     run_id: str | None = None
-    criada_em: datetime = field(default_factory=agora)
-    decidida_em: datetime | None = None
-    decidida_por: str | None = None
-    escolha: str | None = None
-    nota: str = ""
+    created_at: datetime = field(default_factory=agora)
+    decided_at: datetime | None = None
+    decided_by: str | None = None
+    choice: str | None = None
+    note: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,19 +228,19 @@ class ActionRecord:
     """
     id: str
     workspace_id: str
-    agente: str
-    acao: str
-    recurso: str
-    efeito: str                # ALLOW | DENY | HUMAN_APPROVAL
-    risco: str
+    agent: str
+    action: str
+    resource: str
+    effect: str                # ALLOW | DENY | HUMAN_APPROVAL
+    risk: str
     ts: datetime = field(default_factory=agora)
     task_id: str | None = None
     run_id: str | None = None
-    regra: str | None = None
-    motivo: str = ""
+    rule: str | None = None
+    reason: str = ""
     resultado: str = ""
-    duracao_ms: int = 0
-    custo_usd: float = 0.0
+    duration_ms: int = 0
+    cost_usd: float = 0.0
     tokens: int = 0
 
 
@@ -252,8 +252,8 @@ class Lease:
     trava e o caso normal, nao o excepcional. Lease vencido e o sinal que a
     recuperacao usa para devolver a task a fila.
     """
-    recurso: str
-    dono: str
-    expira_em: datetime
+    resource: str
+    owner: str
+    expires_at: datetime
     workspace_id: str
-    renovado_em: datetime = field(default_factory=agora)
+    renewed_at: datetime = field(default_factory=agora)

@@ -11,7 +11,7 @@ from typing import Any
 from . import Capability, Port
 
 
-class SituacaoExterna(str, Enum):
+class ExternalStatus(str, Enum):
     """Onde o trabalho esta, no entender de quem o emitiu.
 
     Existe porque `estado_externo` cru e texto livre, e o motor precisa de UMA
@@ -23,32 +23,32 @@ class SituacaoExterna(str, Enum):
     fluxo de nenhuma ferramenta: e a posicao no ciclo de vida, que todo sistema
     de trabalho tem.
     """
-    NAO_INICIADA = "NAO_INICIADA"
-    EM_ANALISE = "EM_ANALISE"
-    EM_EXECUCAO = "EM_EXECUCAO"
-    EM_REVISAO = "EM_REVISAO"
-    EM_VALIDACAO = "EM_VALIDACAO"
-    CONCLUIDA = "CONCLUIDA"
-    CANCELADA = "CANCELADA"
+    NOT_STARTED = "NAO_INICIADA"
+    IN_ANALYSIS = "EM_ANALISE"
+    IN_PROGRESS = "EM_EXECUCAO"
+    IN_REVIEW = "EM_REVISAO"
+    IN_VALIDATION = "EM_VALIDACAO"
+    COMPLETED = "CONCLUIDA"
+    CANCELLED = "CANCELADA"
     #: Status que o adapter nao soube mapear. **Nunca** e coagido para o vizinho
     #: mais conveniente: um status novo no board significa que alguem mudou o
     #: processo, e o motor precisa dizer isso em vez de adivinhar.
-    DESCONHECIDA = "DESCONHECIDA"
+    UNKNOWN = "DESCONHECIDA"
 
     @property
-    def disponivel(self) -> bool:
+    def available(self) -> bool:
         """Trabalho que o motor poderia pegar."""
-        return self in (SituacaoExterna.NAO_INICIADA, SituacaoExterna.EM_ANALISE)
+        return self in (ExternalStatus.NOT_STARTED, ExternalStatus.IN_ANALYSIS)
 
     @property
-    def em_andamento(self) -> bool:
+    def in_progress(self) -> bool:
         """Alguem (humano ou nao) ja esta nisto."""
-        return self in (SituacaoExterna.EM_EXECUCAO, SituacaoExterna.EM_REVISAO,
-                        SituacaoExterna.EM_VALIDACAO)
+        return self in (ExternalStatus.IN_PROGRESS, ExternalStatus.IN_REVIEW,
+                        ExternalStatus.IN_VALIDATION)
 
     @property
-    def encerrada(self) -> bool:
-        return self in (SituacaoExterna.CONCLUIDA, SituacaoExterna.CANCELADA)
+    def finished(self) -> bool:
+        return self in (ExternalStatus.COMPLETED, ExternalStatus.CANCELLED)
 
 
 #: Tipos de vinculo que o motor entende. Traduzir o nome do fornecedor para um
@@ -59,14 +59,14 @@ class SituacaoExterna(str, Enum):
 #: `relacionado` e contexto, nao ordem. Tratar os tres como iguais trava um
 #: board inteiro, porque hierarquia e relacionamento sao muito mais comuns que
 #: bloqueio real.
-BLOQUEIA = "bloqueia"
-PAI = "pai"
-FILHO = "filho"
-RELACIONADO = "relacionado"
-DUPLICA = "duplica"
+BLOCKS = "blocks"
+PARENT = "parent"
+CHILD = "child"
+RELATED = "related"
+DUPLICATES = "duplicates"
 
 #: Os que criam ordem de execucao. Qualquer outro e informacao, nao restricao.
-TIPOS_BLOQUEANTES: frozenset[str] = frozenset({BLOQUEIA})
+BLOCKING_TYPES: frozenset[str] = frozenset({BLOCKS})
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,11 +76,11 @@ class TaskRef:
     `tipo` e vocabulario do motor -- nunca o nome do link no fornecedor.
     """
     key: str
-    tipo: str = RELACIONADO
+    kind: str = RELATED
 
     @property
-    def bloqueante(self) -> bool:
-        return self.tipo in TIPOS_BLOQUEANTES
+    def blocking(self) -> bool:
+        return self.kind in BLOCKING_TYPES
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,23 +92,23 @@ class ExternalTask:
     achado, nunca ordem.
     """
     key: str
-    titulo: str
-    situacao: SituacaoExterna = SituacaoExterna.DESCONHECIDA
+    title: str
+    status: ExternalStatus = ExternalStatus.UNKNOWN
     #: O status cru, como o fornecedor o escreveu. Preservado para diagnostico:
     #: quando `situacao` vem DESCONHECIDA, e este campo que diz o que apareceu.
-    estado_externo: str = ""
-    descricao: str = ""
+    external_status: str = ""
+    description: str = ""
     url: str | None = None
-    prioridade: int = 100
-    projeto: str = ""
-    responsavel: str | None = None
+    priority: int = 100
+    project: str = ""
+    assignee: str | None = None
     #: Dependencias e hierarquia declaradas no fornecedor.
-    vinculos: tuple[TaskRef, ...] = ()
+    links: tuple[TaskRef, ...] = ()
     #: Chaves de recurso que a task toca em exclusividade. Vazio e comum e
     #: honesto: um provedor de tasks raramente sabe quais arquivos serao
     #: tocados. Quem enriquece isso e a analise, nao o adapter.
-    recursos: tuple[str, ...] = ()
-    rotulos: tuple[str, ...] = ()
+    resources: tuple[str, ...] = ()
+    labels: tuple[str, ...] = ()
     #: True quando o registro veio de uma LISTAGEM, com campos enxutos.
     #:
     #: Listar e buscar detalhe sao operacoes de custo muito diferente: um board
@@ -116,26 +116,26 @@ class ExternalTask:
     #: este campo, "descricao vazia" e "descricao nao pedida" ficam
     #: indistinguiveis -- e o motor acusaria o board inteiro de estar mal
     #: escrito quando o incompleto era o proprio pedido.
-    parcial: bool = False
-    dados: dict[str, Any] = field(default_factory=dict)
+    partial: bool = False
+    data: dict[str, Any] = field(default_factory=dict)
 
     @property
-    def anomalias(self) -> tuple[str, ...]:
+    def anomalies(self) -> tuple[str, ...]:
         """O que veio torto do fornecedor. Reportado, nunca corrigido em silencio."""
-        achados = []
-        if self.situacao is SituacaoExterna.DESCONHECIDA:
-            achados.append(f"status nao mapeado: {self.estado_externo!r}")
-        if not self.titulo.strip():
-            achados.append("sem titulo")
-        if not self.parcial and not self.descricao.strip():
-            achados.append("sem descricao")
-        return tuple(achados)
+        findings = []
+        if self.status is ExternalStatus.UNKNOWN:
+            findings.append(f"status nao mapeado: {self.external_status!r}")
+        if not self.title.strip():
+            findings.append("sem titulo")
+        if not self.partial and not self.description.strip():
+            findings.append("sem descricao")
+        return tuple(findings)
 
 
 @dataclass(frozen=True, slots=True)
 class Comment:
-    autor: str
-    texto: str
+    author: str
+    text: str
     criado_em: str = ""
     id: str = ""
 
@@ -160,10 +160,10 @@ class TaskProvider(Port):
     def update_task(self, key: str, campos: dict[str, Any]) -> None:
         raise NotImplementedError
 
-    def transition_task(self, key: str, destino: str) -> None:
+    def transition_task(self, key: str, destination: str) -> None:
         raise NotImplementedError
 
-    def add_comment(self, key: str, texto: str) -> None:
+    def add_comment(self, key: str, text: str) -> None:
         raise NotImplementedError
 
     def add_label(self, key: str, label: str) -> None:

@@ -10,7 +10,7 @@ resposta **nao existe dentro do sistema**:
 - o backlog se autobloqueia (ciclo de dependencias).
 
 Nao entram aqui: risco alto (isso compra segunda passada, nao espera), teste
-vermelho (isso e trabalho), erro transitorio (isso e retentativa). Encher esta
+vermelho (isso e trabalho), error transitorio (isso e retentativa). Encher esta
 fila com o que o motor poderia resolver e o unico jeito garantido de fazer o dono
 parar de le-la.
 
@@ -28,34 +28,34 @@ from ..core.risk import RiskLevel
 #: Opcoes padrao. Toda escalonada oferece pelo menos: seguir a recomendacao,
 #: mandar investigar mais, ou parar. "Parar" precisa estar sempre disponivel --
 #: sem ela, a unica saida do dono seria mexer no banco.
-SEGUIR = Option("seguir", "Aprovar a recomendacao", "o motor executa o caminho recomendado")
-INVESTIGAR = Option("investigar", "Pedir mais investigacao", "devolve a task para analise")
-BLOQUEAR = Option("bloquear", "Bloquear a task", "sai da fila de trabalho ate alguem destravar")
-CANCELAR = Option("cancelar", "Cancelar a task", "encerra o trabalho")
+FOLLOW = Option("seguir", "Aprovar a recomendacao", "o motor executa o caminho recomendado")
+INVESTIGATE = Option("investigar", "Pedir mais investigacao", "devolve a task para analise")
+BLOCK = Option("bloquear", "Bloquear a task", "sai da fila de trabalho ate alguem destravar")
+CANCEL = Option("cancelar", "Cancelar a task", "encerra o trabalho")
 
 
 @dataclass(frozen=True, slots=True)
 class Briefing:
     """A projecao do Approval para a superficie. Sem vocabulario interno."""
     id: str
-    chave: str
-    titulo: str
-    o_que_aconteceu: str
-    por_que_importa: str
-    o_que_o_agente_tentou: tuple[str, ...]
-    opcoes: tuple[dict[str, str], ...]
-    recomendacao: str | None
-    risco: str
+    key: str
+    title: str
+    what_happened: str
+    why_it_matters: str
+    what_was_tried: tuple[str, ...]
+    options: tuple[dict[str, str], ...]
+    recommendation: str | None
+    risk: str
 
 
-def monta(
+def build(
     task: Task,
-    o_que_aconteceu: str,
-    por_que_importa: str,
-    tentativas: tuple[str, ...] = (),
-    opcoes: tuple[Option, ...] = (),
-    recomendacao: str | None = SEGUIR.id,
-    risco: RiskLevel = RiskLevel.MEDIUM,
+    what_happened: str,
+    why_it_matters: str,
+    attempts: tuple[str, ...] = (),
+    options: tuple[Option, ...] = (),
+    recommendation: str | None = FOLLOW.id,
+    risk: RiskLevel = RiskLevel.MEDIUM,
     run_id: str | None = None,
 ) -> Approval:
     """Cria o item da fila. `por_que_importa` e obrigatorio e nao pode ser vazio.
@@ -64,50 +64,50 @@ def monta(
     dono o trabalho de descobrir se aquilo merece atencao -- que e exatamente o
     trabalho que a fila deveria ter poupado.
     """
-    if not por_que_importa.strip():
+    if not why_it_matters.strip():
         raise ValueError("escalonada sem 'por que importa' nao entra na fila")
     return Approval(
-        id=ids.novo(ids.APPROVAL),
+        id=ids.new_id(ids.APPROVAL),
         workspace_id=task.workspace_id,
         task_id=task.id,
         run_id=run_id,
-        o_que_aconteceu=o_que_aconteceu,
-        por_que_importa=por_que_importa,
-        o_que_o_agente_tentou=tentativas,
-        opcoes=opcoes or (SEGUIR, INVESTIGAR, BLOQUEAR, CANCELAR),
-        recomendacao=recomendacao,
-        risco=risco,
+        what_happened=what_happened,
+        why_it_matters=why_it_matters,
+        what_was_tried=attempts,
+        options=options or (FOLLOW, INVESTIGATE, BLOCK, CANCEL),
+        recommendation=recommendation,
+        risk=risk,
     )
 
 
 def briefing(a: Approval, task: Task) -> Briefing:
     return Briefing(
         id=a.id,
-        chave=task.chave,
-        titulo=task.titulo,
-        o_que_aconteceu=a.o_que_aconteceu,
-        por_que_importa=a.por_que_importa,
-        o_que_o_agente_tentou=a.o_que_o_agente_tentou,
-        opcoes=tuple({"id": o.id, "rotulo": o.rotulo, "efeito": o.efeito} for o in a.opcoes),
-        recomendacao=a.recomendacao,
-        risco=a.risco.name,
+        key=task.key,
+        title=task.title,
+        what_happened=a.what_happened,
+        why_it_matters=a.why_it_matters,
+        what_was_tried=a.what_was_tried,
+        options=tuple({"id": o.id, "label": o.label, "effect": o.effect} for o in a.options),
+        recommendation=a.recommendation,
+        risk=a.risk.name,
     )
 
 
-def texto(b: Briefing) -> str:
+def render(b: Briefing) -> str:
     """Render de terminal. Mesmo conteudo que a UI mostra."""
-    linhas = [
-        f"{b.chave}  [{b.risco}]",
-        f"  {b.titulo}",
+    lines = [
+        f"{b.key}  [{b.risk}]",
+        f"  {b.title}",
         "",
-        f"  O QUE ACONTECEU   {b.o_que_aconteceu}",
-        f"  POR QUE IMPORTA   {b.por_que_importa}",
+        f"  O QUE ACONTECEU   {b.what_happened}",
+        f"  POR QUE IMPORTA   {b.why_it_matters}",
     ]
-    if b.o_que_o_agente_tentou:
-        linhas.append("  O QUE JA TENTEI   " + b.o_que_o_agente_tentou[0])
-        linhas += ["                    " + t for t in b.o_que_o_agente_tentou[1:]]
-    linhas.append("")
-    for o in b.opcoes:
-        marca = "->" if o["id"] == b.recomendacao else "  "
-        linhas.append(f"  {marca} [{o['id']}] {o['rotulo']}")
-    return "\n".join(linhas)
+    if b.what_was_tried:
+        lines.append("  O QUE JA TENTEI   " + b.what_was_tried[0])
+        lines += ["                    " + t for t in b.what_was_tried[1:]]
+    lines.append("")
+    for o in b.options:
+        mark = "->" if o["id"] == b.recommendation else "  "
+        lines.append(f"  {mark} [{o['id']}] {o['label']}")
+    return "\n".join(lines)

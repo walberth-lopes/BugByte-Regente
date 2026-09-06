@@ -26,10 +26,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from ...ports import AdapterErro, SomenteLeitura
-from ...ports.tasks import (BLOQUEIA, DUPLICA, PAI, RELACIONADO, Comment, ExternalTask,
-                            SituacaoExterna, TaskProvider, TaskRef)
-from .transporte import Transporte
+from ...ports import AdapterError, ReadOnlyRefused
+from ...ports.tasks import (BLOCKS, DUPLICATES, PARENT, RELATED, Comment, ExternalTask,
+                            ExternalStatus, TaskProvider, TaskRef)
+from .transport import Transport
 
 # ---------------------------------------------------------------------------
 # MAPEAMENTO -- externo -> interno. Todo desvio esta declarado aqui.
@@ -41,43 +41,43 @@ from .transporte import Transporte
 #: NAO e coagido para o vizinho: vira DESCONHECIDA e sobe como anomalia. Um
 #: status novo significa que alguem mudou o processo, e o motor precisa dizer
 #: isso em vez de fingir que entendeu.
-SITUACOES: dict[str, SituacaoExterna] = {
-    "TO DO": SituacaoExterna.NAO_INICIADA,
-    "BACKLOG": SituacaoExterna.NAO_INICIADA,
-    "PLANNING": SituacaoExterna.EM_ANALISE,
-    "CODING": SituacaoExterna.EM_EXECUCAO,
-    "IN PROGRESS": SituacaoExterna.EM_EXECUCAO,
-    "REVIEWING": SituacaoExterna.EM_REVISAO,
-    "IN REVIEW": SituacaoExterna.EM_REVISAO,
-    "QA STAGING": SituacaoExterna.EM_VALIDACAO,
-    "QA PRODUCTION": SituacaoExterna.EM_VALIDACAO,
-    "DONE": SituacaoExterna.CONCLUIDA,
-    "CANCELLED": SituacaoExterna.CANCELADA,
-    "WON'T DO": SituacaoExterna.CANCELADA,
+STATUS_MAP: dict[str, ExternalStatus] = {
+    "TO DO": ExternalStatus.NOT_STARTED,
+    "BACKLOG": ExternalStatus.NOT_STARTED,
+    "PLANNING": ExternalStatus.IN_ANALYSIS,
+    "CODING": ExternalStatus.IN_PROGRESS,
+    "IN PROGRESS": ExternalStatus.IN_PROGRESS,
+    "REVIEWING": ExternalStatus.IN_REVIEW,
+    "IN REVIEW": ExternalStatus.IN_REVIEW,
+    "QA STAGING": ExternalStatus.IN_VALIDATION,
+    "QA PRODUCTION": ExternalStatus.IN_VALIDATION,
+    "DONE": ExternalStatus.COMPLETED,
+    "CANCELLED": ExternalStatus.CANCELLED,
+    "WON'T DO": ExternalStatus.CANCELLED,
 }
 
 #: Rede de seguranca por categoria de status. O Jira classifica todo status em
 #: `new` / `indeterminate` / `done`, e essa classificacao existe mesmo para
-#: status que ninguem mapeou. Usa-la para `done` evita o pior erro possivel --
+#: status que ninguem mapeou. Usa-la para `done` evita o pior error possivel --
 #: despachar trabalho que ja acabou -- sem fingir precisao nos demais:
 #: `indeterminate` continua DESCONHECIDA, porque "esta no meio" nao diz se e
 #: codigo, revisao ou validacao, e chutar isso e pior que admitir a ignorancia.
-CATEGORIAS: dict[str, SituacaoExterna] = {
-    "new": SituacaoExterna.NAO_INICIADA,
-    "done": SituacaoExterna.CONCLUIDA,
+CATEGORY_MAP: dict[str, ExternalStatus] = {
+    "new": ExternalStatus.NOT_STARTED,
+    "done": ExternalStatus.COMPLETED,
 }
 
 #: PRIORIDADE EXTERNA -> PRIORIDADE INTERNA (menor roda antes).
 #: Espacado de 20 em 20 de proposito: da lugar para um planejador ajustar sem
 #: colidir com o valor vindo da origem.
-PRIORIDADES: dict[str, int] = {
+PRIORITY_MAP: dict[str, int] = {
     "HIGHEST": 10, "BLOCKER": 10, "CRITICAL": 10,
     "HIGH": 30, "MAJOR": 30,
     "MEDIUM": 50, "NORMAL": 50,
     "LOW": 70, "MINOR": 70,
     "LOWEST": 90, "TRIVIAL": 90,
 }
-PRIORIDADE_PADRAO = 50
+DEFAULT_PRIORITY = 50
 
 #: TIPO DE LINK EXTERNO -> TIPO INTERNO.
 #:
@@ -86,39 +86,39 @@ PRIORIDADE_PADRAO = 50
 #: blocked by" -- ou seja, **A depende de B**. Outward e "blocks": B depende de
 #: A, e o registro correto e na outra issue, que tera seu proprio inward.
 #: Registrar os dois lados como bloqueio inverteria metade do grafo.
-LINKS: dict[str, str] = {
-    "Blocks": BLOQUEIA,
-    "Duplicate": DUPLICA,
-    "Relates": RELACIONADO,
-    "Cloners": RELACIONADO,
-    "Problem/Incident": RELACIONADO,
+LINK_MAP: dict[str, str] = {
+    "Blocks": BLOCKS,
+    "Duplicate": DUPLICATES,
+    "Relates": RELATED,
+    "Cloners": RELATED,
+    "Problem/Incident": RELATED,
 }
 
 #: Campos da LISTAGEM. Enxuto por obrigacao: ver fato 1 no topo do arquivo.
 #: `description` fica de fora de proposito -- ela e uma arvore ADF, e cem delas
 #: transformam uma busca de rotina numa transferencia de megabytes.
-CAMPOS_LISTA = ("summary", "status", "issuetype", "priority", "labels", "parent",
+LIST_FIELDS = ("summary", "status", "issuetype", "priority", "labels", "parent",
                 "issuelinks", "assignee", "project", "updated")
 
 #: Campos do DETALHE. Pagos uma issue por vez, quando alguem de fato vai
 #: trabalhar nela. E a unica hora em que a descricao completa vale o custo.
-CAMPOS_DETALHE = CAMPOS_LISTA + ("description",)
+DETAIL_FIELDS = LIST_FIELDS + ("description",)
 
 
-def _texto_de(conteudo: Any, limite: int = 4000) -> str:
+def _text_from(content: Any, limit: int = 4000) -> str:
     """Descricao do Jira pode vir como texto ou como ADF (arvore JSON).
 
     Extrai texto legivel dos dois casos. Nao tenta reconstruir formatacao: o que
     o motor precisa e o conteudo, e ADF renderizado por regex vira ruido.
     """
-    if conteudo is None:
+    if content is None:
         return ""
-    if isinstance(conteudo, str):
-        return conteudo[:limite]
+    if isinstance(content, str):
+        return content[:limit]
     pedacos: list[str] = []
 
     def anda(no: Any) -> None:
-        if len(" ".join(pedacos)) > limite:
+        if len(" ".join(pedacos)) > limit:
             return
         if isinstance(no, dict):
             if no.get("type") == "text" and isinstance(no.get("text"), str):
@@ -129,39 +129,39 @@ def _texto_de(conteudo: Any, limite: int = 4000) -> str:
             for filho in no:
                 anda(filho)
 
-    anda(conteudo)
-    return " ".join(pedacos)[:limite]
+    anda(content)
+    return " ".join(pedacos)[:limit]
 
 
 @dataclass(slots=True)
 class JiraTasks(TaskProvider):
     """Le trabalho de um site Jira Cloud. Nunca escreve."""
 
-    transporte: Transporte
+    transporte: Transport
     #: JQL que define o que este workspace considera trabalho seu. Vem da
     #: configuracao: e o unico lugar onde a nocao de "relevante" e declarada.
     jql: str = "statusCategory != Done ORDER BY updated DESC"
     #: De onde sai a chave de recurso usada pelo scheduler. Ver `_recursos`.
-    recursos_por: str = "parent"
+    resources_by: str = "parent"
     #: Teto de paginas. Existe para que um JQL solto nao vire uma varredura de
     #: board inteiro num tick.
-    max_paginas: int = 10
-    por_pagina: int = 100
+    max_pages: int = 10
+    per_page: int = 100
     site: str = ""
-    nome: str = "jira"
+    name: str = "jira"
 
-    def descreve(self) -> dict[str, str]:
-        return {"capability": self.capability.value, "adapter": self.nome,
+    def describe(self) -> dict[str, str]:
+        return {"capability": self.capability.value, "adapter": self.name,
                 "modo": "somente-leitura", "site": self.site}
 
-    def verifica(self) -> None:
+    def verify(self) -> None:
         """Prova credencial e alcance com a chamada mais barata que existe."""
         try:
             self.transporte.get("/rest/api/3/myself", {"expand": ""})
-        except AdapterErro:
+        except AdapterError:
             raise
         except Exception as e:  # noqa: BLE001
-            raise AdapterErro(f"transporte falhou: {type(e).__name__}: {e}") from e
+            raise AdapterError(f"transporte falhou: {type(e).__name__}: {e}") from e
 
     # ---- leitura ---------------------------------------------------------
 
@@ -171,133 +171,133 @@ class JiraTasks(TaskProvider):
         if f.get("apenas_minhas"):
             jql = f"assignee = currentUser() AND ({jql})"
 
-        tarefas: list[ExternalTask] = []
+        items: list[ExternalTask] = []
         cursor: str | None = None
-        for _ in range(self.max_paginas):
-            corpo = self.transporte.get("/rest/api/3/search/jql", {
+        for _ in range(self.max_pages):
+            body = self.transporte.get("/rest/api/3/search/jql", {
                 "jql": jql,
-                "fields": ",".join(CAMPOS_LISTA),
-                "maxResults": self.por_pagina,
+                "fields": ",".join(LIST_FIELDS),
+                "maxResults": self.per_page,
                 "nextPageToken": cursor,
             })
-            if not isinstance(corpo, dict):
-                raise AdapterErro(f"busca devolveu {type(corpo).__name__}, esperava objeto")
-            for bruto in (corpo.get("issues") or []):
-                tarefas.append(self._normaliza(bruto, parcial=True))
-            cursor = corpo.get("nextPageToken")
+            if not isinstance(body, dict):
+                raise AdapterError(f"busca devolveu {type(body).__name__}, esperava objeto")
+            for bruto in (body.get("issues") or []):
+                items.append(self._normalize(bruto, partial=True))
+            cursor = body.get("nextPageToken")
             # `isLast` nem sempre vem; ausencia de cursor e o sinal confiavel.
             if not cursor:
                 break
-        return tarefas
+        return items
 
     def get_task(self, key: str) -> ExternalTask:
-        corpo = self.transporte.get(f"/rest/api/3/issue/{key}",
-                                    {"fields": ",".join(CAMPOS_DETALHE)})
-        if not isinstance(corpo, dict) or "fields" not in corpo:
-            raise AdapterErro(f"issue {key} veio sem 'fields'")
-        return self._normaliza(corpo)
+        body = self.transporte.get(f"/rest/api/3/issue/{key}",
+                                    {"fields": ",".join(DETAIL_FIELDS)})
+        if not isinstance(body, dict) or "fields" not in body:
+            raise AdapterError(f"issue {key} veio sem 'fields'")
+        return self._normalize(body)
 
     def get_comments(self, key: str) -> list[Comment]:
-        corpo = self.transporte.get(f"/rest/api/3/issue/{key}/comment",
+        body = self.transporte.get(f"/rest/api/3/issue/{key}/comment",
                                     {"maxResults": 50, "orderBy": "created"})
-        saida = []
-        for c in (corpo.get("comments") or []):
-            saida.append(Comment(
-                autor=((c.get("author") or {}).get("displayName") or "?"),
-                texto=_texto_de(c.get("body")),
+        output = []
+        for c in (body.get("comments") or []):
+            output.append(Comment(
+                author=((c.get("author") or {}).get("displayName") or "?"),
+                text=_text_from(c.get("body")),
                 criado_em=str(c.get("created") or ""),
                 id=str(c.get("id") or "")))
-        return saida
+        return output
 
     # ---- escrita: recusada ----------------------------------------------
     # Nao sao `NotImplementedError`. Sao recusas explicitas, para que um
     # chamador que tente escrever receba a razao -- e para que a intencao fique
     # legivel neste arquivo, e nao apenas no arquivo de policy.
 
-    def _recusa(self, operacao: str) -> None:
-        raise SomenteLeitura(
-            f"{self.nome} esta montado somente para leitura; '{operacao}' nao e "
+    def _refuse(self, operation: str) -> None:
+        raise ReadOnlyRefused(
+            f"{self.name} esta montado somente para leitura; '{operation}' nao e "
             f"executavel neste marco. Nenhuma mutacao no sistema externo.")
 
     def update_task(self, key: str, campos: dict[str, Any]) -> None:
-        self._recusa("update_task")
+        self._refuse("update_task")
 
-    def transition_task(self, key: str, destino: str) -> None:
-        self._recusa("transition_task")
+    def transition_task(self, key: str, destination: str) -> None:
+        self._refuse("transition_task")
 
-    def add_comment(self, key: str, texto: str) -> None:
-        self._recusa("add_comment")
+    def add_comment(self, key: str, text: str) -> None:
+        self._refuse("add_comment")
 
     def add_label(self, key: str, label: str) -> None:
-        self._recusa("add_label")
+        self._refuse("add_label")
 
     # ---- normalizacao ----------------------------------------------------
 
-    def _normaliza(self, bruto: dict[str, Any], parcial: bool = False) -> ExternalTask:
+    def _normalize(self, bruto: dict[str, Any], partial: bool = False) -> ExternalTask:
         campos = bruto.get("fields") or {}
         key = str(bruto.get("key") or "")
         if not key:
-            raise AdapterErro("issue sem 'key' -- impossivel dar identidade")
+            raise AdapterError("issue sem 'key' -- impossivel dar identidade")
 
         status = campos.get("status") or {}
         nome_status = str(status.get("name") or "")
-        categoria = str((status.get("statusCategory") or {}).get("key") or "")
-        situacao = SITUACOES.get(nome_status.strip().upper())
-        if situacao is None:
-            situacao = CATEGORIAS.get(categoria, SituacaoExterna.DESCONHECIDA)
+        category = str((status.get("statusCategory") or {}).get("key") or "")
+        status = STATUS_MAP.get(nome_status.strip().upper())
+        if status is None:
+            status = CATEGORY_MAP.get(category, ExternalStatus.UNKNOWN)
 
         prioridade_nome = str((campos.get("priority") or {}).get("name") or "")
-        prioridade = PRIORIDADES.get(prioridade_nome.strip().upper(), PRIORIDADE_PADRAO)
+        priority = PRIORITY_MAP.get(prioridade_nome.strip().upper(), DEFAULT_PRIORITY)
 
-        vinculos = self._vinculos(campos)
-        rotulos = tuple(str(x) for x in (campos.get("labels") or []))
+        links = self._links_of(campos)
+        labels = tuple(str(x) for x in (campos.get("labels") or []))
 
         return ExternalTask(
             key=key,
-            titulo=str(campos.get("summary") or ""),
-            situacao=situacao,
-            estado_externo=nome_status,
-            descricao=_texto_de(campos.get("description")),
+            title=str(campos.get("summary") or ""),
+            status=status,
+            external_status=nome_status,
+            description=_text_from(campos.get("description")),
             url=f"{self.site.rstrip('/')}/browse/{key}" if self.site else None,
-            prioridade=prioridade,
-            projeto=str((campos.get("project") or {}).get("key") or ""),
-            responsavel=((campos.get("assignee") or {}).get("displayName") or None),
-            vinculos=vinculos,
-            recursos=self._recursos(key, campos),
-            rotulos=rotulos,
-            parcial=parcial,
-            dados={
+            priority=priority,
+            project=str((campos.get("project") or {}).get("key") or ""),
+            assignee=((campos.get("assignee") or {}).get("displayName") or None),
+            links=links,
+            resources=self._resources_of(key, campos),
+            labels=labels,
+            partial=partial,
+            data={
                 "tipo": str((campos.get("issuetype") or {}).get("name") or ""),
                 "subtarefa": bool((campos.get("issuetype") or {}).get("subtask")),
-                "categoria_status": categoria,
+                "categoria_status": category,
                 "atualizada_em": str(campos.get("updated") or ""),
                 "prioridade_externa": prioridade_nome,
             })
 
-    def _vinculos(self, campos: dict[str, Any]) -> tuple[TaskRef, ...]:
-        saida: list[TaskRef] = []
+    def _links_of(self, campos: dict[str, Any]) -> tuple[TaskRef, ...]:
+        output: list[TaskRef] = []
 
         pai = campos.get("parent") or {}
         if pai.get("key"):
             # Hierarquia, nao ordem: a subtarefa NAO espera a mae terminar.
-            saida.append(TaskRef(key=str(pai["key"]), tipo=PAI))
+            output.append(TaskRef(key=str(pai["key"]), kind=PARENT))
 
         for link in (campos.get("issuelinks") or []):
             tipo_externo = str((link.get("type") or {}).get("name") or "")
-            tipo = LINKS.get(tipo_externo, RELACIONADO)
+            kind = LINK_MAP.get(tipo_externo, RELATED)
             dentro, fora = link.get("inwardIssue"), link.get("outwardIssue")
             if dentro and dentro.get("key"):
                 # "esta issue <inward> aquela". Para Blocks: "is blocked by".
-                saida.append(TaskRef(key=str(dentro["key"]), tipo=tipo))
+                output.append(TaskRef(key=str(dentro["key"]), kind=kind))
             elif fora and fora.get("key"):
                 # "esta issue <outward> aquela". Para Blocks: "blocks" -- quem
                 # depende e a OUTRA issue, e ela registrara o proprio inward.
                 # Registrar como bloqueio aqui inverteria a aresta.
-                saida.append(TaskRef(key=str(fora["key"]),
-                                     tipo=RELACIONADO if tipo == BLOQUEIA else tipo))
-        return tuple(saida)
+                output.append(TaskRef(key=str(fora["key"]),
+                                     kind=RELATED if kind == BLOCKS else kind))
+        return tuple(output)
 
-    def _recursos(self, key: str, campos: dict[str, Any]) -> tuple[str, ...]:
+    def _resources_of(self, key: str, campos: dict[str, Any]) -> tuple[str, ...]:
         """Chave de exclusao mutua para o scheduler.
 
         Um provedor de tasks nao sabe quais arquivos serao tocados -- inventar
@@ -312,9 +312,9 @@ class JiraTasks(TaskProvider):
         A precisao de verdade vem de um agente de analise lendo o codigo. Ate
         la, isto e uma heuristica declarada -- e esta escrito que e.
         """
-        if self.recursos_por == "nenhum":
+        if self.resources_by == "nenhum":
             return ()
-        if self.recursos_por == "project":
+        if self.resources_by == "project":
             return (f"project:{(campos.get('project') or {}).get('key') or '?'}",)
         pai = (campos.get("parent") or {}).get("key")
         return (f"parent:{pai}",) if pai else (f"issue:{key}",)

@@ -2,45 +2,45 @@
 #
 # Trocar de fornecedor e editar `providers`. O Core Engine nao muda.
 
-organizacao: minha-org
-cliente: cliente-zero
-workspace: primeiro
+organization: my-org
+client: first-client
+workspace: main
 
 # Ate onde o motor vai sozinho: L0 leitura, L1 codigo, L2 PR, L3 staging, L4 producao.
-autonomia: L2
+autonomy: L2
 
 # Sombra: o motor decide, registra e mostra -- mas nao executa escrita externa.
 # Nasce ligado. Desligar e decisao explicita, depois de conferir a sombra.
-sombra: true
+shadow: true
 
-raiz: .regente
-policies: ../policies/padrao.yaml
+root: .regente
+policies: ../policies/default.yaml
 
 providers:
   tasks:
-    nome: filesystem
-    diretorio: ./tasks
+    name: filesystem
+    directory: ./tasks
   workspace_provider:
-    nome: diretorio
+    name: diretorio
   runner:
-    nome: roteiro
+    name: roteiro
   notification:
-    nome: console
+    name: console
 
-projetos:
-  - nome: padrao
-    ambiente_padrao: staging
+projects:
+  - name: padrao
+    default_environment: staging
 
-limites:
+limits:
   max_workers: 2
-  max_despachos_dia: 8
+  max_dispatches_per_day: 8
 
-orcamento:
-  max_iteracoes: 24
+budget:
+  max_iterations: 24
   max_tool_calls: 120
-  max_custo_usd: 5.0
-  max_segundos: 2700
-  max_tentativas: 3
+  max_cost_usd: 5.0
+  max_seconds: 2700
+  max_attempts: 3
 
 # Somam aos fatores da base; nao os substituem.
-fatores_de_risco: []
+risk_factors: []

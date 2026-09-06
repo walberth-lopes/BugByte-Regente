@@ -19,17 +19,17 @@ class WorkArea:
     para conseguir limpar depois de um crash.
     """
     id: str
-    caminho: str
+    path: str
     branch: str | None = None
     repo: str | None = None
-    dados: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 class WorkspaceProvider(Port):
     capability = Capability.WORKSPACE
 
     @abstractmethod
-    def prepare(self, chave: str, repo: str | None = None,
+    def prepare(self, key: str, repo: str | None = None,
                 branch: str | None = None, base: str | None = None) -> WorkArea:
         """`chave` identifica a UNIDADE DE TRABALHO, nao a tentativa.
 
@@ -44,7 +44,7 @@ class WorkspaceProvider(Port):
         """Solta a area. Precisa ser seguro chamar em area ja perdida.
 
         Limpeza acontece depois de crash, quando o processo que criou a area nao
-        existe mais -- entao 'ja nao esta la' e sucesso, nao erro.
+        existe mais -- entao 'ja nao esta la' e success, nao error.
         """
 
     def list_areas(self) -> list[WorkArea]:
@@ -61,35 +61,35 @@ class RunRequest:
     """
     run_id: str
     task_id: str
-    agente: str
-    objetivo: str
+    agent: str
+    goal: str
     area: WorkArea
     contexto: dict[str, Any] = field(default_factory=dict)
     #: Acoes que este worker pode sequer tentar. O Policy Engine ainda decide
     #: cada chamada; esta lista so evita oferecer ao agente o que ele nunca
     #: poderia usar.
-    ferramentas: tuple[str, ...] = ()
-    limite_iteracoes: int = 24
-    limite_tool_calls: int = 120
-    limite_custo_usd: float = 5.0
-    limite_segundos: int = 2700
+    tools: tuple[str, ...] = ()
+    limit_iterations: int = 24
+    limit_tool_calls: int = 120
+    limit_cost_usd: float = 5.0
+    limit_seconds: int = 2700
 
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
     ok: bool
-    resumo: str
+    summary: str
     #: Como o worker terminou: 'concluido', 'timebox', 'sem_progresso',
-    #: 'orcamento', 'erro', 'precisa_humano'. O motor decide o proximo passo a
+    #: 'orcamento', 'error', 'precisa_humano'. O motor decide o proximo passo a
     #: partir daqui -- por isso e vocabulario fechado, nao texto livre.
-    desfecho: str = "concluido"
-    artefatos: dict[str, Any] = field(default_factory=dict)
-    custo_usd: float = 0.0
+    outcome: str = "concluido"
+    artifacts: dict[str, Any] = field(default_factory=dict)
+    cost_usd: float = 0.0
     tokens: int = 0
-    chamadas_tool: int = 0
-    iteracoes: int = 0
+    tool_calls: int = 0
+    iterations: int = 0
     #: Pergunta ao humano, quando `desfecho == 'precisa_humano'`.
-    pergunta: dict[str, Any] | None = None
+    question: dict[str, Any] | None = None
 
 
 class AgentRunner(Port):

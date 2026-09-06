@@ -43,150 +43,150 @@ from ..ports.repository import Branch, RepoInfo
 from ..ports.tasks import ExternalTask
 
 
-class Confianca(str, Enum):
+class Confidence(str, Enum):
     """Quanto o motor sabe sobre onde a task roda.
 
     Nao existe grau intermediario inventado. Ou a evidencia e declarada por
     alguem, ou e observada no mundo, ou nao existe.
     """
     #: Alguem declarou explicitamente. Nao ha o que interpretar.
-    DECLARADA = "DECLARADA"
+    DECLARED = "DECLARADA"
     #: O mundo mostra trabalho ja comecado num repositorio (branch com a chave).
-    OBSERVADA = "OBSERVADA"
+    OBSERVED = "OBSERVADA"
     #: Mais de um candidato com a mesma forca. O motor NAO desempata.
-    AMBIGUA = "AMBIGUA"
+    AMBIGUOUS = "AMBIGUA"
     #: Nenhuma evidencia. O motor nao chuta.
-    AUSENTE = "AUSENTE"
+    ABSENT = "AUSENTE"
 
     @property
-    def acionavel(self) -> bool:
-        return self in (Confianca.DECLARADA, Confianca.OBSERVADA)
+    def actionable(self) -> bool:
+        return self in (Confidence.DECLARED, Confidence.OBSERVED)
 
 
 @dataclass(frozen=True, slots=True)
-class Evidencia:
+class Evidence:
     """Por que este repositorio e candidato. Sem isto, nada e auditavel."""
     fonte: str
     detalhe: str
 
 
 @dataclass(frozen=True, slots=True)
-class Candidato:
+class Candidate:
     repo: RepoInfo
-    evidencias: tuple[Evidencia, ...]
+    evidence: tuple[Evidence, ...]
     #: Peso da evidencia mais forte que sustenta este candidato.
-    forca: int = 0
+    strength: int = 0
 
 
 @dataclass(frozen=True, slots=True)
-class Alvo:
+class Target:
     """O resultado da resolucao. Pode legitimamente nao ter repositorio."""
     task_key: str
-    confianca: Confianca
-    candidatos: tuple[Candidato, ...] = ()
-    motivo: str = ""
+    confidence: Confidence
+    candidatos: tuple[Candidate, ...] = ()
+    reason: str = ""
 
     @property
     def repo(self) -> RepoInfo | None:
         """O alvo, quando ha exatamente um e a evidencia sustenta."""
-        if self.confianca.acionavel and len(self.candidatos) == 1:
+        if self.confidence.actionable and len(self.candidatos) == 1:
             return self.candidatos[0].repo
         return None
 
     @property
-    def branch_base(self) -> str:
+    def base_branch(self) -> str:
         r = self.repo
-        return r.branch_base if r else ""
+        return r.base_branch if r else ""
 
 
 #: Pesos. `DECLARADA` supera `OBSERVADA` porque uma branch pode ser restos de uma
 #: tentativa abandonada, enquanto um mapa e uma afirmacao de quem sabe.
-PESO_MAPA = 100
-PESO_BRANCH = 50
+WEIGHT_DECLARED = 100
+WEIGHT_BRANCH = 50
 
 
 @dataclass(slots=True)
-class ResolvedorDeAlvo:
+class TargetResolver:
     """Junta evidencia declarada e observada. Nao interpreta texto livre."""
 
     #: `rotulo -> chave de repo`, vindo da configuracao do workspace.
-    por_rotulo: dict[str, str] = field(default_factory=dict)
+    by_label: dict[str, str] = field(default_factory=dict)
     #: `projeto -> chave de repo`.
-    por_projeto: dict[str, str] = field(default_factory=dict)
+    by_project: dict[str, str] = field(default_factory=dict)
     #: `chave de task -> chave de repo`, para o caso pontual que nao cabe em regra.
-    por_task: dict[str, str] = field(default_factory=dict)
+    by_task: dict[str, str] = field(default_factory=dict)
 
     def resolve(self, task: ExternalTask, repos: list[RepoInfo],
-                branches: dict[str, list[Branch]] | None = None) -> Alvo:
-        por_chave = {r.ref.key: r for r in repos}
+                branches: dict[str, list[Branch]] | None = None) -> Target:
+        by_key = {r.ref.key: r for r in repos}
         # Nome curto tambem resolve, para que a configuracao possa dizer
         # `dashboard-api` em vez da chave inteira. Nome AMBIGUO entre dois
         # repositorios nao entra no indice: seria reintroduzir o chute.
-        curtos: dict[str, list[RepoInfo]] = {}
+        short_names: dict[str, list[RepoInfo]] = {}
         for r in repos:
-            curtos.setdefault(r.nome.lower(), []).append(r)
-        por_nome = {n: v[0] for n, v in curtos.items() if len(v) == 1}
+            short_names.setdefault(r.name.lower(), []).append(r)
+        by_name = {n: v[0] for n, v in short_names.items() if len(v) == 1}
 
-        def acha(chave: str) -> RepoInfo | None:
-            return por_chave.get(chave) or por_nome.get(chave.lower())
+        def find_repo(key: str) -> RepoInfo | None:
+            return by_key.get(key) or by_name.get(key.lower())
 
-        achados: dict[str, list[Evidencia]] = {}
-        forcas: dict[str, int] = {}
+        findings: dict[str, list[Evidence]] = {}
+        strengths: dict[str, int] = {}
 
-        def marca(repo: RepoInfo | None, ev: Evidencia, peso: int) -> None:
+        def mark(repo: RepoInfo | None, ev: Evidence, peso: int) -> None:
             if repo is None:
                 return
-            achados.setdefault(repo.ref.key, []).append(ev)
-            forcas[repo.ref.key] = max(forcas.get(repo.ref.key, 0), peso)
+            findings.setdefault(repo.ref.key, []).append(ev)
+            strengths[repo.ref.key] = max(strengths.get(repo.ref.key, 0), peso)
 
         # --- 1. declarado ------------------------------------------------
-        if task.key in self.por_task:
-            marca(acha(self.por_task[task.key]),
-                  Evidencia("mapa:task", f"{task.key} -> {self.por_task[task.key]}"),
-                  PESO_MAPA)
-        for rot in task.rotulos:
-            if rot in self.por_rotulo:
-                marca(acha(self.por_rotulo[rot]),
-                      Evidencia("mapa:rotulo", f"rotulo '{rot}' -> {self.por_rotulo[rot]}"),
-                      PESO_MAPA)
-        if task.projeto in self.por_projeto:
-            marca(acha(self.por_projeto[task.projeto]),
-                  Evidencia("mapa:projeto",
-                            f"projeto '{task.projeto}' -> {self.por_projeto[task.projeto]}"),
-                  PESO_MAPA)
+        if task.key in self.by_task:
+            mark(find_repo(self.by_task[task.key]),
+                  Evidence("mapa:task", f"{task.key} -> {self.by_task[task.key]}"),
+                  WEIGHT_DECLARED)
+        for label in task.labels:
+            if label in self.by_label:
+                mark(find_repo(self.by_label[label]),
+                      Evidence("mapa:rotulo", f"rotulo '{label}' -> {self.by_label[label]}"),
+                      WEIGHT_DECLARED)
+        if task.project in self.by_project:
+            mark(find_repo(self.by_project[task.project]),
+                  Evidence("mapa:projeto",
+                            f"projeto '{task.project}' -> {self.by_project[task.project]}"),
+                  WEIGHT_DECLARED)
 
         # --- 2. observado no mundo ---------------------------------------
         # Casamento por palavra inteira: `SG-11` nao pode casar com `SG-110`.
         alvo_re = re.compile(rf"\b{re.escape(task.key.upper())}\b")
-        for chave, lista in (branches or {}).items():
-            repo = por_chave.get(chave)
+        for key, lista in (branches or {}).items():
+            repo = by_key.get(key)
             if repo is None:
                 continue
             for b in lista:
-                if alvo_re.search(b.nome.upper()):
-                    marca(repo, Evidencia("branch", f"'{b.nome}' cita {task.key}"),
-                          PESO_BRANCH)
+                if alvo_re.search(b.name.upper()):
+                    mark(repo, Evidence("branch", f"'{b.name}' cita {task.key}"),
+                          WEIGHT_BRANCH)
                     break
 
-        if not achados:
-            return Alvo(task_key=task.key, confianca=Confianca.AUSENTE,
-                        motivo="nenhuma evidencia declarada nem observada liga esta "
+        if not findings:
+            return Target(task_key=task.key, confidence=Confidence.ABSENT,
+                        reason="nenhuma evidencia declarada nem observada liga esta "
                                "task a um repositorio")
 
-        melhor = max(forcas.values())
-        vencedores = [k for k, f in forcas.items() if f == melhor]
+        best = max(strengths.values())
+        winners = [k for k, f in strengths.items() if f == best]
         candidatos = tuple(
-            Candidato(repo=por_chave[k], evidencias=tuple(achados[k]), forca=forcas[k])
-            for k in sorted(vencedores))
+            Candidate(repo=by_key[k], evidence=tuple(findings[k]), strength=strengths[k])
+            for k in sorted(winners))
 
-        if len(vencedores) > 1:
-            return Alvo(task_key=task.key, confianca=Confianca.AMBIGUA,
+        if len(winners) > 1:
+            return Target(task_key=task.key, confidence=Confidence.AMBIGUOUS,
                         candidatos=candidatos,
-                        motivo=f"{len(vencedores)} repositorios com evidencia de mesma "
-                               f"forca: {', '.join(vencedores)}")
+                        reason=f"{len(winners)} repositorios com evidencia de mesma "
+                               f"forca: {', '.join(winners)}")
 
-        return Alvo(
+        return Target(
             task_key=task.key,
-            confianca=Confianca.DECLARADA if melhor >= PESO_MAPA else Confianca.OBSERVADA,
+            confidence=Confidence.DECLARED if best >= WEIGHT_DECLARED else Confidence.OBSERVED,
             candidatos=candidatos,
-            motivo="; ".join(e.detalhe for e in candidatos[0].evidencias))
+            reason="; ".join(e.detalhe for e in candidatos[0].evidence))

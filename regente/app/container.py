@@ -16,7 +16,7 @@ from ..core.model import Event, Project, Workspace
 from ..core.policy import PolicyEngine
 from ..core.risk import RiskEngine
 from ..engine.gate import Gate
-from ..engine.alvo import ResolvedorDeAlvo
+from ..engine.target import TargetResolver
 from ..engine.orchestrator import Orchestrator
 from ..engine.store_sqlite import SqliteStore
 from ..ports import Capability
@@ -24,22 +24,22 @@ from ..ports.support import NotificationProvider
 from ..ports.repository import RepositoryProvider
 from ..ports.tasks import TaskProvider
 from ..ports.workspace import AgentRunner, WorkspaceProvider
-from .config import Config, carrega_policies
+from .config import Config, load_policies
 
 
-def _id_estavel(prefixo: str, *partes: str) -> str:
+def _stable_id(prefixo: str, *partes: str) -> str:
     """Id deterministico a partir do nome.
 
     Reabrir o mesmo workspace precisa devolver o mesmo id, senao cada `regente
     tick` cria um workspace novo e o estado anterior fica orfao no banco.
     """
     import hashlib
-    marca = hashlib.sha1("/".join(partes).encode("utf-8")).hexdigest()[:12]
-    return f"{prefixo}_{marca}"
+    mark = hashlib.sha1("/".join(partes).encode("utf-8")).hexdigest()[:12]
+    return f"{prefixo}_{mark}"
 
 
 @dataclass(slots=True)
-class Motor:
+class Engine:
     config: Config
     store: SqliteStore
     workspace: Workspace
@@ -47,139 +47,139 @@ class Motor:
     gate: Gate
     #: Opcional: um workspace pode governar tasks sem governar codigo.
     repos: RepositoryProvider | None = None
-    resolvedor: ResolvedorDeAlvo | None = None
+    resolvedor: TargetResolver | None = None
     policy: PolicyEngine | None = None
-    risco: RiskEngine | None = None
+    risk: RiskEngine | None = None
 
-    def fecha(self) -> None:
-        self.store.fecha()
+    def close(self) -> None:
+        self.store.close()
 
 
-def monta(cfg: Config) -> Motor:
-    cfg.raiz.mkdir(parents=True, exist_ok=True)
+def build(cfg: Config) -> Engine:
+    cfg.root.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(cfg.banco)
-    store.migra()
+    store.migrate()
 
-    org_id = _id_estavel(ids.ORG, cfg.organizacao)
-    client_id = _id_estavel(ids.CLIENT, cfg.organizacao, cfg.cliente)
+    org_id = _stable_id(ids.ORG, cfg.organization)
+    client_id = _stable_id(ids.CLIENT, cfg.organization, cfg.client)
     ws = Workspace(
-        id=_id_estavel(ids.WORKSPACE, cfg.organizacao, cfg.cliente, cfg.workspace),
-        client_id=client_id, nome=cfg.workspace,
-        autonomia_maxima=cfg.autonomia, raiz=str(cfg.raiz))
-    store.salva_workspace(ws)
+        id=_stable_id(ids.WORKSPACE, cfg.organization, cfg.client, cfg.workspace),
+        client_id=client_id, name=cfg.workspace,
+        max_autonomy=cfg.autonomy, root=str(cfg.root))
+    store.save_workspace(ws)
 
-    projetos = cfg.projetos or ()
-    for pr in projetos:
-        store.salva_project(Project(
-            id=_id_estavel(ids.PROJECT, ws.id, pr.nome), workspace_id=ws.id,
-            nome=pr.nome, ambiente_padrao=pr.ambiente_padrao,
-            autonomia_maxima=pr.autonomia))
-    project_id = (_id_estavel(ids.PROJECT, ws.id, projetos[0].nome)
-                  if projetos else _id_estavel(ids.PROJECT, ws.id, "padrao"))
-    if not projetos:
-        store.salva_project(Project(id=project_id, workspace_id=ws.id, nome="padrao"))
+    projects = cfg.projects or ()
+    for pr in projects:
+        store.save_project(Project(
+            id=_stable_id(ids.PROJECT, ws.id, pr.name), workspace_id=ws.id,
+            name=pr.name, default_environment=pr.default_environment,
+            max_autonomy=pr.autonomy))
+    project_id = (_stable_id(ids.PROJECT, ws.id, projects[0].name)
+                  if projects else _stable_id(ids.PROJECT, ws.id, "padrao"))
+    if not projects:
+        store.save_project(Project(id=project_id, workspace_id=ws.id, name="padrao"))
 
     # Segredos sao escopados ao workspace ANTES de qualquer adapter existir:
     # nenhum adapter recebe um resolvedor que alcance outro cliente.
-    segredos = registry.cria(Capability.SECRETS, "escopado",
-                             {"permitidas": cfg.segredos, "workspace": ws.nome})
+    secrets = registry.create(Capability.SECRETS, "escopado",
+                             {"allowed": cfg.secrets, "workspace": ws.name})
 
-    # Observador: toda chamada a provedor externo vira evento, com tenancy.
+    # Observador: toda call a provedor externo vira evento, com tenancy.
     # O adapter nao conhece o Store -- ele avisa, e quem escuta e o motor.
-    def observa(chamada) -> None:
-        store.anota(Event(
-            id=ids.novo(ids.EVENT), workspace_id=ws.id, tipo="chamada_provedor",
-            ator=cfg.providers["tasks"].nome,
-            resumo=(f"{chamada.operacao} {chamada.caminho} "
-                    f"{'ok' if chamada.sucesso else 'FALHOU'} {chamada.duracao_ms}ms"),
-            dados={"organizacao": cfg.organizacao, "cliente": cfg.cliente,
-                   "provedor": cfg.providers["tasks"].nome,
-                   "operacao": chamada.operacao, "caminho": chamada.caminho,
-                   "duracao_ms": chamada.duracao_ms, "sucesso": chamada.sucesso,
-                   "status": chamada.status, "tentativas": chamada.tentativas,
-                   "limite_de_taxa": chamada.limitado,
-                   "request_id": chamada.request_id, "erro": chamada.erro}))
+    def observe(call) -> None:
+        store.record_event(Event(
+            id=ids.new_id(ids.EVENT), workspace_id=ws.id, kind="chamada_provedor",
+            actor=cfg.providers["tasks"].name,
+            summary=(f"{call.operation} {call.path} "
+                    f"{'ok' if call.success else 'FALHOU'} {call.duration_ms}ms"),
+            data={"organization": cfg.organization, "client": cfg.client,
+                   "provider": cfg.providers["tasks"].name,
+                   "operation": call.operation, "path": call.path,
+                   "duration_ms": call.duration_ms, "success": call.success,
+                   "status": call.status, "attempts": call.attempts,
+                   "rate_limited": call.rate_limited,
+                   "request_id": call.request_id, "error": call.error}))
 
-    def cria(cap: Capability, chave: str, extras: dict | None = None):
-        conf = cfg.providers[chave]
-        return registry.cria(cap, conf.nome, {**conf.opcoes, **(extras or {})})
+    def create(cap: Capability, key: str, extras: dict | None = None):
+        conf = cfg.providers[key]
+        return registry.create(cap, conf.name, {**conf.options, **(extras or {})})
 
-    tasks: TaskProvider = cria(Capability.TASKS, "tasks",
-                               {"segredos": segredos, "observador": observa})
+    tasks: TaskProvider = create(Capability.TASKS, "tasks",
+                               {"secrets": secrets, "observer": observe})
     repos: RepositoryProvider | None = None
     if "repository" in cfg.providers:
-        repos = cria(Capability.REPOSITORY, "repository",
-                     {"segredos": segredos, "observador": observa})
-    areas: WorkspaceProvider = cria(Capability.WORKSPACE, "workspace_provider",
-                                    {"raiz": str(cfg.areas)})
-    runner: AgentRunner = cria(Capability.RUNNER, "runner")
+        repos = create(Capability.REPOSITORY, "repository",
+                     {"secrets": secrets, "observer": observe})
+    areas: WorkspaceProvider = create(Capability.WORKSPACE, "workspace_provider",
+                                    {"root": str(cfg.areas)})
+    runner: AgentRunner = create(Capability.RUNNER, "runner")
     notificador: NotificationProvider | None = None
     if "notification" in cfg.providers:
-        notificador = cria(Capability.NOTIFICATION, "notification", {"jornal": str(cfg.jornal)})
+        notificador = create(Capability.NOTIFICATION, "notification", {"journal": str(cfg.journal)})
 
-    policy = PolicyEngine.de_config(carrega_policies(cfg.policies))
-    risco = RiskEngine.de_config(list(cfg.fatores_de_risco))
-    gate = Gate(store=store, policy=policy, risco=risco)
+    policy = PolicyEngine.from_config(load_policies(cfg.policies))
+    risk = RiskEngine.from_config(list(cfg.risk_factors))
+    gate = Gate(store=store, policy=policy, risk=risk)
 
     orq = Orchestrator(
         store=store, workspace=ws, tasks_provider=tasks, area_provider=areas,
-        runner=runner, gate=gate, risco=risco, limites=cfg.limites,
-        orcamento=cfg.orcamento, notificador=notificador, project_id=project_id,
-        lease_segundos=cfg.lease_segundos)
+        runner=runner, gate=gate, risk=risk, limits=cfg.limits,
+        budget=cfg.budget, notificador=notificador, project_id=project_id,
+        lease_seconds=cfg.lease_seconds)
 
-    resolvedor = ResolvedorDeAlvo(
-        por_rotulo=dict(cfg.alvos.get("por_rotulo") or {}),
-        por_projeto=dict(cfg.alvos.get("por_projeto") or {}),
-        por_task=dict(cfg.alvos.get("por_task") or {}))
+    resolvedor = TargetResolver(
+        by_label=dict(cfg.targets.get("por_rotulo") or {}),
+        by_project=dict(cfg.targets.get("por_projeto") or {}),
+        by_task=dict(cfg.targets.get("por_task") or {}))
 
-    return Motor(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate,
-                 repos=repos, resolvedor=resolvedor, policy=policy, risco=risco)
+    return Engine(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate,
+                 repos=repos, resolvedor=resolvedor, policy=policy, risk=risk)
 
 
-def diagnostico(cfg: Config) -> list[tuple[str, bool, str]]:
+def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
     """Checagens do `regente doctor`. Cada aposta provada, nenhuma suposta."""
-    saida: list[tuple[str, bool, str]] = []
+    output: list[tuple[str, bool, str]] = []
 
-    def confere(nome: str, fn) -> None:
+    def expect_prefix(name: str, fn) -> None:
         try:
-            saida.append((nome, True, fn() or "ok"))
+            output.append((name, True, fn() or "ok"))
         except Exception as e:
-            saida.append((nome, False, f"{type(e).__name__}: {e}"[:200]))
+            output.append((name, False, f"{type(e).__name__}: {e}"[:200]))
 
-    confere("raiz de estado", lambda: (cfg.raiz.mkdir(parents=True, exist_ok=True), str(cfg.raiz))[1])
+    expect_prefix("raiz de estado", lambda: (cfg.root.mkdir(parents=True, exist_ok=True), str(cfg.root))[1])
 
     def banco() -> str:
         s = SqliteStore(cfg.banco)
-        s.migra()
-        s.verifica()
-        s.fecha()
+        s.migrate()
+        s.verify()
+        s.close()
         return str(cfg.banco)
-    confere("banco", banco)
+    expect_prefix("banco", banco)
 
-    for chave, cap in (("tasks", Capability.TASKS),
+    for key, cap in (("tasks", Capability.TASKS),
                        ("repository", Capability.REPOSITORY),
                        ("workspace_provider", Capability.WORKSPACE),
                        ("runner", Capability.RUNNER),
                        ("notification", Capability.NOTIFICATION)):
-        if chave not in cfg.providers:
+        if key not in cfg.providers:
             continue
-        conf = cfg.providers[chave]
+        conf = cfg.providers[key]
 
-        def prova(cap=cap, conf=conf, chave=chave) -> str:
+        def prova(cap=cap, conf=conf, key=key) -> str:
             extras: dict = {}
             if cap is Capability.WORKSPACE:
-                extras = {"raiz": str(cfg.areas)}
+                extras = {"root": str(cfg.areas)}
             elif cap is Capability.NOTIFICATION:
-                extras = {"jornal": str(cfg.jornal)}
+                extras = {"journal": str(cfg.journal)}
             elif cap in (Capability.TASKS, Capability.REPOSITORY):
-                extras = {"segredos": registry.cria(
+                extras = {"secrets": registry.create(
                     Capability.SECRETS, "escopado",
-                    {"permitidas": cfg.segredos, "workspace": cfg.workspace})}
-            porta = registry.cria(cap, conf.nome, {**conf.opcoes, **extras})
-            porta.verifica()
-            return conf.nome
-        confere(f"provider {chave}", prova)
+                    {"allowed": cfg.secrets, "workspace": cfg.workspace})}
+            porta = registry.create(cap, conf.name, {**conf.options, **extras})
+            porta.verify()
+            return conf.name
+        expect_prefix(f"provider {key}", prova)
 
-    confere("policies", lambda: f"{len(carrega_policies(cfg.policies))} regra(s)")
-    saida.append(("modo", True, "sombra" if cfg.sombra else "VALENDO"))
-    return saida
+    expect_prefix("policies", lambda: f"{len(load_policies(cfg.policies))} regra(s)")
+    output.append(("modo", True, "sombra" if cfg.shadow else "VALENDO"))
+    return output

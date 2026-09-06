@@ -28,47 +28,47 @@ from .graph import DependencyGraph
 
 
 @dataclass(frozen=True, slots=True)
-class Candidata:
+class Candidate:
     """O que o scheduler precisa saber de uma task. Nada alem disso."""
     task_id: str
-    prioridade: int = 100
-    recursos: frozenset[str] = frozenset()
-    chave: str = ""
+    priority: int = 100
+    resources: frozenset[str] = frozenset()
+    key: str = ""
 
 
 @dataclass(frozen=True, slots=True)
-class Limites:
+class Limits:
     max_workers: int = 2
-    max_despachos_dia: int = 8
+    max_dispatches_per_day: int = 8
 
 
 @dataclass(frozen=True, slots=True)
-class Adiada:
+class Deferred:
     task_id: str
-    motivo: str
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
-class Plano:
-    despachar: tuple[str, ...] = ()
-    adiadas: tuple[Adiada, ...] = ()
+class Plan:
+    dispatch: tuple[str, ...] = ()
+    deferred: tuple[Deferred, ...] = ()
     #: Tasks que se autobloqueiam. Nao viram trabalho: viram pergunta ao humano.
-    em_ciclo: tuple[str, ...] = ()
+    in_cycle: tuple[str, ...] = ()
 
     @property
     def vazio(self) -> bool:
-        return not self.despachar
+        return not self.dispatch
 
 
-def planeja(
-    candidatas: list[Candidata],
+def plan(
+    candidates: list[Candidate],
     grafo: DependencyGraph,
-    concluidas: set[str],
-    em_execucao: dict[str, frozenset[str]],
-    limites: Limites = Limites(),
-    despachos_hoje: int = 0,
+    completed: set[str],
+    running_now: dict[str, frozenset[str]],
+    limits: Limits = Limits(),
+    dispatched_today: int = 0,
     nomes: dict[str, str] | None = None,
-) -> Plano:
+) -> Plan:
     """`em_execucao` mapeia task_id -> recursos que ela ja segurou.
 
     `nomes` traduz id interno para a chave que um humano reconhece. Um motivo de
@@ -80,51 +80,51 @@ def planeja(
     cada execucao, e o motor fica indo e voltando sem terminar nada.
     """
     chave_de = (nomes or {})
-    travadas = grafo.em_ciclo()
-    desbloqueadas = grafo.desbloqueadas(concluidas)
+    locked = grafo.in_cycle()
+    unblocked = grafo.unblocked(completed)
 
     # Recursos ja ocupados por quem esta rodando. Um worker vivo tem posse.
-    ocupados: set[str] = set()
-    for recursos in em_execucao.values():
-        ocupados |= set(recursos)
+    taken: set[str] = set()
+    for resources in running_now.values():
+        taken |= set(resources)
 
-    livres = max(0, limites.max_workers - len(em_execucao))
-    saldo_dia = max(0, limites.max_despachos_dia - despachos_hoje)
+    free_slots = max(0, limits.max_workers - len(running_now))
+    daily_budget = max(0, limits.max_dispatches_per_day - dispatched_today)
 
-    despachar: list[str] = []
-    adiadas: list[Adiada] = []
+    dispatch: list[str] = []
+    deferred: list[Deferred] = []
 
-    for c in sorted(candidatas, key=lambda x: (x.prioridade, x.chave or x.task_id)):
-        if c.task_id in travadas:
+    for c in sorted(candidates, key=lambda x: (x.priority, x.key or x.task_id)):
+        if c.task_id in locked:
             continue  # reportada em `em_ciclo`, nunca despachada
-        if c.task_id in em_execucao:
+        if c.task_id in running_now:
             continue
-        if c.task_id not in desbloqueadas:
-            pendentes = sorted(chave_de.get(p, p) for p in grafo.pais(c.task_id) - concluidas)
-            adiadas.append(Adiada(c.task_id, f"depende de {', '.join(pendentes) or 'trabalho nao concluido'}"))
-            continue
-
-        colisao = c.recursos & ocupados
-        if colisao:
-            adiadas.append(Adiada(c.task_id, f"recurso ocupado: {', '.join(sorted(colisao))}"))
-            continue
-        if not livres:
-            adiadas.append(Adiada(c.task_id, "sem slot livre"))
-            continue
-        if not saldo_dia:
-            adiadas.append(Adiada(c.task_id, "teto diario de despachos atingido"))
+        if c.task_id not in unblocked:
+            pending = sorted(chave_de.get(p, p) for p in grafo.parents(c.task_id) - completed)
+            deferred.append(Deferred(c.task_id, f"depende de {', '.join(pending) or 'trabalho nao concluido'}"))
             continue
 
-        despachar.append(c.task_id)
+        collision = c.resources & taken
+        if collision:
+            deferred.append(Deferred(c.task_id, f"recurso ocupado: {', '.join(sorted(collision))}"))
+            continue
+        if not free_slots:
+            deferred.append(Deferred(c.task_id, "sem slot livre"))
+            continue
+        if not daily_budget:
+            deferred.append(Deferred(c.task_id, "teto diario de despachos atingido"))
+            continue
+
+        dispatch.append(c.task_id)
         # Reserva ja aqui: duas candidatas do MESMO plano nao podem sair juntas
         # se compartilham recurso. Esquecer isto e o jeito classico de despachar
         # dois workers para a mesma migration no primeiro tick paralelo.
-        ocupados |= c.recursos
-        livres -= 1
-        saldo_dia -= 1
+        taken |= c.resources
+        free_slots -= 1
+        daily_budget -= 1
 
-    return Plano(
-        despachar=tuple(despachar),
-        adiadas=tuple(adiadas),
-        em_ciclo=tuple(sorted(travadas)),
+    return Plan(
+        dispatch=tuple(dispatch),
+        deferred=tuple(deferred),
+        in_cycle=tuple(sorted(locked)),
     )

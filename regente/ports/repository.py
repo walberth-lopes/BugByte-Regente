@@ -32,7 +32,7 @@ from typing import Any
 from . import Capability, Port
 
 
-class CapacidadeRepo(str, Enum):
+class RepoCapability(str, Enum):
     """O que um adapter consegue fazer com um repositorio.
 
     Declarado pelo adapter, consultado pelo motor antes de propor trabalho.
@@ -40,29 +40,29 @@ class CapacidadeRepo(str, Enum):
     inteiro -- e, pior, uma escalonada ao humano por um motivo que o motor
     poderia ter previsto sozinho.
     """
-    LER_METADADOS = "ler_metadados"
-    LER_ARQUIVOS = "ler_arquivos"
-    LER_HISTORICO = "ler_historico"
-    LER_BRANCHES = "ler_branches"
-    LER_PULL_REQUESTS = "ler_pull_requests"
-    CLONAR = "clonar"
+    LER_METADADOS = "read_metadata"
+    LER_ARQUIVOS = "read_files"
+    LER_HISTORICO = "read_history"
+    LER_BRANCHES = "read_branches"
+    LER_PULL_REQUESTS = "read_pull_requests"
+    CLONAR = "clone"
     # As de escrita existem no vocabulario para que a policy e a UI possam
     # raciocinar sobre elas antes de qualquer implementacao existir.
-    CRIAR_BRANCH = "criar_branch"
-    COMMITAR = "commitar"
-    EMPURRAR = "empurrar"
-    ABRIR_PR = "abrir_pr"
-    REVISAR = "revisar"
-    MERGEAR = "mergear"
+    CRIAR_BRANCH = "create_branch"
+    COMMITAR = "commit"
+    EMPURRAR = "push"
+    ABRIR_PR = "open_pr"
+    REVISAR = "review"
+    MERGEAR = "merge"
 
 
-LEITURA: frozenset[CapacidadeRepo] = frozenset({
-    CapacidadeRepo.LER_METADADOS, CapacidadeRepo.LER_ARQUIVOS,
-    CapacidadeRepo.LER_HISTORICO, CapacidadeRepo.LER_BRANCHES,
-    CapacidadeRepo.LER_PULL_REQUESTS, CapacidadeRepo.CLONAR,
+READ_CAPS: frozenset[RepoCapability] = frozenset({
+    RepoCapability.LER_METADADOS, RepoCapability.LER_ARQUIVOS,
+    RepoCapability.LER_HISTORICO, RepoCapability.LER_BRANCHES,
+    RepoCapability.LER_PULL_REQUESTS, RepoCapability.CLONAR,
 })
 
-ESCRITA: frozenset[CapacidadeRepo] = frozenset(CapacidadeRepo) - LEITURA
+WRITE_CAPS: frozenset[RepoCapability] = frozenset(RepoCapability) - READ_CAPS
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,72 +80,72 @@ class RepoRef:
     def __str__(self) -> str:
         return f"{self.provider}:{self.key}"
 
-    def escopado_em(self, workspace_id: str) -> str:
+    def scoped_to(self, workspace_id: str) -> str:
         """A identidade que o motor usa. Unica no universo de um deployment."""
         return f"{workspace_id}/{self.provider}/{self.key}"
 
-    def recurso(self, workspace_id: str) -> str:
+    def resource(self, workspace_id: str) -> str:
         """Chave de exclusao mutua para o scheduler e para o lease."""
-        return f"repo:{self.escopado_em(workspace_id)}"
+        return f"repo:{self.scoped_to(workspace_id)}"
 
 
 @dataclass(frozen=True, slots=True)
 class RepoInfo:
     """Um repositorio como o provedor o descreve."""
     ref: RepoRef
-    nome: str
+    name: str
     #: Branch de integracao REAL, lida do provedor.
     #:
     #: Nunca presumir 'main'. Derivar branch de trabalho da base errada produz um
-    #: PR cheio de conflito que ninguem pediu, e o erro so aparece depois do
+    #: PR cheio de conflito que ninguem pediu, e o error so aparece depois do
     #: push -- quando ja custou o trabalho inteiro.
-    branch_base: str = ""
+    base_branch: str = ""
     #: De onde clonar. Pode ser URL remota ou caminho local.
-    origem_de_clone: str | None = None
+    clone_origin: str | None = None
     #: Onde um humano ve este repositorio.
     url: str | None = None
-    arquivado: bool = False
-    privado: bool | None = None
-    capacidades: frozenset[CapacidadeRepo] = field(default_factory=frozenset)
+    archived: bool = False
+    private: bool | None = None
+    capabilities: frozenset[RepoCapability] = field(default_factory=frozenset)
     #: True quando o registro veio de uma LISTAGEM, com campos enxutos --
     #: mesma distincao que vale para tasks: "nao veio" nao e "esta vazio".
-    parcial: bool = False
-    dados: dict[str, Any] = field(default_factory=dict)
+    partial: bool = False
+    data: dict[str, Any] = field(default_factory=dict)
 
-    def pode(self, c: CapacidadeRepo) -> bool:
-        return c in self.capacidades
-
-    @property
-    def anomalias(self) -> tuple[str, ...]:
-        achados = []
-        if not self.parcial and not self.branch_base:
-            achados.append("sem branch base -- derivar trabalho daqui e chute")
-        if not self.nome.strip():
-            achados.append("sem nome legivel")
-        if self.arquivado:
-            achados.append("arquivado: nao aceita trabalho novo")
-        return tuple(achados)
+    def can(self, c: RepoCapability) -> bool:
+        return c in self.capabilities
 
     @property
-    def utilizavel(self) -> bool:
+    def anomalies(self) -> tuple[str, ...]:
+        findings = []
+        if not self.partial and not self.base_branch:
+            findings.append("sem branch base -- derivar trabalho daqui e chute")
+        if not self.name.strip():
+            findings.append("sem nome legivel")
+        if self.archived:
+            findings.append("arquivado: nao aceita trabalho novo")
+        return tuple(findings)
+
+    @property
+    def usable(self) -> bool:
         """Da para trabalhar aqui? Arquivado e sem base nao dao."""
-        return bool(self.branch_base) and not self.arquivado
+        return bool(self.base_branch) and not self.archived
 
 
 @dataclass(frozen=True, slots=True)
 class Branch:
-    nome: str
+    name: str
     sha: str = ""
     #: True quando e a branch de integracao do repositorio.
     e_base: bool = False
-    atualizada_em: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class FileChange:
-    caminho: str
-    adicoes: int = 0
-    remocoes: int = 0
+    path: str
+    additions: int = 0
+    deletions: int = 0
     status: str = "modified"
 
 
@@ -153,9 +153,9 @@ class FileChange:
 class PullRequest:
     numero: int
     repo: RepoRef
-    titulo: str
+    title: str
     url: str
-    estado: str = "OPEN"
+    state: str = "OPEN"
     #: SHA exato do head. Sem ele e impossivel distinguir parecer vigente de
     #: parecer vencido -- e um parecer vencido descreve um codigo e aparece
     #: grudado noutro.
@@ -164,10 +164,10 @@ class PullRequest:
     base: str = ""
     rascunho: bool = False
     autor: str = ""
-    adicoes: int = 0
-    remocoes: int = 0
-    arquivos: tuple[FileChange, ...] = ()
-    dados: dict[str, Any] = field(default_factory=dict)
+    additions: int = 0
+    deletions: int = 0
+    files: tuple[FileChange, ...] = ()
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,7 +175,7 @@ class Review:
     autor: str
     veredito: str          # APPROVED | CHANGES_REQUESTED | COMMENTED
     commit_sha: str = ""
-    corpo: str = ""
+    body: str = ""
     id: str = ""
 
 
@@ -183,7 +183,7 @@ class RepositoryProvider(Port):
     capability = Capability.REPOSITORY
 
     #: O que este adapter, como esta montado, consegue fazer.
-    capacidades: frozenset[CapacidadeRepo] = LEITURA
+    capabilities: frozenset[RepoCapability] = READ_CAPS
 
     # ---- descoberta e leitura -------------------------------------------
 
@@ -198,7 +198,7 @@ class RepositoryProvider(Port):
     def list_branches(self, key: str, filtro: dict[str, Any] | None = None) -> list[Branch]:
         return []
 
-    def read_file(self, key: str, caminho: str, ref: str | None = None) -> str:
+    def read_file(self, key: str, path: str, ref: str | None = None) -> str:
         raise NotImplementedError
 
     def list_pull_requests(self, filtro: dict[str, Any] | None = None) -> list[PullRequest]:
@@ -216,13 +216,13 @@ class RepositoryProvider(Port):
     # agora. Cada uma tem a forma que impede um defeito ja conhecido -- e por
     # isso vale escreve-las antes, e nao depois de o defeito acontecer.
 
-    def create_branch(self, key: str, nome: str, a_partir_de: str) -> Branch:
+    def create_branch(self, key: str, name: str, a_partir_de: str) -> Branch:
         """`a_partir_de` e obrigatorio: derivar da base implicita e o caminho
         curto para um PR nascido de codigo velho."""
         raise NotImplementedError
 
-    def create_commit(self, key: str, branch: str, mensagem: str,
-                      arquivos: dict[str, str]) -> str:
+    def create_commit(self, key: str, branch: str, message: str,
+                      files: dict[str, str]) -> str:
         raise NotImplementedError
 
     def push(self, key: str, branch: str, esperado_sha: str | None = None) -> None:
@@ -230,11 +230,11 @@ class RepositoryProvider(Port):
         raise NotImplementedError
 
     def create_pull_request(self, key: str, branch: str, base: str,
-                            titulo: str, corpo: str) -> PullRequest:
+                            title: str, body: str) -> PullRequest:
         raise NotImplementedError
 
     def submit_review(self, key: str, numero: int, head_sha: str,
-                      corpo: str, veredito: str) -> Review:
+                      body: str, veredito: str) -> Review:
         """`head_sha` e obrigatorio na assinatura para que nenhum adapter possa
         publicar 'no head que existir agora'. O adapter deve reler o head e
         abortar se mudou: parecer que nasce vencido e pior que parecer ausente."""

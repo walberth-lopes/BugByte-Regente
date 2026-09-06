@@ -32,10 +32,6 @@ class RiskLevel(IntEnum):
     HIGH = 3
     CRITICAL = 4
 
-    @property
-    def nome(self) -> str:
-        return self.name
-
 
 @dataclass(frozen=True, slots=True)
 class Signal:
@@ -44,66 +40,66 @@ class Signal:
     A evidencia e obrigatoria porque um risco sem evidencia nao e auditavel --
     e sem auditoria o dono nao consegue afrouxar uma regra com seguranca.
     """
-    nome: str
-    nivel: RiskLevel
-    evidencia: str
+    name: str
+    level: RiskLevel
+    evidence: str
 
 
 @dataclass(frozen=True, slots=True)
 class RiskAssessment:
-    nivel: RiskLevel
-    sinais: tuple[Signal, ...] = ()
+    level: RiskLevel
+    signals: tuple[Signal, ...] = ()
 
     @property
-    def exige_segunda_passada(self) -> bool:
+    def requires_second_pass(self) -> bool:
         """HIGH e CRITICAL nao esperam humano: eles exigem releitura adversarial."""
-        return self.nivel >= RiskLevel.HIGH
+        return self.level >= RiskLevel.HIGH
 
     @property
-    def motivos(self) -> tuple[str, ...]:
-        return tuple(f"{s.nome}: {s.evidencia}" for s in self.sinais)
+    def reasons(self) -> tuple[str, ...]:
+        return tuple(f"{s.name}: {s.evidence}" for s in self.signals)
 
 
 @dataclass(frozen=True, slots=True)
-class Fator:
+class Factor:
     """Regra declarativa de risco, vinda de configuracao.
 
     `campo` e lido do contexto da acao; `casa` e uma lista de padroes glob
     (para texto) ou um limiar numerico (para `maior_que`).
     """
-    nome: str
-    nivel: RiskLevel
-    campo: str
-    casa: tuple[str, ...] = ()
-    maior_que: float | None = None
-    igual_a: Any = None
+    name: str
+    level: RiskLevel
+    field: str
+    matches: tuple[str, ...] = ()
+    greater_than: float | None = None
+    equal_to: Any = None
 
 
 #: Base minima que vale para qualquer cliente. O arquivo de configuracao SOMA
 #: fatores; ele nao substitui estes, porque sao os que descrevem dano fisico ao
 #: mundo (producao, dado, credencial) e nao preferencia de time.
-FATORES_BASE: tuple[Fator, ...] = (
-    Fator("producao", RiskLevel.HIGH, "ambiente", ("prod", "production", "producao")),
-    Fator("destrutivo", RiskLevel.CRITICAL, "acao",
+BASE_FACTORS: tuple[Factor, ...] = (
+    Factor("producao", RiskLevel.HIGH, "environment", ("prod", "production", "producao")),
+    Factor("destrutivo", RiskLevel.CRITICAL, "action",
           ("*.delete", "*.drop", "*.destroy", "*.purge", "*.truncate", "*.rollback")),
-    Fator("migration", RiskLevel.HIGH, "caminhos",
+    Factor("migration", RiskLevel.HIGH, "paths",
           ("*migrations/*", "*alembic/*", "*.sql", "*schema*")),
-    Fator("infraestrutura", RiskLevel.HIGH, "caminhos",
+    Factor("infraestrutura", RiskLevel.HIGH, "paths",
           ("*terraform/*", "*dockerfile*", "*workflows/*", "*pipelines/*",
            "*deploy/*", "*infra/*", "*chart/*")),
-    Fator("credencial", RiskLevel.CRITICAL, "caminhos",
+    Factor("credencial", RiskLevel.CRITICAL, "paths",
           ("*secret*", "*credential*", "*.env*", "*iam*", "*token*")),
-    Fator("autenticacao", RiskLevel.HIGH, "caminhos", ("*auth*", "*login*", "*session*", "*permission*")),
-    Fator("pagamento", RiskLevel.HIGH, "caminhos", ("*payment*", "*billing*", "*invoice*", "*checkout*")),
-    Fator("api_publica", RiskLevel.MEDIUM, "caminhos", ("*api/*", "*routes/*", "*openapi*", "*proto*")),
-    Fator("diff_grande", RiskLevel.MEDIUM, "linhas", maior_que=600),
-    Fator("muitos_arquivos", RiskLevel.MEDIUM, "arquivos", maior_que=25),
-    Fator("banco", RiskLevel.HIGH, "categoria", ("database",)),
+    Factor("autenticacao", RiskLevel.HIGH, "paths", ("*auth*", "*login*", "*session*", "*permission*")),
+    Factor("pagamento", RiskLevel.HIGH, "paths", ("*payment*", "*billing*", "*invoice*", "*checkout*")),
+    Factor("api_publica", RiskLevel.MEDIUM, "paths", ("*api/*", "*routes/*", "*openapi*", "*proto*")),
+    Factor("diff_grande", RiskLevel.MEDIUM, "lines", greater_than=600),
+    Factor("muitos_arquivos", RiskLevel.MEDIUM, "files", greater_than=25),
+    Factor("banco", RiskLevel.HIGH, "category", ("database",)),
 )
 
 
-def _valores(contexto: dict[str, Any], campo: str) -> list[str]:
-    v = contexto.get(campo)
+def _values_for(contexto: dict[str, Any], field: str) -> list[str]:
+    v = contexto.get(field)
     if v is None:
         return []
     if isinstance(v, (list, tuple, set)):
@@ -111,63 +107,63 @@ def _valores(contexto: dict[str, Any], campo: str) -> list[str]:
     return [str(v)]
 
 
-def _dispara(fator: Fator, contexto: dict[str, Any]) -> str | None:
+def _fires(fator: Factor, contexto: dict[str, Any]) -> str | None:
     """Devolve a evidencia se o fator disparou, ou None."""
-    if fator.maior_que is not None:
-        bruto = contexto.get(fator.campo)
+    if fator.greater_than is not None:
+        bruto = contexto.get(fator.field)
         try:
             n = float(bruto)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
-        return f"{fator.campo}={bruto} > {fator.maior_que:g}" if n > fator.maior_que else None
+        return f"{fator.field}={bruto} > {fator.greater_than:g}" if n > fator.greater_than else None
 
-    if fator.igual_a is not None:
-        return f"{fator.campo}={fator.igual_a}" if contexto.get(fator.campo) == fator.igual_a else None
+    if fator.equal_to is not None:
+        return f"{fator.field}={fator.equal_to}" if contexto.get(fator.field) == fator.equal_to else None
 
-    for valor in _valores(contexto, fator.campo):
-        alvo = valor.lower()
-        for padrao in fator.casa:
-            p = padrao.lower()
+    for valor in _values_for(contexto, fator.field):
+        target = valor.lower()
+        for default_value in fator.matches:
+            p = default_value.lower()
             # Padrao sem curinga casa por substring: 'auth' precisa pegar
             # 'src/auth/handler.py' sem que cada regra vire '*auth*'.
-            bateu = fnmatch.fnmatch(alvo, p) if ("*" in p or "?" in p) else (p in alvo)
+            bateu = fnmatch.fnmatch(target, p) if ("*" in p or "?" in p) else (p in target)
             if bateu:
-                return f"{fator.campo}={valor}"
+                return f"{fator.field}={valor}"
     return None
 
 
 @dataclass(slots=True)
 class RiskEngine:
-    fatores: tuple[Fator, ...] = field(default=FATORES_BASE)
-    piso: RiskLevel = RiskLevel.LOW
+    factors: tuple[Factor, ...] = field(default=BASE_FACTORS)
+    floor: RiskLevel = RiskLevel.LOW
 
     @classmethod
-    def de_config(cls, extras: list[dict[str, Any]] | None = None) -> RiskEngine:
+    def from_config(cls, extras: list[dict[str, Any]] | None = None) -> RiskEngine:
         """Fatores do cliente SOMAM aos da base -- nunca a substituem."""
-        adicionais: list[Fator] = []
-        for bruto in extras or []:
-            adicionais.append(Fator(
-                nome=bruto["nome"],
-                nivel=RiskLevel[str(bruto.get("nivel", "MEDIUM")).upper()],
-                campo=bruto.get("campo", "caminhos"),
-                casa=tuple(bruto.get("casa", ()) or ()),
-                maior_que=bruto.get("maior_que"),
-                igual_a=bruto.get("igual_a"),
+        adicionais: list[Factor] = []
+        for raw in extras or []:
+            adicionais.append(Factor(
+                name=raw["name"],
+                level=RiskLevel[str(raw.get("level", "MEDIUM")).upper()],
+                field=raw.get("field", "paths"),
+                matches=tuple(raw.get("matches", ()) or ()),
+                greater_than=raw.get("greater_than"),
+                equal_to=raw.get("equal_to"),
             ))
-        return cls(fatores=FATORES_BASE + tuple(adicionais))
+        return cls(factors=BASE_FACTORS + tuple(adicionais))
 
-    def avalia(self, contexto: dict[str, Any]) -> RiskAssessment:
+    def assess(self, contexto: dict[str, Any]) -> RiskAssessment:
         """`contexto` traz: acao, ambiente, categoria, caminhos, linhas, arquivos.
 
         Ausencia de informacao nunca reduz risco -- ela so nao aumenta. Quem
         chama e responsavel por preencher `caminhos`; um snapshot truncado deve
         ser declarado como sinal proprio por quem o produziu.
         """
-        sinais: list[Signal] = []
-        for fator in self.fatores:
-            evidencia = _dispara(fator, contexto)
-            if evidencia:
-                sinais.append(Signal(fator.nome, fator.nivel, evidencia))
+        signals: list[Signal] = []
+        for fator in self.factors:
+            evidence = _fires(fator, contexto)
+            if evidence:
+                signals.append(Signal(fator.name, fator.level, evidence))
 
-        nivel = max((s.nivel for s in sinais), default=self.piso)
-        return RiskAssessment(nivel=nivel, sinais=tuple(sinais))
+        level = max((s.level for s in signals), default=self.floor)
+        return RiskAssessment(level=level, signals=tuple(signals))

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..core import ids
-from ..core.errors import PolicyNegou, PrecisaDeHumano
+from ..core.errors import PolicyDenied, HumanApprovalRequired
 from ..core.model import ActionRecord
 from ..core.policy import Action, AutonomyLevel, Decision, Effect, PolicyContext, PolicyEngine
 from ..core.risk import RiskAssessment, RiskEngine
@@ -33,56 +33,56 @@ from ..ports.store import Store
 
 
 @dataclass(frozen=True, slots=True)
-class Escopo:
+class Scope:
     """Quem esta agindo e sob qual tenancy. Montado pelo motor, nunca pelo agente."""
     workspace_id: str
     organization: str = "*"
     client: str = "*"
     workspace: str = "*"
     project: str = "*"
-    autonomia: AutonomyLevel = AutonomyLevel.L2
-    agente: str = "engine"
+    autonomy: AutonomyLevel = AutonomyLevel.L2
+    agent: str = "engine"
     task_id: str | None = None
     run_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class Vereditos:
-    decisao: Decision
-    risco: RiskAssessment
+class Verdicts:
+    decision: Decision
+    risk: RiskAssessment
 
 
 @dataclass(slots=True)
 class Gate:
     store: Store
     policy: PolicyEngine
-    risco: RiskEngine
+    risk: RiskEngine
     #: Quando um HUMAN_APPROVAL aparece, quem transforma isso em item da fila.
     #: Injetado para que o portao nao conheca a fila -- ele so sabe barrar.
-    ao_precisar_humano: Callable[[Escopo, Action, Vereditos], None] | None = None
+    ao_precisar_humano: Callable[[Scope, Action, Verdicts], None] | None = None
     _fatos_extra: dict[str, Any] = field(default_factory=dict)
 
-    def avalia(self, escopo: Escopo, acao: Action, fatos: dict[str, Any] | None = None) -> Vereditos:
+    def assess(self, escopo: Scope, action: Action, fatos: dict[str, Any] | None = None) -> Verdicts:
         """Julga sem executar. Usado por quem quer saber antes de tentar."""
         contexto_risco = {
-            "acao": acao.kind,
-            "ambiente": acao.environment,
-            "categoria": acao.kind.split(".", 1)[0],
-            "caminhos": (fatos or {}).get("caminhos", ()),
-            "linhas": (fatos or {}).get("linhas", 0),
-            "arquivos": (fatos or {}).get("arquivos", 0),
+            "action": action.kind,
+            "environment": action.environment,
+            "category": action.kind.split(".", 1)[0],
+            "paths": (fatos or {}).get("paths", ()),
+            "lines": (fatos or {}).get("lines", 0),
+            "files": (fatos or {}).get("files", 0),
             **self._fatos_extra,
         }
-        avaliacao = self.risco.avalia(contexto_risco)
-        decisao = self.policy.decide(PolicyContext(
-            action=acao,
+        assessment = self.risk.assess(contexto_risco)
+        decision = self.policy.decide(PolicyContext(
+            action=action,
             organization=escopo.organization, client=escopo.client,
             workspace=escopo.workspace, project=escopo.project,
-            agent=escopo.agente, risk=avaliacao.nivel.name, autonomy=escopo.autonomia,
+            agent=escopo.agent, risk=assessment.level.name, autonomy=escopo.autonomy,
         ))
-        return Vereditos(decisao=decisao, risco=avaliacao)
+        return Verdicts(decision=decision, risk=assessment)
 
-    def executa(self, escopo: Escopo, acao: Action, operacao: Callable[[], Any],
+    def execute(self, escopo: Scope, action: Action, operation: Callable[[], Any],
                 fatos: dict[str, Any] | None = None) -> Any:
         """Julga e, se permitido, executa. Toda passagem vira ActionRecord.
 
@@ -90,35 +90,35 @@ class Gate:
         precise conhecer a assinatura de nenhum adapter -- ele autoriza a *acao*
         declarada, nao a funcao.
         """
-        v = self.avalia(escopo, acao, fatos)
+        v = self.assess(escopo, action, fatos)
         inicio = time.monotonic()
 
-        if v.decisao.efeito == Effect.DENY:
-            self._registra(escopo, acao, v, "negado", 0)
-            raise PolicyNegou(v.decisao.motivo, v.decisao.regra)
+        if v.decision.effect == Effect.DENY:
+            self._register_call(escopo, action, v, "negado", 0)
+            raise PolicyDenied(v.decision.reason, v.decision.rule)
 
-        if v.decisao.efeito == Effect.HUMAN_APPROVAL:
-            self._registra(escopo, acao, v, "aguardando humano", 0)
+        if v.decision.effect == Effect.HUMAN_APPROVAL:
+            self._register_call(escopo, action, v, "aguardando humano", 0)
             if self.ao_precisar_humano:
-                self.ao_precisar_humano(escopo, acao, v)
-            raise PrecisaDeHumano(v.decisao.motivo, v.decisao.regra)
+                self.ao_precisar_humano(escopo, action, v)
+            raise HumanApprovalRequired(v.decision.reason, v.decision.rule)
 
         try:
-            resultado = operacao()
+            resultado = operation()
         except Exception as e:
-            self._registra(escopo, acao, v, f"erro: {type(e).__name__}: {e}"[:300],
+            self._register_call(escopo, action, v, f"error: {type(e).__name__}: {e}"[:300],
                            int((time.monotonic() - inicio) * 1000))
             raise
-        self._registra(escopo, acao, v, "ok", int((time.monotonic() - inicio) * 1000))
+        self._register_call(escopo, action, v, "ok", int((time.monotonic() - inicio) * 1000))
         return resultado
 
-    def _registra(self, escopo: Escopo, acao: Action, v: Vereditos,
-                  resultado: str, duracao_ms: int) -> None:
-        self.store.registra_acao(ActionRecord(
-            id=ids.novo(ids.ACTION), workspace_id=escopo.workspace_id,
-            agente=escopo.agente, acao=acao.kind, recurso=acao.resource,
-            efeito=v.decisao.efeito, risco=v.risco.nivel.name,
+    def _register_call(self, escopo: Scope, action: Action, v: Verdicts,
+                  resultado: str, duration_ms: int) -> None:
+        self.store.record_action(ActionRecord(
+            id=ids.new_id(ids.ACTION), workspace_id=escopo.workspace_id,
+            agent=escopo.agent, action=action.kind, resource=action.resource,
+            effect=v.decision.effect, risk=v.risk.level.name,
             task_id=escopo.task_id, run_id=escopo.run_id,
-            regra=v.decisao.regra,
-            motivo="; ".join([v.decisao.motivo, *v.risco.motivos])[:500],
-            resultado=resultado, duracao_ms=duracao_ms))
+            rule=v.decision.rule,
+            reason="; ".join([v.decision.reason, *v.risk.reasons])[:500],
+            resultado=resultado, duration_ms=duration_ms))

@@ -1,41 +1,41 @@
-organizacao: silverguard
-cliente: squad-tech
+organization: silverguard
+client: squad-tech
 workspace: sg
 
-autonomia: L0
-sombra: true
+autonomy: L0
+shadow: true
 
-raiz: .regente
+root: .regente
 policies: ../policies/padrao.yaml
 
 # Referencias que ESTE workspace pode resolver. Valor nenhum vive aqui.
-segredos:
+secrets:
   - env:JIRA_EMAIL
   - env:JIRA_API_TOKEN
 
 providers:
   tasks:
-    nome: jira
+    name: jira
     site: https://silverguard.atlassian.net
     # Reproduz respostas reais ja capturadas. Troque para `http` e o mesmo
     # adapter passa a falar com o site, sem outra alteracao.
     transporte: instantaneo
-    instantaneos: .regente/instantaneos/jira
-    usuario_ref: env:JIRA_EMAIL
+    snapshots: .regente/instantaneos/jira
+    user_ref: env:JIRA_EMAIL
     token_ref: env:JIRA_API_TOKEN
     jql: 'project = SG AND statusCategory != Done ORDER BY updated DESC'
-    recursos_por: parent
+    resources_by: parent
   workspace_provider:
-    nome: diretorio
+    name: diretorio
   runner:
-    nome: roteiro
+    name: roteiro
   notification:
-    nome: console
+    name: console
 
-projetos:
-  - nome: SG
-    ambiente_padrao: staging
+projects:
+  - name: SG
+    default_environment: staging
 
-limites:
+limits:
   max_workers: 4
-  max_despachos_dia: 20
+  max_dispatches_per_day: 20

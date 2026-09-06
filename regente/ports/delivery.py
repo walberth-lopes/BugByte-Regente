@@ -12,24 +12,24 @@ from . import Capability, Port
 
 @dataclass(frozen=True, slots=True)
 class Check:
-    nome: str
-    conclusao: str = ""     # SUCCESS | FAILURE | CANCELLED | ...
-    estado: str = ""        # QUEUED | IN_PROGRESS | COMPLETED
+    name: str
+    conclusion: str = ""     # SUCCESS | FAILURE | CANCELLED | ...
+    state: str = ""        # QUEUED | IN_PROGRESS | COMPLETED
     url: str = ""
 
     @property
     def rodando(self) -> bool:
-        return self.estado in {"QUEUED", "IN_PROGRESS", "PENDING"}
+        return self.state in {"QUEUED", "IN_PROGRESS", "PENDING"}
 
     @property
     def verde(self) -> bool:
-        return self.conclusao in {"SUCCESS", "NEUTRAL", "SKIPPED"}
+        return self.conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}
 
 
 @dataclass(frozen=True, slots=True)
 class PipelineStatus:
     id: str
-    estado: str
+    state: str
     checks: tuple[Check, ...] = ()
     url: str = ""
     #: True quando o provedor confirmou que NAO existe nenhum check.
@@ -42,17 +42,17 @@ class PipelineStatus:
 
     @property
     def falhou(self) -> tuple[str, ...]:
-        return tuple(c.nome for c in self.checks if c.conclusao and not c.verde and not c.rodando)
+        return tuple(c.name for c in self.checks if c.conclusion and not c.verde and not c.rodando)
 
 
 class CICDProvider(Port):
     capability = Capability.CICD
 
     @abstractmethod
-    def get_status(self, repo: str, referencia: str) -> PipelineStatus:
+    def get_status(self, repo: str, reference: str) -> PipelineStatus:
         """`referencia` e um SHA ou numero de PR, a criterio do adapter."""
 
-    def get_logs(self, repo: str, execucao_id: str, limite: int = 200) -> list[str]:
+    def get_logs(self, repo: str, execucao_id: str, limit: int = 200) -> list[str]:
         return []
 
     def run(self, repo: str, pipeline: str, parametros: dict[str, Any] | None = None) -> str:
@@ -62,11 +62,11 @@ class CICDProvider(Port):
 @dataclass(frozen=True, slots=True)
 class Deployment:
     id: str
-    ambiente: str
-    versao: str
-    estado: str = "IN_PROGRESS"
+    environment: str
+    version: str
+    state: str = "IN_PROGRESS"
     url: str = ""
-    dados: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 class DeploymentProvider(Port):
@@ -75,10 +75,10 @@ class DeploymentProvider(Port):
     def get_deployment(self, deployment_id: str) -> Deployment:
         raise NotImplementedError
 
-    def deploy_staging(self, projeto: str, versao: str) -> Deployment:
+    def deploy_staging(self, project: str, version: str) -> Deployment:
         raise NotImplementedError
 
-    def deploy_production(self, projeto: str, versao: str) -> Deployment:
+    def deploy_production(self, project: str, version: str) -> Deployment:
         """Separado de staging na porta, de proposito.
 
         Um unico `deploy(ambiente)` faria a diferenca entre staging e producao
@@ -88,6 +88,6 @@ class DeploymentProvider(Port):
         """
         raise NotImplementedError
 
-    def rollback(self, projeto: str, ambiente: str,
-                 para_versao: str | None = None) -> Deployment:
+    def rollback(self, project: str, environment: str,
+                 to_version: str | None = None) -> Deployment:
         raise NotImplementedError

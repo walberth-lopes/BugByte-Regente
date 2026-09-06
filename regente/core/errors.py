@@ -6,33 +6,33 @@ class RegenteError(Exception):
     """Raiz. Quem captura Regente captura tudo do motor."""
 
 
-class TransicaoInvalida(RegenteError):
+class InvalidTransition(RegenteError):
     """Tentativa de mover uma unidade de trabalho para um estado inalcancavel."""
 
 
-class CicloNoGrafo(RegenteError):
+class GraphCycle(RegenteError):
     """Dependencias formam ciclo -- nada pode comecar."""
 
 
-class PolicyNegou(RegenteError):
+class PolicyDenied(RegenteError):
     """A acao foi barrada pelo Policy Engine. Nao e falha: e o motor funcionando."""
 
-    def __init__(self, motivo: str, regra: str | None = None):
-        super().__init__(motivo)
-        self.motivo = motivo
-        self.regra = regra
+    def __init__(self, reason: str, rule: str | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.rule = rule
 
 
-class PrecisaDeHumano(RegenteError):
+class HumanApprovalRequired(RegenteError):
     """A acao exige decisao humana. Interrompe o agente, nao o motor."""
 
-    def __init__(self, motivo: str, regra: str | None = None):
-        super().__init__(motivo)
-        self.motivo = motivo
-        self.regra = regra
+    def __init__(self, reason: str, rule: str | None = None):
+        super().__init__(reason)
+        self.reason = reason
+        self.rule = rule
 
 
-class CapacidadeAusente(RegenteError):
+class CapabilityMissing(RegenteError):
     """Pediram uma capacidade que o cliente nao configurou.
 
     Erro explicito de proposito: ausencia de adapter nunca pode virar
@@ -40,5 +40,5 @@ class CapacidadeAusente(RegenteError):
     """
 
 
-class EstadoCorrompido(RegenteError):
+class CorruptedState(RegenteError):
     """O estado persistido nao bate com o que o motor espera."""

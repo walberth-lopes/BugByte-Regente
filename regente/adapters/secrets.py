@@ -18,58 +18,58 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..ports import AdapterErro
+from ..ports import AdapterError
 from ..ports.support import SecretProvider
 
 
-class SegredoAusente(AdapterErro):
+class SecretMissing(AdapterError):
     """A referencia existe na configuracao mas nao resolve para nada."""
 
 
-class SegredoForaDoEscopo(AdapterErro):
+class SecretOutOfScope(AdapterError):
     """Pediram uma referencia que este workspace nao declarou. Nunca e engano
     benigno: e a fronteira entre clientes sendo testada."""
 
 
 @dataclass(slots=True)
-class Segredos(SecretProvider):
+class ScopedSecrets(SecretProvider):
     """Resolve `env:NOME` e `arquivo:CAMINHO`.
 
     Nao existe forma `literal:` de proposito. Se ela existisse, o primeiro
     segredo de producao apareceria num YAML versionado dentro de uma semana.
     """
-    nome: str = "escopado"
+    name: str = "escopado"
     #: Referencias que ESTE workspace pode resolver. Vazio = nenhuma.
-    permitidas: frozenset[str] = field(default_factory=frozenset)
+    allowed_from: frozenset[str] = field(default_factory=frozenset)
     workspace: str = "?"
 
-    def resolve(self, referencia: str) -> str:
-        if referencia not in self.permitidas:
-            raise SegredoForaDoEscopo(
+    def resolve(self, reference: str) -> str:
+        if reference not in self.allowed_from:
+            raise SecretOutOfScope(
                 f"workspace '{self.workspace}' nao declarou a referencia "
-                f"{referencia!r}; declaradas: {sorted(self.permitidas) or 'nenhuma'}")
+                f"{reference!r}; declaradas: {sorted(self.allowed_from) or 'nenhuma'}")
 
-        esquema, _, resto = referencia.partition(":")
+        esquema, _, resto = reference.partition(":")
         if esquema == "env":
             valor = os.environ.get(resto, "")
             if not valor:
-                raise SegredoAusente(
+                raise SecretMissing(
                     f"variavel de ambiente {resto} nao esta definida ou esta vazia")
             return valor
         if esquema == "arquivo":
-            caminho = Path(resto).expanduser()
-            if not caminho.is_file():
-                raise SegredoAusente(f"arquivo de segredo nao existe: {caminho}")
-            valor = caminho.read_text(encoding="utf-8").strip()
+            path = Path(resto).expanduser()
+            if not path.is_file():
+                raise SecretMissing(f"arquivo de segredo nao existe: {path}")
+            valor = path.read_text(encoding="utf-8").strip()
             if not valor:
-                raise SegredoAusente(f"arquivo de segredo esta vazio: {caminho}")
+                raise SecretMissing(f"arquivo de segredo esta vazio: {path}")
             return valor
-        raise SegredoAusente(
+        raise SecretMissing(
             f"esquema de referencia desconhecido: {esquema!r}. Use env: ou arquivo:")
 
-    def disponivel(self, referencia: str) -> bool:
+    def available(self, reference: str) -> bool:
         try:
-            self.resolve(referencia)
+            self.resolve(reference)
             return True
-        except AdapterErro:
+        except AdapterError:
             return False

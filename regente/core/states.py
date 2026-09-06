@@ -5,7 +5,7 @@ Duas regras que valem para o arquivo inteiro:
 
 1. **A tabela e explicita.** Nao existe "qualquer estado vai para qualquer
    estado". Transicao fora da tabela levanta `TransicaoInvalida` -- isso e o que
-   transforma um bug de orquestracao em erro alto, em vez de virar uma task
+   transforma um bug de orquestracao em error alto, em vez de virar uma task
    perdida num estado que ninguem sabe interpretar.
 
 2. **`WAITING_HUMAN` guarda de onde veio.** Ele nao e um destino: e uma pausa. A
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from .errors import TransicaoInvalida
+from .errors import InvalidTransition
 
 
 class TaskState(str, Enum):
@@ -45,11 +45,11 @@ class TaskState(str, Enum):
 S = TaskState
 
 #: Estados dos quais nada mais sai. Trabalho aqui nao volta a ser agendado.
-TERMINAIS: frozenset[TaskState] = frozenset({S.DONE, S.CANCELLED})
+TERMINAL: frozenset[TaskState] = frozenset({S.DONE, S.CANCELLED})
 
 #: Estados em que existe um worker vivo (ou deveria existir). Sao os que a
 #: recuperacao pos-crash precisa varrer.
-ATIVOS: frozenset[TaskState] = frozenset({
+ACTIVE: frozenset[TaskState] = frozenset({
     S.ASSIGNED, S.IMPLEMENTING, S.TESTING, S.CI_RUNNING,
     S.AI_REVIEW, S.MERGING, S.DEPLOYING,
 })
@@ -66,8 +66,8 @@ _ESCAPES: frozenset[TaskState] = frozenset({
 #: Sem esta transicao, a task recuperada de um crash fica num estado ativo que
 #: nenhum tick agenda -- viva no papel e parada de verdade. E o pior modo de
 #: falha possivel para um motor que promete retomar sozinho, porque nada acusa:
-#: nao ha erro, nao ha fila, so uma task que nunca mais anda.
-_DEVOLVEM_A_FILA: frozenset[TaskState] = ATIVOS
+#: nao ha error, nao ha fila, so uma task que nunca mais anda.
+_DEVOLVEM_A_FILA: frozenset[TaskState] = ACTIVE
 
 #: Transicoes de progresso. As saidas de emergencia sao somadas depois.
 _AVANCOS: dict[TaskState, frozenset[TaskState]] = {
@@ -99,17 +99,17 @@ _AVANCOS: dict[TaskState, frozenset[TaskState]] = {
 }
 
 
-def permitidas(origem: TaskState) -> frozenset[TaskState]:
+def allowed_from(source: TaskState) -> frozenset[TaskState]:
     """Todos os destinos legais a partir de `origem`."""
-    if origem in TERMINAIS:
+    if source in TERMINAL:
         return frozenset()
-    saida = _AVANCOS[origem] | (_ESCAPES - {origem})
-    if origem in _DEVOLVEM_A_FILA:
-        saida |= {S.READY}
-    return saida
+    output = _AVANCOS[source] | (_ESCAPES - {source})
+    if source in _DEVOLVEM_A_FILA:
+        output |= {S.READY}
+    return output
 
 
-def retomaveis(pausado_em: TaskState) -> frozenset[TaskState]:
+def resumable_from(pausado_em: TaskState) -> frozenset[TaskState]:
     """Destinos legais ao sair de WAITING_HUMAN, dado o estado em que pausou.
 
     O humano pode: mandar seguir (o proprio estado de origem), mandar refazer
@@ -117,33 +117,33 @@ def retomaveis(pausado_em: TaskState) -> frozenset[TaskState]:
     a task para um estado que ela nao alcancaria sozinha -- aprovar um deploy nao
     e o mesmo que declarar a task pronta.
     """
-    if pausado_em in TERMINAIS:
+    if pausado_em in TERMINAL:
         return frozenset()
     return frozenset({pausado_em}) | _AVANCOS[pausado_em] | (_ESCAPES - {S.WAITING_HUMAN})
 
 
-def pode(origem: TaskState, destino: TaskState, pausado_em: TaskState | None = None) -> bool:
-    if origem is S.WAITING_HUMAN:
+def can(source: TaskState, destination: TaskState, pausado_em: TaskState | None = None) -> bool:
+    if source is S.WAITING_HUMAN:
         if pausado_em is None:
             # Sem memoria de onde pausou, so restam as saidas que nao dependem
             # dela. Devolver a task ao fluxo exigiria adivinhar.
-            return destino in (_ESCAPES - {S.WAITING_HUMAN})
-        return destino in retomaveis(pausado_em)
-    return destino in permitidas(origem)
+            return destination in (_ESCAPES - {S.WAITING_HUMAN})
+        return destination in resumable_from(pausado_em)
+    return destination in allowed_from(source)
 
 
-def exige(origem: TaskState, destino: TaskState, pausado_em: TaskState | None = None) -> None:
+def require(source: TaskState, destination: TaskState, pausado_em: TaskState | None = None) -> None:
     """Valida ou levanta. Unico ponto por onde uma transicao entra no motor."""
-    if not pode(origem, destino, pausado_em):
+    if not can(source, destination, pausado_em):
         contexto = f" (pausada em {pausado_em.value})" if pausado_em else ""
-        raise TransicaoInvalida(
-            f"{origem.value} -> {destino.value} nao e uma transicao valida{contexto}"
+        raise InvalidTransition(
+            f"{source.value} -> {destination.value} nao e uma transicao valida{contexto}"
         )
 
 
-def e_terminal(estado: TaskState) -> bool:
-    return estado in TERMINAIS
+def is_terminal(state: TaskState) -> bool:
+    return state in TERMINAL
 
 
-def e_ativo(estado: TaskState) -> bool:
-    return estado in ATIVOS
+def is_active(state: TaskState) -> bool:
+    return state in ACTIVE

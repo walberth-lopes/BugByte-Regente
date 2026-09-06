@@ -19,11 +19,11 @@ from enum import Enum
 from ..core.errors import RegenteError
 
 
-class AdapterErro(RegenteError):
+class AdapterError(RegenteError):
     """A operacao nao pode ser cumprida. NAO significa 'nao existe'."""
 
 
-class SomenteLeitura(AdapterErro):
+class ReadOnlyRefused(AdapterError):
     """Adapter montado em modo leitura recusou uma escrita."""
 
 
@@ -47,15 +47,15 @@ class Port:
 
     capability: Capability
     #: Nome do adapter no registro, ex.: 'jira', 'github', 'filesystem'.
-    nome: str = "desconhecido"
+    name: str = "desconhecido"
 
-    def descreve(self) -> dict[str, str]:
-        return {"capability": self.capability.value, "adapter": self.nome}
+    def describe(self) -> dict[str, str]:
+        return {"capability": self.capability.value, "adapter": self.name}
 
-    def verifica(self) -> None:
+    def verify(self) -> None:
         """Prova que o adapter funciona de verdade. Usado por `regente doctor`.
 
-        Existe para que um erro de credencial apareca no diagnostico, e nao no
+        Existe para que um error de credencial apareca no diagnostico, e nao no
         meio de um despacho.
         """
         return None

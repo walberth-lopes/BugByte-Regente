@@ -37,7 +37,7 @@ class AutonomyLevel(IntEnum):
     L4 = 4   # PRODUCTION -- deploy em producao
 
     @classmethod
-    def de_texto(cls, valor: str | int) -> AutonomyLevel:
+    def from_text(cls, valor: str | int) -> AutonomyLevel:
         if isinstance(valor, int):
             return cls(valor)
         t = str(valor).strip().upper()
@@ -63,7 +63,7 @@ _SEVERIDADE = {Effect.ALLOW: 0, Effect.HUMAN_APPROVAL: 1, Effect.DENY: 2}
 
 #: Nivel minimo de autonomia que cada familia de acao exige. Chave e prefixo da
 #: acao, casada do mais especifico para o mais generico.
-NIVEL_EXIGIDO: dict[str, AutonomyLevel] = {
+REQUIRED_LEVEL: dict[str, AutonomyLevel] = {
     "repo.read": AutonomyLevel.L0,
     "task.read": AutonomyLevel.L0,
     "cloud.read": AutonomyLevel.L0,
@@ -108,7 +108,7 @@ class PolicyContext:
     risk: str = "LOW"
     autonomy: AutonomyLevel = AutonomyLevel.L2
 
-    def como_dict(self) -> dict[str, str]:
+    def as_dict(self) -> dict[str, str]:
         return {
             "action": self.action.kind,
             "resource": self.action.resource,
@@ -124,25 +124,25 @@ class PolicyContext:
 
 @dataclass(frozen=True, slots=True)
 class Rule:
-    nome: str
-    efeito: str
+    name: str
+    effect: str
     match: dict[str, Any] = field(default_factory=dict)
-    motivo: str = ""
+    reason: str = ""
 
-    def casa(self, ctx: dict[str, str]) -> bool:
+    def matches(self, ctx: dict[str, str]) -> bool:
         """Todo criterio declarado precisa casar. Criterio ausente e curinga."""
-        for campo, esperado in self.match.items():
-            valor = ctx.get(campo, "")
-            padroes = esperado if isinstance(esperado, (list, tuple)) else [esperado]
-            if not any(_casa_um(valor, str(p)) for p in padroes):
+        for field, esperado in self.match.items():
+            valor = ctx.get(field, "")
+            patterns = esperado if isinstance(esperado, (list, tuple)) else [esperado]
+            if not any(_matches_one(valor, str(p)) for p in patterns):
                 return False
         return True
 
 
-def _casa_um(valor: str, padrao: str) -> bool:
-    if padrao == "*":
+def _matches_one(valor: str, default_value: str) -> bool:
+    if default_value == "*":
         return True
-    v, p = valor.lower(), padrao.lower()
+    v, p = valor.lower(), default_value.lower()
     if "*" in p or "?" in p:
         return fnmatch.fnmatch(v, p)
     return v == p
@@ -150,35 +150,35 @@ def _casa_um(valor: str, padrao: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Decision:
-    efeito: str
-    motivo: str
-    regra: str | None = None
+    effect: str
+    reason: str
+    rule: str | None = None
     #: Todas as regras que casaram, na ordem em que foram avaliadas. O dono
     #: precisa ver por que uma acao foi barrada mesmo quando outra regra a
-    #: liberava -- sem isso, afrouxar uma policy vira tentativa e erro.
-    casadas: tuple[str, ...] = ()
+    #: liberava -- sem isso, afrouxar uma policy vira tentativa e error.
+    matched: tuple[str, ...] = ()
 
     @property
-    def permitido(self) -> bool:
-        return self.efeito == Effect.ALLOW
+    def allowed(self) -> bool:
+        return self.effect == Effect.ALLOW
 
     @property
-    def precisa_humano(self) -> bool:
-        return self.efeito == Effect.HUMAN_APPROVAL
+    def needs_human(self) -> bool:
+        return self.effect == Effect.HUMAN_APPROVAL
 
 
-def nivel_exigido(kind: str) -> AutonomyLevel:
+def required_level(kind: str) -> AutonomyLevel:
     """Casa do prefixo mais especifico para o mais generico.
 
     Acao desconhecida cai no teto maximo de proposito: capacidade nova nasce
     exigindo o nivel mais alto, e alguem precisa baixa-la conscientemente.
     """
-    melhor: AutonomyLevel | None = None
+    best: AutonomyLevel | None = None
     tamanho = -1
-    for prefixo, nivel in NIVEL_EXIGIDO.items():
+    for prefixo, level in REQUIRED_LEVEL.items():
         if (kind == prefixo or kind.startswith(prefixo + ".")) and len(prefixo) > tamanho:
-            melhor, tamanho = nivel, len(prefixo)
-    return melhor if melhor is not None else AutonomyLevel.L4
+            best, tamanho = level, len(prefixo)
+    return best if best is not None else AutonomyLevel.L4
 
 
 @dataclass(slots=True)
@@ -186,49 +186,49 @@ class PolicyEngine:
     regras: tuple[Rule, ...] = ()
 
     @classmethod
-    def de_config(cls, brutas: list[dict[str, Any]] | None) -> PolicyEngine:
+    def from_config(cls, brutas: list[dict[str, Any]] | None) -> PolicyEngine:
         regras = []
         for i, b in enumerate(brutas or []):
-            efeito = str(b["efeito"]).strip().upper()
-            if efeito not in _SEVERIDADE:
-                raise ValueError(f"efeito desconhecido em policy: {efeito!r}")
+            effect = str(b["effect"]).strip().upper()
+            if effect not in _SEVERIDADE:
+                raise ValueError(f"efeito desconhecido em policy: {effect!r}")
             regras.append(Rule(
-                nome=b.get("nome") or f"regra_{i}",
-                efeito=efeito,
+                name=b.get("name") or f"regra_{i}",
+                effect=effect,
                 match={k: v for k, v in (b.get("match") or {}).items()},
-                motivo=b.get("motivo", ""),
+                reason=b.get("reason", ""),
             ))
         return cls(regras=tuple(regras))
 
     def decide(self, ctx: PolicyContext) -> Decision:
-        plano = ctx.como_dict()
-        casadas = [r for r in self.regras if r.casa(plano)]
+        plan = ctx.as_dict()
+        matched = [r for r in self.regras if r.matches(plan)]
 
-        if not casadas:
+        if not matched:
             return Decision(
-                efeito=Effect.DENY,
-                motivo=f"nenhuma regra permite '{ctx.action.kind}' em '{ctx.action.resource}'",
-                casadas=(),
+                effect=Effect.DENY,
+                reason=f"nenhuma regra permite '{ctx.action.kind}' em '{ctx.action.resource}'",
+                matched=(),
             )
 
         # Invariante 2: vence o mais restritivo, nao a primeira nem a ultima.
-        vencedora = max(casadas, key=lambda r: _SEVERIDADE[r.efeito])
-        nomes = tuple(r.nome for r in casadas)
+        winner = max(matched, key=lambda r: _SEVERIDADE[r.effect])
+        nomes = tuple(r.name for r in matched)
 
         # Teto de autonomia so aperta: nunca transforma DENY em ALLOW.
-        exigido = nivel_exigido(ctx.action.kind)
-        if vencedora.efeito == Effect.ALLOW and ctx.autonomy < exigido:
+        exigido = required_level(ctx.action.kind)
+        if winner.effect == Effect.ALLOW and ctx.autonomy < exigido:
             return Decision(
-                efeito=Effect.HUMAN_APPROVAL,
-                motivo=(f"'{ctx.action.kind}' exige autonomia {exigido.name} e "
+                effect=Effect.HUMAN_APPROVAL,
+                reason=(f"'{ctx.action.kind}' exige autonomia {exigido.name} e "
                         f"este escopo vai ate {ctx.autonomy.name}"),
-                regra="teto_de_autonomia",
-                casadas=nomes,
+                rule="teto_de_autonomia",
+                matched=nomes,
             )
 
         return Decision(
-            efeito=vencedora.efeito,
-            motivo=vencedora.motivo or f"regra '{vencedora.nome}'",
-            regra=vencedora.nome,
-            casadas=nomes,
+            effect=winner.effect,
+            reason=winner.reason or f"regra '{winner.name}'",
+            rule=winner.name,
+            matched=nomes,
         )

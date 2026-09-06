@@ -13,14 +13,14 @@ import sys
 from pathlib import Path
 
 from .app import container
-from .app.config import Config, carrega
+from .app.config import Config, load
 from .core.states import TaskState
-from .engine import cadeia, escalation, sombra
+from .engine import chain, escalation, shadow
 
-PADRAO = "regente.yaml"
+DEFAULT_CONFIG_FILE = "regente.yaml"
 
 
-def _utf8() -> None:
+def _force_utf8() -> None:
     # Sem isto, um titulo com acento derruba o comando no console do Windows.
     for fluxo in (sys.stdout, sys.stderr):
         try:
@@ -29,33 +29,33 @@ def _utf8() -> None:
             pass
 
 
-def _config(args) -> Config:
-    return carrega(args.config)
+def _load_config(args) -> Config:
+    return load(args.config)
 
 
 # ---- comandos ------------------------------------------------------------
 
 def cmd_init(args) -> int:
-    destino = Path(args.config)
-    if destino.exists() and not args.force:
-        print(f"{destino} ja existe. Use --force para sobrescrever.")
+    destination = Path(args.config)
+    if destination.exists() and not args.force:
+        print(f"{destination} ja existe. Use --force para sobrescrever.")
         return 1
-    modelo = Path(__file__).parent / "recursos" / "regente.yaml.exemplo"
-    destino.write_text(modelo.read_text(encoding="utf-8"), encoding="utf-8")
-    tasks = destino.parent / "tasks"
+    model = Path(__file__).parent / "resources" / "regente.yaml.example"
+    destination.write_text(model.read_text(encoding="utf-8"), encoding="utf-8")
+    tasks = destination.parent / "tasks"
     tasks.mkdir(exist_ok=True)
-    print(f"criado {destino}")
+    print(f"criado {destination}")
     print(f"criado {tasks}/ -- descreva trabalho em YAML aqui")
     print("proximo: regente doctor")
     return 0
 
 
 def cmd_doctor(args) -> int:
-    cfg = _config(args)
+    cfg = _load_config(args)
     problemas = 0
-    for nome, ok, detalhe in container.diagnostico(cfg):
-        marca = "ok  " if ok else "FALHA"
-        print(f"  {marca}  {nome:<28} {detalhe}")
+    for name, ok, detalhe in container.diagnose(cfg):
+        mark = "ok  " if ok else "FALHA"
+        print(f"  {mark}  {name:<28} {detalhe}")
         problemas += 0 if ok else 1
     print()
     print("tudo pronto" if not problemas else f"{problemas} problema(s) -- o motor nao vai rodar assim")
@@ -63,258 +63,258 @@ def cmd_doctor(args) -> int:
 
 
 def cmd_tick(args) -> int:
-    cfg = _config(args)
-    motor = container.monta(cfg)
+    cfg = _load_config(args)
+    motor = container.build(cfg)
     try:
         rel = motor.orchestrator.tick()
-        print(rel.resumo())
-        if rel.despachadas:
-            print("  despachadas:", ", ".join(rel.despachadas))
-        if rel.concluidas:
-            print("  concluidas: ", ", ".join(rel.concluidas))
-        if rel.recuperadas:
-            print("  recuperadas:", ", ".join(rel.recuperadas))
-        if rel.ciclos:
-            print("  em ciclo:   ", ", ".join(rel.ciclos))
-        if args.verboso and rel.adiadas:
-            for chave, motivo in rel.adiadas:
-                print(f"  adiada {chave}: {motivo}")
-        for e in rel.erros:
-            print("  erro:", e)
-        if rel.escalonadas:
+        print(rel.summary())
+        if rel.dispatched:
+            print("  despachadas:", ", ".join(rel.dispatched))
+        if rel.completed:
+            print("  concluidas: ", ", ".join(rel.completed))
+        if rel.recovered:
+            print("  recuperadas:", ", ".join(rel.recovered))
+        if rel.cycles:
+            print("  em ciclo:   ", ", ".join(rel.cycles))
+        if args.verbose and rel.deferred:
+            for key, reason in rel.deferred:
+                print(f"  adiada {key}: {reason}")
+        for e in rel.errors:
+            print("  error:", e)
+        if rel.escalated:
             print()
-            print(f"  {len(rel.escalonadas)} precisam de voce: regente needs-me")
+            print(f"  {len(rel.escalated)} precisam de voce: regente needs-me")
         return 0
     finally:
-        motor.fecha()
+        motor.close()
 
 
 def cmd_status(args) -> int:
-    cfg = _config(args)
-    motor = container.monta(cfg)
+    cfg = _load_config(args)
+    motor = container.build(cfg)
     try:
         store, ws = motor.store, motor.workspace
         tasks = store.tasks(ws.id)
-        por_estado: dict[str, int] = {}
+        by_state: dict[str, int] = {}
         for t in tasks:
-            por_estado[t.estado.value] = por_estado.get(t.estado.value, 0) + 1
+            by_state[t.state.value] = by_state.get(t.state.value, 0) + 1
 
-        rodando = [t for t in tasks if t.estado.value in
+        rodando = [t for t in tasks if t.state.value in
                    {"ASSIGNED", "IMPLEMENTING", "TESTING", "CI_RUNNING", "AI_REVIEW",
                     "MERGING", "DEPLOYING"}]
-        abertos = store.approvals_abertos(ws.id)
-        bloqueadas = [t for t in tasks if t.estado in (TaskState.BLOCKED, TaskState.FAILED)]
-        prontas = [t for t in tasks if t.estado is TaskState.DONE]
+        open_items = store.open_approvals(ws.id)
+        blocked = [t for t in tasks if t.state in (TaskState.BLOCKED, TaskState.FAILED)]
+        ready = [t for t in tasks if t.state is TaskState.DONE]
 
-        print(f"REGENTE -- {ws.nome}  [{'sombra' if cfg.sombra else 'VALENDO'}]")
+        print(f"REGENTE -- {ws.name}  [{'sombra' if cfg.shadow else 'VALENDO'}]")
         print()
         print(f"  Rodando     {len(rodando)}")
-        print(f"  Precisa de voce  {len(abertos)}" + ("   <-- prioridade" if abertos else ""))
-        print(f"  Bloqueadas  {len(bloqueadas)}")
-        print(f"  Concluidas  {len(prontas)}")
+        print(f"  Precisa de voce  {len(open_items)}" + ("   <-- prioridade" if open_items else ""))
+        print(f"  Bloqueadas  {len(blocked)}")
+        print(f"  Concluidas  {len(ready)}")
 
         if rodando:
             print()
             print("  TRABALHO ATIVO")
             for t in rodando:
-                print(f"    {t.chave:<16} {t.estado.value}")
-        if abertos:
+                print(f"    {t.key:<16} {t.state.value}")
+        if open_items:
             print()
             print("  PRECISA DE VOCE")
-            for a in abertos:
+            for a in open_items:
                 t = store.task(a.task_id)
-                print(f"    [{a.risco.name}] {t.chave:<16} {a.o_que_aconteceu[:60]}")
+                print(f"    [{a.risk.name}] {t.key:<16} {a.what_happened[:60]}")
             print()
             print("    regente needs-me   para ver e decidir")
-        if args.verboso:
+        if args.verbose:
             print()
             print("  POR ESTADO")
-            for estado, n in sorted(por_estado.items()):
-                print(f"    {estado:<16} {n}")
+            for state, n in sorted(by_state.items()):
+                print(f"    {state:<16} {n}")
         return 0
     finally:
-        motor.fecha()
+        motor.close()
 
 
 def cmd_needs_me(args) -> int:
-    cfg = _config(args)
-    motor = container.monta(cfg)
+    cfg = _load_config(args)
+    motor = container.build(cfg)
     try:
-        abertos = motor.store.approvals_abertos(motor.workspace.id)
-        if not abertos:
+        open_items = motor.store.open_approvals(motor.workspace.id)
+        if not open_items:
             print("nada precisa de voce agora.")
             return 0
-        for a in abertos:
+        for a in open_items:
             t = motor.store.task(a.task_id)
-            print(escalation.texto(escalation.briefing(a, t)))
+            print(escalation.render(escalation.briefing(a, t)))
             print(f"\n  regente decide {a.id} <opcao>")
             print("-" * 62)
         return 0
     finally:
-        motor.fecha()
+        motor.close()
 
 
 def cmd_decide(args) -> int:
-    cfg = _config(args)
-    motor = container.monta(cfg)
+    cfg = _load_config(args)
+    motor = container.build(cfg)
     try:
-        a = motor.store.decide_approval(args.approval_id, args.opcao,
-                                        por=args.por, nota=args.nota or "")
+        a = motor.store.decide_approval(args.approval_id, args.option,
+                                        por=args.por, note=args.note or "")
         t = motor.store.task(a.task_id)
-        print(f"{t.chave}: registrado '{args.opcao}'.")
+        print(f"{t.key}: registrado '{args.option}'.")
         print("O proximo tick retoma a task a partir daqui.")
         return 0
     finally:
-        motor.fecha()
+        motor.close()
 
 
 def cmd_log(args) -> int:
-    cfg = _config(args)
-    motor = container.monta(cfg)
+    cfg = _load_config(args)
+    motor = container.build(cfg)
     try:
-        alvo = None
+        target = None
         if args.task:
             for t in motor.store.tasks(motor.workspace.id):
-                if t.chave == args.task or t.id == args.task:
-                    alvo = t.id
+                if t.key == args.task or t.id == args.task:
+                    target = t.id
                     break
-            if alvo is None:
+            if target is None:
                 print(f"task '{args.task}' nao encontrada")
                 return 1
-        eventos = motor.store.eventos(motor.workspace.id, task_id=alvo, limite=args.n)
-        for e in reversed(eventos):
+        events = motor.store.events(motor.workspace.id, task_id=target, limit=args.n)
+        for e in reversed(events):
             hora = e.ts.strftime("%d/%m %H:%M")
-            chave = ""
-            if e.task_id and not alvo:
+            key = ""
+            if e.task_id and not target:
                 t = motor.store.task(e.task_id)
-                chave = f"{t.chave} " if t else ""
-            print(f"{hora}  {chave}{e.tipo:<14} {e.resumo}")
+                key = f"{t.key} " if t else ""
+            print(f"{hora}  {key}{e.kind:<14} {e.summary}")
         return 0
     finally:
-        motor.fecha()
+        motor.close()
 
 
 def cmd_plan(args) -> int:
     """Mostra a decisao do scheduler sem executar nada."""
-    cfg = _config(args)
-    motor = container.monta(cfg)
+    cfg = _load_config(args)
+    motor = container.build(cfg)
     try:
-        p = motor.orchestrator.plano()
-        if p.despachar:
+        p = motor.orchestrator.plan()
+        if p.dispatch:
             print("DESPACHARIA EM PARALELO")
-            for i in p.despachar:
+            for i in p.dispatch:
                 t = motor.store.task(i)
-                print(f"  {t.chave:<16} {', '.join(t.recursos)}")
+                print(f"  {t.key:<16} {', '.join(t.resources)}")
         else:
             print("nada pronto para despachar")
-        if p.adiadas:
+        if p.deferred:
             print()
             print("ADIADAS")
-            for a in p.adiadas:
+            for a in p.deferred:
                 t = motor.store.task(a.task_id)
-                print(f"  {t.chave:<16} {a.motivo}")
-        if p.em_ciclo:
+                print(f"  {t.key:<16} {a.reason}")
+        if p.in_cycle:
             print()
             print("EM CICLO (ninguem pode comecar)")
-            for i in p.em_ciclo:
-                print(f"  {motor.store.task(i).chave}")
+            for i in p.in_cycle:
+                print(f"  {motor.store.task(i).key}")
         return 0
     finally:
-        motor.fecha()
+        motor.close()
 
 
 def cmd_sombra(args) -> int:
     """Descobre e planeja contra o provedor real, sem mutar nada."""
-    cfg = _config(args)
-    motor = container.monta(cfg)
+    cfg = _load_config(args)
+    motor = container.build(cfg)
     try:
-        r = sombra.executa(
-            provedor=motor.orchestrator.tasks_provider,
-            limites=cfg.limites,
-            filtro={"apenas_minhas": True} if args.minhas else None,
+        r = shadow.execute(
+            provider=motor.orchestrator.tasks_provider,
+            limits=cfg.limits,
+            filtro={"apenas_minhas": True} if args.mine else None,
             eu=args.eu)
-        print(sombra.texto(r))
-        if args.saida:
-            Path(args.saida).write_text(sombra.texto(r), encoding="utf-8")
+        print(shadow.render(r))
+        if args.output:
+            Path(args.output).write_text(shadow.render(r), encoding="utf-8")
             print()
-            print(f"  gravado em {args.saida}")
-        return 0 if not r.erros_do_provedor else 2
+            print(f"  gravado em {args.output}")
+        return 0 if not r.provider_errors else 2
     finally:
-        motor.fecha()
+        motor.close()
 
 
 def cmd_repos(args) -> int:
     """Repositorios visiveis, como o motor os enxerga."""
-    cfg = _config(args)
-    motor = container.monta(cfg)
+    cfg = _load_config(args)
+    motor = container.build(cfg)
     try:
         if motor.repos is None:
             print("nenhum provedor de repositorio configurado")
             return 1
         lista = motor.repos.list_repositories()
-        print(f"{len(lista)} repositorio(s) via {motor.repos.nome}")
+        print(f"{len(lista)} repositorio(s) via {motor.repos.name}")
         print()
         for r in sorted(lista, key=lambda x: x.ref.key):
-            marca = "!" if r.anomalias else " "
-            print(f" {marca} {r.ref.key:<46} base={r.branch_base or '(nao lida)':<10}")
-            if args.verboso:
-                print(f"     recurso: {r.ref.recurso(motor.workspace.id)}")
-                if r.anomalias:
-                    print(f"     anomalias: {'; '.join(r.anomalias)}")
+            mark = "!" if r.anomalies else " "
+            print(f" {mark} {r.ref.key:<46} base={r.base_branch or '(nao lida)':<10}")
+            if args.verbose:
+                print(f"     recurso: {r.ref.resource(motor.workspace.id)}")
+                if r.anomalies:
+                    print(f"     anomalias: {'; '.join(r.anomalies)}")
         return 0
     finally:
-        motor.fecha()
+        motor.close()
 
 
 def cmd_cadeia(args) -> int:
     """task -> repositorio -> base -> recursos -> risco/policy -> candidato."""
-    cfg = _config(args)
-    motor = container.monta(cfg)
+    cfg = _load_config(args)
+    motor = container.build(cfg)
     try:
         if motor.repos is None:
             print("nenhum provedor de repositorio configurado")
             return 1
-        tarefas = motor.orchestrator.tasks_provider.list_tasks()
-        repositorios = motor.repos.list_repositories()
+        items = motor.orchestrator.tasks_provider.list_tasks()
+        repositories = motor.repos.list_repositories()
         branches = {}
         if not args.sem_branches:
-            for r in repositorios:
+            for r in repositories:
                 try:
                     branches[r.ref.key] = motor.repos.list_branches(r.ref.key)
                 except Exception:
                     branches[r.ref.key] = []
-        rel = cadeia.monta(
-            workspace_nome=motor.workspace.nome, workspace_id=motor.workspace.id,
-            tasks=tarefas, repos=repositorios, resolvedor=motor.resolvedor,
-            policy=motor.policy, risco=motor.risco,
-            autonomia=motor.workspace.autonomia_maxima, branches=branches,
-            organizacao=cfg.organizacao, cliente=cfg.cliente)
-        print(cadeia.texto(rel, limite=args.limite))
-        if args.saida:
-            Path(args.saida).write_text(cadeia.texto(rel, limite=200), encoding="utf-8")
+        rel = chain.build(
+            workspace_nome=motor.workspace.name, workspace_id=motor.workspace.id,
+            tasks=items, repos=repositories, resolvedor=motor.resolvedor,
+            policy=motor.policy, risk=motor.risk,
+            autonomy=motor.workspace.max_autonomy, branches=branches,
+            organization=cfg.organization, client=cfg.client)
+        print(chain.render(rel, limit=args.limit))
+        if args.output:
+            Path(args.output).write_text(chain.render(rel, limit=200), encoding="utf-8")
             print()
-            print(f"  gravado em {args.saida}")
+            print(f"  gravado em {args.output}")
         return 0
     finally:
-        motor.fecha()
+        motor.close()
 
 
 def cmd_rules(args) -> int:
-    cfg = _config(args)
-    from .app.config import carrega_policies
+    cfg = _load_config(args)
+    from .app.config import load_policies
     from .adapters import registry
-    print(f"autonomia maxima: {cfg.autonomia.name}")
-    print(f"modo: {'sombra' if cfg.sombra else 'VALENDO'}")
-    print(f"limites: {cfg.limites.max_workers} workers, "
-          f"{cfg.limites.max_despachos_dia} despachos/dia")
+    print(f"autonomia maxima: {cfg.autonomy.name}")
+    print(f"modo: {'sombra' if cfg.shadow else 'VALENDO'}")
+    print(f"limites: {cfg.limits.max_workers} workers, "
+          f"{cfg.limits.max_dispatches_per_day} despachos/dia")
     print()
     print("REGRAS")
-    for r in carrega_policies(cfg.policies):
-        criterios = ", ".join(f"{k}={v}" for k, v in (r.get("match") or {}).items())
-        print(f"  {r['efeito']:<15} {r.get('nome', '?'):<26} {criterios}")
+    for r in load_policies(cfg.policies):
+        criteria = ", ".join(f"{k}={v}" for k, v in (r.get("match") or {}).items())
+        print(f"  {r['effect']:<15} {r.get('name', '?'):<26} {criteria}")
     print()
     print("ADAPTERS DISPONIVEIS")
-    for cap, nomes in registry.disponiveis().items():
+    for cap, nomes in registry.available().items():
         print(f"  {cap:<14} {', '.join(nomes)}")
     return 0
 
@@ -322,10 +322,10 @@ def cmd_rules(args) -> int:
 # ---- entrada -------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> int:
-    _utf8()
+    _force_utf8()
     ap = argparse.ArgumentParser(prog="regente",
                                  description="Sistema operacional para agentes de engenharia.")
-    ap.add_argument("-c", "--config", default=PADRAO)
+    ap.add_argument("-c", "--config", default=DEFAULT_CONFIG_FILE)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("init", help="cria a configuracao inicial")
@@ -336,11 +336,11 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_doctor)
 
     p = sub.add_parser("tick", help="roda um ciclo")
-    p.add_argument("-v", "--verboso", action="store_true")
+    p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(fn=cmd_tick)
 
     p = sub.add_parser("status", help="o que esta acontecendo")
-    p.add_argument("-v", "--verboso", action="store_true")
+    p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(fn=cmd_status)
 
     p = sub.add_parser("plan", help="o que o scheduler faria agora")
@@ -368,7 +368,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_sombra)
 
     p = sub.add_parser("repos", help="repositorios visiveis, sem tocar em nada")
-    p.add_argument("-v", "--verboso", action="store_true")
+    p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(fn=cmd_repos)
 
     p = sub.add_parser("cadeia", help="da task real ao candidato a execucao, em sombra")
