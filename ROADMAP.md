@@ -1,34 +1,34 @@
 # Roadmap
 
-Regra: cada marco entrega **capacidade funcionando**, não estrutura para depois.
-Marco não fecha sem prova em disco.
+Rule: every milestone delivers **working capability**, not structure for later.
+A milestone does not close without proof on disk.
 
-| # | Marco | Fecha quando |
+| # | Milestone | Closes when |
 |---|---|---|
-| **1** | **Core, estado, policy, scheduler** ✅ | tick descobre, monta grafo, despacha em paralelo, sobrevive a `kill -9` e escala ao humano |
-| 2 | Mission Control (UI local) | as 4 perguntas na tela; decidir um item da fila pelo navegador |
-| **3** | **TaskProvider real** ✅ | adapter real lendo o board de verdade em sombra; contrato passa em dois provedores; zero mutacao |
-| **4** | **RepositoryProvider** ✅ | dois provedores reais em sombra; identidade dentro da tenancy; contrato de escrita declarado, nada implementado |
-| 5 | CoderAgent | worker que escreve código de verdade em worktree isolado |
-| 6 | CI + PR | motor acompanha checks e reage a vermelho |
-| 7 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
-| 8 | CloudProvider | leitura de recursos, logs e métricas |
-| 9 | Deploy em staging | deploy governado + smoke, com rollback |
-| 10 | Workers paralelos de verdade | 2+ workers reais simultâneos sem colisão |
-| 11 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
-| 12 | **Segundo cliente** | outro conjunto de provedores rodando **sem tocar em `core/` nem `engine/`** |
+| **1** | **Core, state, policy, scheduler** ✅ | a tick discovers, builds the graph, dispatches in parallel, survives `kill -9` and escalates to the human |
+| 2 | Mission Control (local UI) | the 4 questions on screen; deciding a queue item from the browser |
+| **3** | **Real TaskProvider** ✅ | a real adapter reading the real board in shadow; the contract passes on two providers; zero mutation |
+| **4** | **RepositoryProvider** ✅ | two real providers in shadow; identity within the tenancy; write contract declared, nothing implemented |
+| 5 | CoderAgent | a worker that writes real code in an isolated worktree |
+| 6 | CI + PR | the engine follows checks and reacts to red |
+| 7 | ReviewerAgent | a review pinned to the reviewed SHA, with a second pass on high risk |
+| 8 | CloudProvider | reading resources, logs and metrics |
+| 9 | Deploy to staging | governed deploy + smoke, with rollback |
+| 10 | Genuinely parallel workers | 2+ real simultaneous workers without collision |
+| 11 | Mature escalation | notification outside the terminal; one-click decision |
+| 12 | **Second client** | another set of providers running **without touching `core/` or `engine/`** |
 
-O marco 12 é o único teste honesto da arquitetura. Os outros onze podem passar
-com um motor secretamente acoplado ao primeiro cliente.
+Milestone 12 is the only honest test of the architecture. The other eleven can
+pass with an engine secretly coupled to the first client.
 
-## Ordem das apostas
+## The order of the bets
 
-Adapter real (3, 4) vem **antes** de agente que escreve código (5). Motivo: um
-agente escrevendo código contra provider falso não prova nada, e é o mais caro de
-refazer se a abstração estiver errada.
+A real adapter (3, 4) comes **before** an agent that writes code (5). The reason:
+an agent writing code against a fake provider proves nothing, and it is the most
+expensive thing to redo if the abstraction turns out to be wrong.
 
-## Freios, em toda fase
+## Brakes, in every phase
 
-`sombra: true` nasce ligado. Desligar é decisão explícita, depois de o dono ler o
-que o motor teria feito e responder sim à pergunta: *eu assinaria isso com meu
-nome?*
+`shadow: true` is born on. Turning it off is an explicit decision, after the
+owner has read what the engine would have done and answered yes to the question:
+*would I sign this with my name?*

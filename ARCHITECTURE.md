@@ -1,169 +1,171 @@
-# Arquitetura
+# Architecture
 
-Regente é um **sistema operacional para agentes de engenharia de software**. O
-agente trabalha, o Orchestrator coordena, as ferramentas executam, as policies
-protegem, e a fila chama o humano só quando a resposta não existe dentro do
-sistema.
+Regente is an **operating system for software engineering agents**. The agent
+works, the Orchestrator coordinates, the tools execute, the policies protect, and
+the queue calls the human only when the answer does not exist inside the system.
 
-## As camadas
+## The layers
 
 ```
-                    cli / ui          superfície
+                    cli / ui          surface
                        │
-                   app/              raiz de composição — o único lugar
-                       │             que conhece config + adapters + motor
+                   app/              composition root — the only place
+                       │             that knows config + adapters + engine
         ┌──────────────┴──────────────┐
      engine/                      adapters/
    orchestrator                jira, github, gcloud…
-   scheduler                   (todo nome de ferramenta vive aqui)
+   scheduler                   (every tool name lives here)
    store, gate                        │
    supervisor                         │
         └──────────────┬──────────────┘
-                    ports/            contratos de capacidade
+                    ports/            capability contracts
                        │
-                    core/             domínio puro: sem I/O, sem fornecedor
+                    core/             pure domain: no I/O, no provider
 ```
 
-A dependência aponta sempre para dentro. `core/` não importa nada; `engine/` fala
-só com `ports/`; adapters implementam portas; `app/` amarra tudo.
+The dependency always points inwards. `core/` imports nothing; `engine/` talks
+only to `ports/`; adapters implement ports; `app/` ties it all together.
 
-**Isso não é convenção — é testado.** `tests/test_fronteiras.py` lê o código-fonte
-e falha se `core/` importar I/O, se `engine/` importar adapter, ou se um nome de
-ferramenta aparecer em código (não em docstring) dentro de `core/`, `engine/` ou
-`ports/`. A regra quebra em CI, não em revisão de código.
+**This is not a convention — it is tested.** `tests/test_boundaries.py` reads the
+source and fails if `core/` imports I/O, if `engine/` imports an adapter, or if a
+tool's name appears in code (not in a docstring) inside `core/`, `engine/` or
+`ports/`. The rule breaks in CI, not in code review.
 
-## As três invariantes
+## The three invariants
 
-**1. Estado por diferença, no disco.** O motor nunca depende do contexto de
-conversa de um agente para saber onde o trabalho parou. Task, Run, Event,
-Approval e Lease vivem em SQLite. Matar o processo no meio de um despacho é
-operação suportada: o lease vence, o run vira `INTERRUPTED`, a task volta para a
-fila e o próximo tick continua. O tick recorrente **é** o mecanismo de retry — não
-existe código de retry no meio do fluxo.
+**1. State by difference, on disk.** The engine never depends on an agent's
+conversation context to know where the work stopped. Task, Run, Event, Approval
+and Lease live in SQLite. Killing the process in the middle of a dispatch is a
+supported operation: the lease expires, the run becomes `INTERRUPTED`, the task
+returns to the queue and the next tick carries on. The recurring tick **is** the
+retry mechanism — there is no retry code in the middle of the flow.
 
-**2. Nenhuma ação crítica depende do julgamento do LLM.** Todo pedido de
-ferramenta atravessa o portão:
+**2. No critical action depends on the LLM's judgement.** Every tool request
+crosses the gate:
 
 ```
-Agent → ToolRequest → [risco] → [policy] → ALLOW / DENY / HUMAN_APPROVAL → Tool
+Agent → ToolRequest → [risk] → [policy] → ALLOW / DENY / HUMAN_APPROVAL → Tool
 ```
 
-O portão refaz o julgamento do zero. Não aceita risco pré-calculado, nem
-justificativa, nem veredito de quem chama. Um agente convencido por um comentário
-de PR ainda esbarra nele — porque quem decide não lê opinião.
+The gate redoes the judgement from scratch. It accepts no pre-computed risk, no
+justification and no verdict from the caller. An agent talked round by a PR
+comment still runs into it — because what decides does not read opinion.
 
-**3. Conteúdo externo é dado, nunca ordem.** Título de task, descrição,
-comentário, diff: tudo é texto escrito por terceiros. Tentativa de manipulação
-vira achado, não instrução.
+**3. External content is data, never an order.** Task title, description,
+comment, diff: all of it is text written by third parties. An attempt at
+manipulation becomes a finding, not an instruction.
 
-## Risco e policy decidem coisas diferentes
+## Risk and policy decide different things
 
-Esta é a distinção que define o produto, e é a que faz o dono não virar gargalo.
+This is the distinction that defines the product, and the one that keeps the
+owner from becoming the bottleneck.
 
-| | pergunta que responde | efeito de "alto" |
+| | question it answers | effect of "high" |
 |---|---|---|
-| **Policy** | *quem pode fazer isso?* | `HUMAN_APPROVAL` — a organização decidiu que essa assinatura tem dono |
-| **Risco** | *quanta prova essa ação exige?* | segunda passada adversarial — compra **trabalho**, não espera |
+| **Policy** | *who may do this?* | `HUMAN_APPROVAL` — the organisation decided this signature has an owner |
+| **Risk** | *how much proof does this action demand?* | an adversarial second pass — it buys **work**, not waiting |
 
-Se risco alto virasse fila de espera, todo PR bom ficaria parado aguardando
-assinatura — exatamente o custo que o motor existe para eliminar. Quem para o
-trabalho é a regra escrita, não a hesitação do modelo.
+If high risk became a waiting queue, every good PR would sit waiting for a
+signature — exactly the cost the engine exists to remove. What stops work is the
+written rule, not the model's hesitation.
 
-Ortogonal aos dois: o **teto de autonomia** (L0 leitura → L4 produção) por
-workspace e projeto. Estourar o teto vira `HUMAN_APPROVAL`, nunca `DENY` — o
-humano continua podendo autorizar. Quem nega de vez é a regra.
+Orthogonal to both: the **autonomy ceiling** (L0 read → L4 production) per
+workspace and project. Breaching the ceiling becomes `HUMAN_APPROVAL`, never
+`DENY` — the human can still authorise it. What refuses outright is the rule.
 
-O Policy Engine é **default deny**: ação sem regra que a permita não acontece. E
-**vence o mais restritivo**: um `DENY` não é anulado por nenhum `ALLOW`, porque
-ordem de arquivo não pode decidir segurança.
+The Policy Engine is **default deny**: an action with no rule allowing it does
+not happen. And **the most restrictive wins**: a `DENY` is not cancelled by any
+`ALLOW`, because file order must not decide security.
 
-## Paralelismo sem atropelo
+## Parallelism without collisions
 
-O Orchestrator monta um grafo de dependências e o scheduler escolhe o que roda
-agora. Antes de abrir dois slots ele verifica quatro coisas: dependências
-concluídas, conflito de recurso, ciclo, e limites (slots, teto diário).
+The Orchestrator builds a dependency graph and the scheduler picks what runs now.
+Before opening two slots it checks four things: dependencies completed, resource
+conflict, cycle, and limits (slots, daily cap).
 
-Conflito é **declarado**, não adivinhado. Cada task diz quais chaves de recurso
-toca em exclusividade — `repo:api`, `migration:worker`, `file:src/auth.py` — e
-qualquer interseção é exclusão mútua. Detectar conflito semântico de verdade
-exige ler o código: isso é trabalho de um agente de análise, que alimenta essa
-lista. O scheduler nunca conclui sozinho que dois diffs "provavelmente" convivem.
+A conflict is **declared**, not guessed. Each task states which resource keys it
+touches exclusively — `repo:api`, `migration:worker`, `file:src/auth.py` — and
+any intersection is mutual exclusion. Detecting a genuine semantic conflict
+requires reading the code: that is the job of an analysis agent, which feeds this
+list. The scheduler never concludes on its own that two diffs "probably" coexist.
 
-Reserva acontece dentro do próprio plano: duas candidatas do mesmo tick que
-compartilham recurso não saem juntas. Esquecer isso é o jeito clássico de
-despachar dois workers para a mesma migration.
+Reservation happens inside the plan itself: two candidates from the same tick
+that share a resource do not go out together. Forgetting this is the classic way
+to dispatch two workers onto the same migration.
 
-## A máquina de estados
+## The state machine
 
-Dezoito estados, tabela explícita, transição fora dela levanta erro. Três
-propriedades que não são óbvias:
+Eighteen states, an explicit table, and a transition outside it raises an error.
+Three properties that are not obvious:
 
-- **`WAITING_HUMAN` guarda de onde pausou.** Não é destino, é pausa. O humano
-  manda seguir, refazer ou encerrar — mas não teletransporta a task: aprovar um
-  deploy não é declarar o trabalho pronto.
-- **Escalar é sempre possível.** De qualquer estado não-terminal existe caminho
-  para `WAITING_HUMAN`. O motor nunca fica sem a opção de parar e perguntar.
-- **Estado ativo devolve à fila.** Worker morto → `READY`. Manter a task no
-  estado ativo "para preservar o progresso" não preserva nada: o progresso vive
-  na área de trabalho e na branch, não no rótulo. A task ficaria viva no papel e
-  parada de verdade — o pior modo de falha possível, porque nada acusa.
+- **`WAITING_HUMAN` remembers where it paused.** It is not a destination, it is a
+  pause. The human says carry on, redo, or close out — but does not teleport the
+  task: approving a deploy is not declaring the work finished.
+- **Escalating is always possible.** From any non-terminal state there is a path
+  to `WAITING_HUMAN`. The engine is never left without the option of stopping to
+  ask.
+- **An active state returns to the queue.** Dead worker → `READY`. Keeping the
+  task in the active state "to preserve the progress" preserves nothing: the
+  progress lives in the work area and in the branch, not in the label. The task
+  would be alive on paper and stopped in practice — the worst possible failure
+  mode, because nothing flags it.
 
-O que preserva o trabalho parcial é a **área ser endereçada pela task, não pela
-tentativa**: a retomada reabre a mesma árvore, com os commits WIP.
+What preserves the partial work is the **area being addressed by the task, not by
+the attempt**: the resumption reopens the same tree, with the WIP commits.
 
-## Escada de recuperação
+## Recovery ladder
 
 ```
-falhou → retenta → troca de estratégia → escala ao humano
+failed → retry → change of strategy → escalate to the human
 ```
 
-Finita de propósito, e cada degrau precisa ser *diferente* do anterior. Retentar
-idêntico depois de um erro determinístico é gastar dinheiro mais devagar. Além
-disso, todo agente tem teto de iterações, tool calls, custo e tempo, e um detector
-de não-progresso que acusa quatro padrões: mesmo erro, mesmo arquivo, mesmo teste,
-mesma decisão.
+Finite on purpose, and each rung has to be *different* from the previous one.
+Retrying identically after a deterministic error is spending money more slowly.
+On top of that, every agent has a ceiling on iterations, tool calls, cost and
+time, and a non-progress detector that flags four patterns: same error, same
+file, same test, same decision.
 
-## O que entra na fila NEEDS ME
+## What enters the NEEDS ME queue
 
-Critério estreito, porque encher a fila é o jeito garantido de fazer o dono parar
-de lê-la. Entra só o que **não tem resposta dentro do sistema**: autoridade humana
-exigida por policy, contrato ambíguo que leitura extra não resolve, escada de
-recuperação esgotada, ou backlog em ciclo.
+A narrow criterion, because filling the queue is the guaranteed way to make the
+owner stop reading it. Only what **has no answer inside the system** gets in:
+human authority required by policy, an ambiguous contract that extra reading does
+not resolve, an exhausted recovery ladder, or a backlog in a cycle.
 
-**Não entra:** risco alto (compra segunda passada), teste vermelho (é trabalho),
-erro transitório (é retentativa).
+**What does not get in:** high risk (it buys a second pass), a red test (it is
+work), a transient error (it is a retry).
 
-Cada item carrega decisão, não diagnóstico: o que aconteceu, por que importa, o
-que o agente já tentou, opções, recomendação, risco. Log fica no evento, sob
-demanda.
+Each item carries a decision, not a diagnosis: what happened, why it matters,
+what the agent already tried, options, recommendation, risk. Logs stay in the
+event, on demand.
 
 ## Multi-tenancy
 
-`Organization → Client → Workspace → Project → Repository`, presente desde a
-primeira tabela. Cada Task, Run e Event carrega `workspace_id`, e a identidade
-externa é única *por workspace* — o mesmo `FAXINA-183` em dois clientes são duas
-tasks, e nunca colidem. Enfiar tenancy depois exigiria migrar todas as tabelas e
-revisar toda consulta; a consulta esquecida é justamente a que vaza dado do
-cliente A para o cliente B.
+`Organization → Client → Workspace → Project → Repository`, present from the very
+first table. Every Task, Run and Event carries a `workspace_id`, and the external
+identity is unique *per workspace* — the same `FAXINA-183` in two clients is two
+tasks, and they never collide. Bolting tenancy on later would mean migrating
+every table and reviewing every query; the forgotten query is precisely the one
+that leaks client A's data to client B.
 
-Credencial e autonomia moram no **workspace**, não no projeto — é ali que a
-fronteira entre clientes precisa ser inviolável.
+Credentials and autonomy live in the **workspace**, not in the project — that is
+where the boundary between clients has to be inviolable.
 
-## Decisões tomadas, e por quê
+## Decisions taken, and why
 
-| decisão | escolha | motivo |
+| decision | choice | reason |
 |---|---|---|
-| linguagem | Python 3.13 | ecossistema de agentes e de ferramentas do ambiente |
-| persistência | SQLite + WAL atrás da porta `Store` | zero-ops, transacional, legível à mão; Postgres entra sem tocar no Core |
-| atomicidade | `BEGIN IMMEDIATE` em transição e lease | são os dois pontos onde um despacho duplicado nasce |
-| isolamento | porta `WorkspaceProvider`; diretório agora, worktree para código | worktree é nativo do git; container é peso desnecessário hoje |
-| execução do agente | porta `AgentRunner` | mantém o Core agnóstico a harness; runner é trocável sem tocar no motor |
-| config | YAML + policies em arquivo separado | policy precisa ser revisável e diferente sem mexer no resto |
-| sombra | `true` por padrão | modo vivo é decisão explícita do dono, nunca default |
+| language | Python 3.13 | the agent and tooling ecosystem of the environment |
+| persistence | SQLite + WAL behind the `Store` port | zero-ops, transactional, readable by hand; Postgres enters without touching the Core |
+| atomicity | `BEGIN IMMEDIATE` on transition and lease | these are the two points where a duplicate dispatch is born |
+| isolation | `WorkspaceProvider` port; a directory now, a worktree for code | worktree is native to git; a container is unnecessary weight today |
+| agent execution | `AgentRunner` port | keeps the Core agnostic to the harness; the runner is swappable without touching the engine |
+| config | YAML + policies in a separate file | a policy has to be reviewable and diffable without touching the rest |
+| shadow | `true` by default | live mode is the owner's explicit decision, never a default |
 
-## O que ainda não existe
+## What does not exist yet
 
-Deliberadamente: UI, adapters de fornecedor real, agente que escreve código,
-LLMProvider implementado, detecção semântica de conflito, deploy. As **portas**
-desses existem e são estáveis; as implementações vêm nos marcos 2–9 do
+Deliberately: UI, real provider adapters, an agent that writes code, an
+implemented LLMProvider, semantic conflict detection, deploy. The **ports** for
+those exist and are stable; the implementations come in milestones 2–9 of the
 [ROADMAP](ROADMAP.md).

@@ -1,99 +1,102 @@
-# Onde esta task roda?
+# Where does this task run?
 
-Investigação do Marco 4. **Medido em 06/09/2026** contra 100 tasks reais e 12
-repositórios reais — não estimado.
+Milestone 4 investigation. **Measured on 06/09/2026** against 100 real tasks and
+12 real repositories — not estimated.
 
-## O achado
+## The finding
 
-**A informação está faltando, não escondida.**
+**The information is missing, not hidden.**
 
-| sinal | cobertura | serve? |
+| signal | coverage | any good? |
 |---|---|---|
-| campo de componente (o campo *natural* para isso) | **0/100** | não existe no board |
-| branch existente citando a chave da task | **14/100**, 2 ambíguas | sim, quando existe |
-| rótulo que cita nome de repositório | 72/100 casam `scamchecker` | **não** — ver abaixo |
-| título que cita nome de repositório | 11/100 | não, ruidoso |
-| projeto | 100/100, mas 1 projeto → 12 repos | não discrimina |
+| component field (the *natural* field for this) | **0/100** | does not exist on the board |
+| existing branch naming the task key | **14/100**, 2 ambiguous | yes, when it exists |
+| label naming a repository | 72/100 match `scamchecker` | **no** — see below |
+| title naming a repository | 11/100 | no, noisy |
+| project | 100/100, but 1 project → 12 repos | does not discriminate |
 
-O rótulo parece promissor e não é: `scamchecker` é ao mesmo tempo o nome de **um**
-repositório e o nome do **produto inteiro**, que tem doze. Casar por texto ali
-trocaria "não sei" por "errei com confiança" — que num motor que vai escrever
-código é infinitamente pior.
+The label looks promising and is not: `scamchecker` is at once the name of **one**
+repository and the name of the **whole product**, which has twelve. Matching by
+text there would swap "I do not know" for "I got it wrong confidently" — which,
+in an engine that is going to write code, is infinitely worse.
 
-## O que foi implementado
+## What was implemented
 
-Coleta de evidência com confiança declarada. **Nunca chute.**
-
-```
-DECLARADA  alguém afirmou explicitamente        (peso 100)
-OBSERVADA  o mundo mostra trabalho já começado  (peso  50)
-AMBIGUA    empate — o motor NÃO desempata
-AUSENTE    nenhuma evidência — o motor não inventa
-```
-
-`DECLARADA` vence `OBSERVADA` porque uma branch pode ser resto de tentativa
-abandonada, enquanto um mapa é afirmação de quem sabe. Empate vira pergunta ao
-humano, não escolha.
-
-Casamento de chave é por **palavra inteira**: `K-1` não casa com `K-11`. E nome
-curto ambíguo entre dois repositórios não entra no índice — seria reintroduzir o
-chute pela porta dos fundos.
-
-## O contrato futuro entre TaskProvider e RepositoryProvider
-
-O que falta não é código, é **dado declarado**. Em ordem de preferência:
-
-1. **O provedor de tasks emite o alvo** — campo próprio, componente, ou convenção
-   de rótulo. É a única fonte que não envelhece, porque quem escreve a task sabe
-   onde ela roda. *Custo: uma decisão de processo, zero código no motor.*
-2. **Mapa na configuração do workspace** (`por_rotulo`, `por_projeto`, `por_task`).
-   Cobre o caso comum com zero adivinhação, e já está implementado.
-3. **Agente de análise lê o código e propõe o alvo com evidência.** Caro, e por
-   isso último — mas é o único que resolve task nova em repositório novo.
-
-**Nenhum dos três exige mudar o Core.** `ExternalTask.recursos` e `dados` já
-carregam o resultado, venha ele de onde vier.
-
-## O que a capacidade faltante vale, medido
-
-Mesmos 100 tasks, mesma evidência, mudando um eixo por vez:
+Evidence collection with declared confidence. **Never a guess.**
 
 ```
-teto de autonomia    L0 → PRECISA_HUMANO 1        L2 → CANDIDATO 1
-mapa declarado       sem → AMBIGUO 2, CANDIDATO 1
-                     com 1 entrada → AMBIGUO 1, CANDIDATO 2
+DECLARED  somebody stated it explicitly          (weight 100)
+OBSERVED  the world shows work already started   (weight  50)
+AMBIGUOUS a tie — the engine does NOT break it
+ABSENT    no evidence — the engine does not invent
 ```
 
-Uma linha de mapa converteu uma ambiguidade em candidato executável, com a
-evidência registrada:
+`DECLARED` beats `OBSERVED` because a branch can be the leftovers of an abandoned
+attempt, whereas a map is a statement by someone who knows. A tie becomes a
+question for the human, not a choice.
+
+Key matching is by **whole word**: `K-1` does not match `K-11`. And a short name
+ambiguous between two repositories does not enter the index — that would
+reintroduce the guess through the back door.
+
+## The future contract between TaskProvider and RepositoryProvider
+
+What is missing is not code, it is **declared data**. In order of preference:
+
+1. **The task provider emits the target** — a field of its own, a component, or a
+   label convention. It is the only source that does not age, because whoever
+   writes the task knows where it runs. *Cost: one process decision, zero code in
+   the engine.*
+2. **A map in the workspace configuration** (`by_label`, `by_project`, `by_task`).
+   It covers the common case with zero guessing, and is already implemented.
+3. **An analysis agent reads the code and proposes the target with evidence.**
+   Expensive, and last for that reason — but the only one that resolves a new
+   task in a new repository.
+
+**None of the three requires changing the Core.** `ExternalTask.resources` and
+`data` already carry the result, wherever it comes from.
+
+## What the missing capability is worth, measured
+
+The same 100 tasks, the same evidence, changing one axis at a time:
 
 ```
-SG-1195  DECLARADA
+autonomy ceiling     L0 → PRECISA_HUMANO 1       L2 → CANDIDATO 1
+declared map         without → ALVO_AMBIGUO 2, CANDIDATO 1
+                     with 1 entry → ALVO_AMBIGUO 1, CANDIDATO 2
+```
+
+One line of map turned an ambiguity into an executable candidate, with the
+evidence recorded:
+
+```
+SG-1195  DECLARED
   SG-1195 -> silverguard-br/scamchecker-dashboard-api;
-  'chore/SG-1195-remove-deploy-staging-obsoleto-da-main' cita SG-1195
+  'chore/SG-1195-remove-deploy-staging-obsoleto-da-main' names SG-1195
   base=main  branch=regente/sg-1195
-  recurso=repo:wks_sg/git-local/silverguard-br/scamchecker-dashboard-api
+  resource=repo:wks_sg/git-local/silverguard-br/scamchecker-dashboard-api
 ```
 
-## A cadeia, e onde ela para
+## The chain, and where it stops
 
 ```
-task → repositório candidato → contexto → branch base
-     → recursos/isolamento → risco/policy → candidato a execução
+task → candidate repository → context → base branch
+     → resources/isolation → risk/policy → execution candidate
 ```
 
-Cada elo pode reprovar, e reprovar é normal. O valor está em dizer **em qual
-elo** parou — "não há o que fazer", "não sei onde fazer" e "não posso fazer"
-exigem ações opostas do dono, e um número único as esconderia.
+Every link can reject, and rejecting is normal. The value lies in saying **at
+which link** it stopped — "there is nothing to do", "I do not know where to do
+it" and "I may not do it" demand opposite actions from the owner, and a single
+number would hide them.
 
-Contra o board real, sem mapa declarado, em L0:
+Against the real board, with no declared map, at L0:
 
 ```
-SEM_TRABALHO    36   a origem diz que alguém já está nela
-SEM_ALVO        61   ← o gargalo: a declaração que falta
-ALVO_AMBIGUO     2   o motor se recusa a desempatar
-PRECISA_HUMANO   1   evidência boa, mas o teto de autonomia é L0
-Mutações         0
+SEM_TRABALHO    36   the source says somebody is already on it
+SEM_ALVO        61   ← the bottleneck: the declaration that is missing
+ALVO_AMBIGUO     2   the engine refuses to break the tie
+PRECISA_HUMANO   1   good evidence, but the autonomy ceiling is L0
+Mutations        0
 ```
 
-**O gargalo não é o motor.** É a informação que ninguém declara.
+**The bottleneck is not the engine.** It is the information nobody declares.

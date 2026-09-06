@@ -1,104 +1,107 @@
 # Regente
 
-Sistema operacional para agentes de engenharia de software.
+An operating system for software engineering agents.
 
-O agente trabalha. O Orchestrator coordena. As ferramentas executam. As policies
-protegem. A fila chama você **só quando a resposta não existe dentro do sistema**.
+The agent works. The Orchestrator coordinates. The tools execute. The policies
+protect. The queue calls you **only when the answer does not exist inside the
+system**.
 
-Não é um chatbot que sabe programar.
+It is not a chatbot that knows how to program.
 
-## Estado
+## Status
 
-**Marco 1** — descoberta, grafo de dependências, scheduler paralelo, workers
-isolados, estado persistente, detecção de falha, escalonamento humano e retomada
-após `kill -9`.
+**Milestone 1** — discovery, dependency graph, parallel scheduler, isolated
+workers, persistent state, failure detection, human escalation and resumption
+after `kill -9`.
 
-**Marco 3** — primeiro provedor real de tasks, em sombra: o motor lê um board de
-verdade, normaliza, monta o grafo e planeja, **sem autoridade para mutar nada**.
+**Milestone 3** — the first real task provider, in shadow: the engine reads a
+real board, normalises it, builds the graph and plans, **with no authority to
+mutate anything**.
 
-**Marco 4** — provedor de repositórios, em sombra: dois adapters reais de tipos
-opostos (git local e hospedagem remota), identidade dentro da tenancy, e a cadeia
-`task → repositório → base → recursos → risco/policy → candidato` respondida sem
-tocar em nada.
+**Milestone 4** — repository provider, in shadow: two real adapters of opposite
+kinds (local git and remote hosting), identity within the tenancy, and the chain
+`task → repository → base → resources → risk/policy → candidate` answered without
+touching anything.
 
-Ver [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md),
-[MAPEAMENTO.md](MAPEAMENTO.md) e [ALVO.md](ALVO.md).
+See [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md),
+[MAPEAMENTO.md](MAPEAMENTO.md) and [ALVO.md](ALVO.md).
 
-## Sombra: ver sem tocar
+## Shadow: see without touching
 
 ```bash
 regente sombra
 ```
 
-Descobre, normaliza, monta o grafo e mostra o que o motor faria — sem escrever
-uma linha em lugar nenhum. A garantia não é disciplina: o transporte de leitura
-**não tem verbo de escrita**. Ligar escrita exige adicionar um método, o que
-aparece num diff e passa por revisão — não um `if` que alguém desliga sem
-querer.
+Discovers, normalises, builds the graph and shows what the engine would do —
+without writing a line anywhere. The guarantee is not discipline: the read
+transport **has no write verb**. Turning writing on requires adding a method,
+which shows up in a diff and goes through review — not an `if` somebody switches
+off by accident.
 
-## Instalar
+## Install
 
 ```bash
 uv venv --python 3.13
 uv pip install -e ".[dev]"
 ```
 
-## Usar
+## Use
 
 ```bash
-regente init      # cria regente.yaml e a pasta tasks/
-regente doctor    # prova que o motor sobe: banco, adapters, policies
-regente tick      # roda um ciclo
-regente status    # o que está acontecendo, o que precisa de você
+regente init      # creates regente.yaml and the tasks/ folder
+regente doctor    # proves the engine starts: database, adapters, policies
+regente tick      # runs one cycle
+regente status    # what is happening, what needs you
 ```
 
-| comando | o que faz |
+| command | what it does |
 |---|---|
-| `init` | cria a configuração inicial |
-| `doctor` | prova cada aposta do ambiente por comando, não por suposição |
-| `tick` | um ciclo: recupera, descobre, analisa, planeja, despacha, colhe |
-| `status` | as quatro perguntas: o que roda, o que precisa de você, o que travou, o que terminou |
-| `plan` | o que o scheduler faria agora — sem executar |
-| `needs-me` | a fila de decisões humanas, com briefing |
-| `decide` | registra sua decisão num item da fila |
-| `log` | a trilha: toda transição, com ator e motivo |
-| `sombra` | vê o trabalho real e o que o motor faria, sem tocar em nada |
-| `repos` | repositórios visíveis, como o motor os enxerga |
-| `cadeia` | da task real ao candidato a execução, elo por elo |
-| `rules` | regras, limites e adapters em vigor |
+| `init` | creates the initial configuration |
+| `doctor` | proves each bet about the environment by running it, not by assuming |
+| `tick` | one cycle: recover, discover, analyse, plan, dispatch, collect |
+| `status` | the four questions: what is running, what needs you, what is stuck, what finished |
+| `plan` | what the scheduler would do now — without executing |
+| `needs-me` | the queue of human decisions, with a briefing |
+| `decide` | records your decision on an item in the queue |
+| `log` | the trail: every transition, with actor and reason |
+| `sombra` | sees the real work and what the engine would do, without touching anything |
+| `repos` | visible repositories, as the engine sees them |
+| `cadeia` | from the real task to an execution candidate, link by link |
+| `rules` | the rules, limits and adapters in force |
 
-## O primeiro tick é baseline
+## The first tick is a baseline
 
-Ligar o motor num backlog cheio **registra** o trabalho e não despacha nada. Sem
-isso, o primeiro contato com um board de cinquenta tasks vira uma tempestade de
-workers — e um incidente em vez de um produto.
+Switching the engine on against a full backlog **records** the work and
+dispatches nothing. Without that, the first contact with a board of fifty tasks
+becomes a storm of workers — and an incident instead of a product.
 
-## Sombra antes de valendo
+## Shadow before live
 
-`sombra: true` nasce ligado. Nesse modo o motor decide, registra e mostra, mas
-não executa escrita externa. Desligar é decisão explícita, depois de você ler o
-que ele *teria* feito e responder sim a: *eu assinaria isso com meu nome?*
+`shadow: true` is born on. In that mode the engine decides, records and shows,
+but performs no external write. Turning it off is an explicit decision, after you
+have read what it *would* have done and answered yes to: *would I sign this with
+my name?*
 
-## Trocar de fornecedor
+## Swapping providers
 
-Uma linha no `regente.yaml`:
+One line in `regente.yaml`:
 
 ```yaml
 providers:
   tasks:
-    nome: filesystem     # o adapter, por nome
-    diretorio: ./tasks
+    name: filesystem     # the adapter, by name
+    directory: ./tasks
 ```
 
-`regente rules` lista o que está disponível. Adicionar um provedor é adicionar
-uma entrada em `adapters/registry.py` — se algum dia exigir mexer em `core/` ou
-`engine/`, a abstração falhou, e `tests/test_fronteiras.py` acusa.
+`regente rules` lists what is available. Adding a provider means adding an entry
+in `adapters/registry.py` — if it ever requires touching `core/` or `engine/`,
+the abstraction has failed, and `tests/test_boundaries.py` says so.
 
-## Testes
+## Tests
 
 ```bash
 pytest
 ```
 
-Inclui o teste de fronteira, que lê o código-fonte e falha se o domínio importar
-I/O ou se um nome de ferramenta vazar para o núcleo.
+Includes the boundary test, which reads the source and fails if the domain
+imports I/O or if a tool's name leaks into the core.
