@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Raiz de composicao: configuracao -> motor montado.
+"""Composition root: configuration -> assembled engine.
 
-Este e o unico modulo que conhece ao mesmo tempo a configuracao, o registro de
-adapters e o Orchestrator. Todo o resto recebe suas dependencias prontas -- e por
-isso o Core Engine nunca precisa saber de onde elas vieram.
+This is the only module that knows the configuration, the adapter registry and
+the Orchestrator all at once. Everything else receives its dependencies
+ready-made -- which is why the Core Engine never needs to know where they came
+from.
 """
 
 from __future__ import annotations
@@ -30,10 +31,11 @@ from .config import Config, load_policies
 
 
 def _stable_id(prefixo: str, *partes: str) -> str:
-    """Id deterministico a partir do nome.
+    """A deterministic id derived from the name.
 
-    Reabrir o mesmo workspace precisa devolver o mesmo id, senao cada `regente
-    tick` cria um workspace novo e o estado anterior fica orfao no banco.
+    Reopening the same workspace has to return the same id, otherwise every
+    `regente tick` creates a new workspace and the previous state is orphaned in
+    the database. The names fed to it are therefore load-bearing values.
     """
     import hashlib
     mark = hashlib.sha1("/".join(partes).encode("utf-8")).hexdigest()[:12]
@@ -47,7 +49,7 @@ class Engine:
     workspace: Workspace
     orchestrator: Orchestrator
     gate: Gate
-    #: Opcional: um workspace pode governar tasks sem governar codigo.
+    #: Optional: a workspace may govern tasks without governing code.
     repos: RepositoryProvider | None = None
     areas: object | None = None
     agent: object | None = None
@@ -158,13 +160,14 @@ def build(cfg: Config) -> Engine:
     if not projects:
         store.save_project(Project(id=project_id, workspace_id=ws.id, name="padrao"))
 
-    # Segredos sao escopados ao workspace ANTES de qualquer adapter existir:
-    # nenhum adapter recebe um resolver que alcance outro cliente.
+    # Secrets are scoped to the workspace BEFORE any adapter exists: no adapter
+    # receives a resolver that reaches another client.
     secrets = registry.create(Capability.SECRETS, "scoped",
                              {"allowed": cfg.secrets, "workspace": ws.name})
 
-    # Observador: toda call a provedor externo vira evento, com tenancy.
-    # O adapter nao conhece o Store -- ele avisa, e quem escuta e o motor.
+    # Observer: every call to an external provider becomes an event, with
+    # tenancy. The adapter does not know the Store -- it reports, and what
+    # listens is the engine.
     def observe(call) -> None:
         store.record_event(Event(
             id=ids.new_id(ids.EVENT), workspace_id=ws.id, kind="chamada_provedor",
@@ -219,7 +222,7 @@ def build(cfg: Config) -> Engine:
 
 
 def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
-    """Checagens do `regente doctor`. Cada aposta provada, nenhuma suposta."""
+    """The `regente doctor` checks. Every bet proved, none assumed."""
     output: list[tuple[str, bool, str]] = []
 
     def expect_prefix(name: str, fn) -> None:
@@ -228,7 +231,7 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
         except Exception as e:
             output.append((name, False, f"{type(e).__name__}: {e}"[:200]))
 
-    expect_prefix("raiz de estado", lambda: (cfg.root.mkdir(parents=True, exist_ok=True), str(cfg.root))[1])
+    expect_prefix("state root", lambda: (cfg.root.mkdir(parents=True, exist_ok=True), str(cfg.root))[1])
 
     def banco() -> str:
         s = SqliteStore(cfg.banco)
@@ -236,7 +239,7 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
         s.verify()
         s.close()
         return str(cfg.banco)
-    expect_prefix("banco", banco)
+    expect_prefix("database", banco)
 
     for key, cap in (("tasks", Capability.TASKS),
                        ("repository", Capability.REPOSITORY),
@@ -262,6 +265,6 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
             return conf.name
         expect_prefix(f"provider {key}", prova)
 
-    expect_prefix("policies", lambda: f"{len(load_policies(cfg.policies))} regra(s)")
-    output.append(("modo", True, "sombra" if cfg.shadow else "VALENDO"))
+    expect_prefix("policies", lambda: f"{len(load_policies(cfg.policies))} rule(s)")
+    output.append(("mode", True, "shadow" if cfg.shadow else "LIVE"))
     return output

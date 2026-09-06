@@ -346,7 +346,7 @@ class SqliteStore(Store):
     def verify(self) -> None:
         linha = self._con.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
         if linha is None:
-            raise CorruptedState("banco sem versao de esquema: rode `regente init`")
+            raise CorruptedState("database with no schema version: run `regente init`")
 
     # ---- tenancy ---------------------------------------------------------
 
@@ -465,7 +465,7 @@ class SqliteStore(Store):
         with self._tx() as c:
             r = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
             if r is None:
-                raise CorruptedState(f"task {task_id} nao existe")
+                raise CorruptedState(f"task {task_id} does not exist")
             t = self._task_row(r)
             source = t.state
             require(source, destination, t.paused_at)
@@ -621,10 +621,10 @@ class SqliteStore(Store):
         with self._tx() as c:
             r = c.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
             if r is None:
-                raise CorruptedState(f"approval {approval_id} nao existe")
+                raise CorruptedState(f"approval {approval_id} does not exist")
             a = self._approval_row(r)
             if a.state is not ApprovalState.OPEN:
-                raise CorruptedState(f"approval {approval_id} ja foi decidido")
+                raise CorruptedState(f"approval {approval_id} has already been decided")
             valid = {o.id for o in a.options}
             if valid and choice not in valid:
                 raise CorruptedState(

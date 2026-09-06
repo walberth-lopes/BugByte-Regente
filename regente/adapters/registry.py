@@ -145,7 +145,7 @@ def _notify_console(o: dict[str, Any]) -> Port:
 
 def _runner_script(o: dict[str, Any]) -> Port:
     from .runner.scripted import ScriptedRunner
-    return ScriptedRunner(script=o.get("script", {}), default_value=o.get("fallback", {"ok": True, "resumo": "sem alteracao"}))
+    return ScriptedRunner(script=o.get("script", {}), default_value=o.get("fallback", {"ok": True, "resumo": "no change"}))
 
 
 def _runner_command(o: dict[str, Any]) -> Port:
