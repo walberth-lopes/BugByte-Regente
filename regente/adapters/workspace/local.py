@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Areas de trabalho isoladas no disco local.
+"""Isolated work areas on the local disk.
 
-Duas implementacoes atras da mesma port:
+Two implementations behind the same port:
 
-- `DiretorioIsolado`: uma pasta por run. Suficiente quando o trabalho nao exige
-  um clone -- analise, documentacao, geracao de artefato.
-- `GitWorktree`: um worktree do git por run. E o isolamento real para trabalho de
-  codigo: cada worker tem sua propria arvore e sua propria branch, e nao existe
-  o modo de falha classico de dois agentes trocando de branch no mesmo clone.
+- `IsolatedDirectory`: one folder per run. Enough when the work does not require
+  a clone -- analysis, documentation, artefact generation.
+- `GitWorktree`: one git worktree per run. This is the real isolation for code
+  work: each worker has its own tree and its own branch, and the classic failure
+  mode of two agents switching branches in the same clone does not exist.
 
-`discard` e idempotente nas duas: limpeza acontece depois de crash, quando quem
-criou a area ja nao existe, entao "ja nao esta la" e success.
+`discard` is idempotent in both: cleanup happens after a crash, when whoever
+created the area no longer exists, so "it is not there any more" is success.
 """
 
 from __future__ import annotations
@@ -52,14 +52,14 @@ class GitWorktree(WorkspaceProvider):
     name = "worktree"
 
     def __init__(self, clones: dict[str, str], root: str | Path):
-        #: repo -> caminho do clone principal
+        #: repo -> path of the main clone
         self.clones = {k: Path(v) for k, v in clones.items()}
         self.root = Path(root)
 
     def verify(self) -> None:
         for repo, path in self.clones.items():
             if not (path / ".git").exists():
-                raise AdapterError(f"clone de {repo} nao e um repositorio git: {path}")
+                raise AdapterError(f"clone of {repo} is not a git repository: {path}")
 
     def _git(self, cwd: Path, *args: str) -> str:
         p = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
@@ -72,17 +72,18 @@ class GitWorktree(WorkspaceProvider):
     def prepare(self, key: str, repo: str | None = None,
                 branch: str | None = None, base: str | None = None) -> WorkArea:
         if repo not in self.clones:
-            raise AdapterError(f"nenhum clone configurado para '{repo}'")
+            raise AdapterError(f"no clone configured for '{repo}'")
         clone = self.clones[repo]
         destination = self.root / key
         nome_branch = branch or f"regente/{key}"
-        # Retomada: o worktree ja existe e carrega os commits WIP da tentativa
-        # anterior. Recria-lo perderia o trabalho -- devolve-se como esta.
+        # Resuming: the worktree already exists and carries the previous
+        # attempt's WIP commits. Recreating it would lose the work -- it is
+        # returned as it is.
         if (destination / ".git").exists():
             return WorkArea(id=key, path=str(destination), branch=nome_branch, repo=repo)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        # Busca antes de derivar: worktree criado a partir de base velha produz
-        # PR cheio de conflito que ninguem pediu.
+        # Fetch before deriving: a worktree created from a stale base produces a
+        # PR full of conflicts nobody asked for.
         self._git(clone, "fetch", "--quiet", "origin")
         self._git(clone, "worktree", "add", "-b", nome_branch, str(destination),
                   base or "origin/HEAD")
@@ -95,7 +96,7 @@ class GitWorktree(WorkspaceProvider):
                 self._git(clone, "worktree", "remove", "--force", area.path)
                 return
             except AdapterError:
-                pass   # worktree ja removido ou clone sumiu: seguimos na unha
+                pass   # worktree already removed or clone gone: fall back to brute force
         shutil.rmtree(area.path, ignore_errors=True)
 
     def list_areas(self) -> list[WorkArea]:

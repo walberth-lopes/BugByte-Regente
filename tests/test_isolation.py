@@ -194,7 +194,7 @@ def test_reference_declared_but_missing_is_error_clear():
 def test_not_exists_secret_literal():
     """Se `literal:` existisse, o primeiro token de producao entraria num YAML."""
     a = ScopedSecrets(allowed_from=frozenset({"literal:abc123"}), workspace="A")
-    with pytest.raises(SecretMissing, match="esquema"):
+    with pytest.raises(SecretMissing, match="scheme"):
         a.resolve("literal:abc123")
 
 

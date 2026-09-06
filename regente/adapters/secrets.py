@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-"""SecretProvider: resolve REFERENCIAS a segredo, nunca guarda valores.
+"""SecretProvider: resolves secret REFERENCES, never stores values.
 
-A configuracao diz `token: env:JIRA_API_TOKEN`. O que trafega pelo YAML, pelo
-banco, pelos eventos e pelos prompts e a *referencia* -- o valor so existe no
-momento do uso, dentro do adapter que precisa dele.
+The configuration says `token: env:JIRA_API_TOKEN`. What travels through the
+YAML, the database, the events and the prompts is the *reference* -- the value
+only exists at the moment of use, inside the adapter that needs it.
 
-**A referencia e escopada por tenancy.** Um workspace so alcanca as referencias
-que sua propria configuracao declara, e o resolvedor recusa qualquer outra. Sem
-isso, um adapter mal configurado do cliente B leria a credencial do cliente A --
-e o pior e que funcionaria, silenciosamente, ate o dia em que aparecesse num
-log.
+**The reference is scoped by tenancy.** A workspace only reaches the references
+its own configuration declares, and the resolver refuses any other. Without
+that, a misconfigured adapter belonging to client B would read client A's
+credential -- and the worst part is that it would work, silently, until the day
+it turned up in a log.
 """
 
 from __future__ import annotations
@@ -23,49 +23,52 @@ from ..ports.support import SecretProvider
 
 
 class SecretMissing(AdapterError):
-    """A referencia existe na configuracao mas nao resolve para nada."""
+    """The reference exists in the configuration but resolves to nothing."""
 
 
 class SecretOutOfScope(AdapterError):
-    """Pediram uma referencia que este workspace nao declarou. Nunca e engano
-    benigno: e a fronteira entre clientes sendo testada."""
+    """Something asked for a reference this workspace did not declare. Never a
+    benign mistake: it is the boundary between clients being probed."""
 
 
 @dataclass(slots=True)
 class ScopedSecrets(SecretProvider):
-    """Resolve `env:NOME` e `arquivo:CAMINHO`.
+    """Resolves `env:NAME` and `arquivo:PATH`.
 
-    Nao existe forma `literal:` de proposito. Se ela existisse, o primeiro
-    segredo de producao apareceria num YAML versionado dentro de uma semana.
+    There is deliberately no `literal:` form. If there were, the first production
+    secret would show up in a versioned YAML inside a week.
+
+    The scheme names (`env:`, `arquivo:`) are configuration values and stay as
+    they are.
     """
     name: str = "scoped"
-    #: Referencias que ESTE workspace pode resolver. Vazio = nenhuma.
+    #: References THIS workspace may resolve. Empty = none.
     allowed_from: frozenset[str] = field(default_factory=frozenset)
     workspace: str = "?"
 
     def resolve(self, reference: str) -> str:
         if reference not in self.allowed_from:
             raise SecretOutOfScope(
-                f"workspace '{self.workspace}' nao declarou a referencia "
-                f"{reference!r}; declaradas: {sorted(self.allowed_from) or 'nenhuma'}")
+                f"workspace '{self.workspace}' did not declare the reference "
+                f"{reference!r}; declared: {sorted(self.allowed_from) or 'none'}")
 
         esquema, _, resto = reference.partition(":")
         if esquema == "env":
             value = os.environ.get(resto, "")
             if not value:
                 raise SecretMissing(
-                    f"variavel de ambiente {resto} nao esta definida ou esta vazia")
+                    f"environment variable {resto} is not set or is empty")
             return value
         if esquema == "arquivo":
             path = Path(resto).expanduser()
             if not path.is_file():
-                raise SecretMissing(f"arquivo de segredo nao existe: {path}")
+                raise SecretMissing(f"secret file does not exist: {path}")
             value = path.read_text(encoding="utf-8").strip()
             if not value:
-                raise SecretMissing(f"arquivo de segredo esta vazio: {path}")
+                raise SecretMissing(f"secret file is empty: {path}")
             return value
         raise SecretMissing(
-            f"esquema de referencia desconhecido: {esquema!r}. Use env: ou arquivo:")
+            f"unknown reference scheme: {esquema!r}. Use env: or arquivo:")
 
     def available(self, reference: str) -> bool:
         try:

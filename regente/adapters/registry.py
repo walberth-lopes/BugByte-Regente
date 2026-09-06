@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Registro de adapters: nome na configuracao -> fabrica.
+"""Adapter registry: name in the configuration -> factory.
 
-Este e o **unico** modulo do motor que importa adapters, e ele fica fora do Core
-e do Engine de proposito. Adicionar um provedor novo e adicionar uma entrada
-aqui; se algum dia for preciso mexer em `core/` ou `engine/` para isso, a
-abstracao falhou -- e o teste de fronteira acusa.
+This is the **only** module in the engine that imports adapters, and it sits
+outside the Core and the Engine on purpose. Adding a new provider means adding an
+entry here; if it ever becomes necessary to touch `core/` or `engine/` to do
+that, the abstraction has failed -- and the boundary test says so.
 
-O import e tardio (dentro da fabrica) para que um adapter com dependencia pesada
-nao seja exigido de quem nao o usa: o motor precisa subir num ambiente sem SDK
-de nuvem nenhum.
+The import is late (inside the factory) so that an adapter with a heavy
+dependency is not imposed on those who do not use it: the engine has to start in
+an environment with no cloud SDK at all.
 """
 
 from __future__ import annotations
@@ -30,8 +30,8 @@ def create(cap: Capability, name: str, options: dict[str, Any] | None = None) ->
     if key not in _REGISTRO:
         available = sorted(n for (c, n) in _REGISTRO if c == cap)
         raise KeyError(
-            f"nao existe adapter '{name}' para {cap.value}. "
-            f"Disponiveis: {', '.join(available) or 'nenhum'}")
+            f"there is no adapter '{name}' for {cap.value}. "
+            f"Available: {', '.join(available) or 'none'}")
     return _REGISTRO[key](options or {})
 
 
@@ -89,7 +89,7 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
             max_attempts=int(o.get("max_tentativas", 3)),
             observer=observer)
     else:
-        raise KeyError(f"transport desconhecido para jira: {modo!r}. Use http ou instantaneo")
+        raise KeyError(f"unknown transport for jira: {modo!r}. Use http or instantaneo")
 
     return JiraTasks(
         transport=transport,

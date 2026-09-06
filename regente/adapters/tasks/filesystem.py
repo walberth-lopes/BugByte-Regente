@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
-"""TaskProvider que le trabalho de arquivos YAML no disco.
+"""TaskProvider that reads work from YAML files on disk.
 
-Nao e simulacao de outro provider: e um provedor de verdade, util para quem
-descreve trabalho em arquivo versionado, e serve de segunda implementacao para
-provar que o Core Engine nao sabe o que e Jira. O adapter de Jira entra ao lado
-deste sem que nenhuma linha do motor mude -- se mudar, a abstracao estava errada.
+Not a simulation of another provider: it is a real one, useful for anyone who
+describes work in a versioned file, and it serves as the second implementation
+proving the Core Engine does not know what Jira is. The Jira adapter slots in
+alongside this one without a single line of the engine changing -- if it has to
+change, the abstraction was wrong.
 
-Escrita de verdade: `transition_task` e `add_comment` gravam no proprio arquivo.
-Um adapter que aceita a escrita e nao faz nada esconde exatamente o defeito que
-mais importa descobrir cedo.
+Real writing: `transition_task` and `add_comment` write into the file itself. An
+adapter that accepts a write and does nothing hides exactly the defect it matters
+most to find early.
 """
 
 from __future__ import annotations
@@ -22,10 +23,10 @@ from ...ports import AdapterError
 
 
 def _field(data: dict[str, Any], name: str, legacy: str) -> Any:
-    """Le a chave en-us, aceitando a antiga em pt-br.
+    """Reads the en-US key, accepting the old pt-BR one.
 
-    Arquivo de task ja escrito por alguem nao pode deixar de ser lido porque o
-    projeto padronizou o vocabulario. O nome novo vence quando os dois existem.
+    A task file somebody already wrote must not stop being readable because the
+    project standardised its vocabulary. The new name wins when both exist.
     """
     value = data.get(name)
     return value if value is not None else data.get(legacy)
@@ -41,9 +42,9 @@ class FilesystemTasks(TaskProvider):
 
     def verify(self) -> None:
         if not self.dir.is_dir():
-            raise AdapterError(f"diretorio de tasks nao existe: {self.dir}")
+            raise AdapterError(f"task directory does not exist: {self.dir}")
 
-    # ---- leitura ---------------------------------------------------------
+    # ---- reading ---------------------------------------------------------
 
     def _files(self) -> list[Path]:
         return sorted([*self.dir.glob("*.yaml"), *self.dir.glob("*.yml")])
@@ -52,16 +53,18 @@ class FilesystemTasks(TaskProvider):
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         except Exception as e:
-            # Arquivo quebrado sobe como error. Pular em silencio faria a task
-            # sumir do board sem ninguem notar.
-            raise AdapterError(f"{path.name} nao pode ser lido: {e}") from e
+            # A broken file rises as an error. Skipping it silently would make
+            # the task vanish from the board without anyone noticing.
+            raise AdapterError(f"{path.name} could not be read: {e}") from e
         if not isinstance(data, dict):
-            raise AdapterError(f"{path.name} nao contem um mapeamento")
+            raise AdapterError(f"{path.name} does not contain a mapping")
         return data
 
-    #: Vocabulario deste formato -> vocabulario do motor. Quem escreve o YAML
-    #: escolhe o texto; o mapa e o contrato. Status fora do mapa vira
-    #: DESCONHECIDA e sobe como anomalia -- nunca e coagido para o vizinho.
+    #: This format's vocabulary -> the engine's vocabulary. Whoever writes the
+    #: YAML chooses the text; the map is the contract. A status outside the map
+    #: becomes DESCONHECIDA and rises as an anomaly -- it is never coerced into
+    #: the neighbouring value. The keys are status text from user files and stay
+    #: as they are.
     STATUS_MAP: dict[str, ExternalStatus] = {
         "TO DO": ExternalStatus.NOT_STARTED,
         "TODO": ExternalStatus.NOT_STARTED,
@@ -80,9 +83,9 @@ class FilesystemTasks(TaskProvider):
     }
 
     def _build(self, path: Path, data: dict[str, Any]) -> ExternalTask:
-        # `depends_on` e, por definicao, bloqueio -- e o unico tipo de vinculo
-        # que este formato exprime. `relacionado` fica em `relacionadas`, que
-        # nao cria ordem de execucao.
+        # `depends_on` is, by definition, blocking -- the only link kind this
+        # format expresses. `related` lives in `related`/`relacionadas`, which
+        # creates no execution order.
         links = tuple(
             TaskRef(key=str(v["key"]) if isinstance(v, dict) else str(v),
                     kind=str(v.get("tipo", BLOCKS)) if isinstance(v, dict) else BLOCKS)
@@ -121,7 +124,7 @@ class FilesystemTasks(TaskProvider):
         for path in self._files():
             if str(self._read(path).get("key") or path.stem) == key:
                 return path
-        raise AdapterError(f"task {key} nao encontrada em {self.dir}")
+        raise AdapterError(f"task {key} not found in {self.dir}")
 
     def get_task(self, key: str) -> ExternalTask:
         path = self._path_for(key)
@@ -134,11 +137,11 @@ class FilesystemTasks(TaskProvider):
                         criado_em=str(c.get("em", "")), id=str(c.get("id", "")))
                 for c in (_field(data, "comments", "comentarios") or [])]
 
-    # ---- escrita ---------------------------------------------------------
+    # ---- writing ---------------------------------------------------------
 
     def _write(self, path: Path, data: dict[str, Any]) -> None:
-        # Grava em temporario e troca: interrupcao no meio nao pode deixar o
-        # arquivo pela metade, porque ele e o estado do provider.
+        # Write to a temporary file and swap: an interruption halfway must not
+        # leave the file half-written, because the file is the provider's state.
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
                        encoding="utf-8")

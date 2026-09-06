@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Runners que nao dependem de LLM.
+"""Runners that do not depend on an LLM.
 
-`ScriptedRunner` executa um roteiro declarado. Ele existe para duas coisas
-legitimas -- exercitar o motor em teste e rodar a **fase de sombra**, em que o
-dono confere as decisoes do orquestrador antes de qualquer worker real tocar
-codigo. Ele nao finge ser um agente: seu desfecho vem do roteiro, e por isso
-nenhum defeito de arquitetura consegue se esconder atras dele.
+`ScriptedRunner` executes a declared script. It exists for two legitimate things
+-- exercising the engine in tests and running the **shadow phase**, in which the
+owner checks the orchestrator's decisions before any real worker touches code. It
+does not pretend to be an agent: its outcome comes from the script, and so no
+architectural defect can hide behind it.
 
-`ComandoRunner` executa um processo externo. E o caminho real: qualquer harness
-agentico headless, um script proprio ou um laco sobre LLMProvider entram por
-aqui sem que o Orchestrator saiba a diferenca.
+`CommandRunner` executes an external process. That is the real path: any headless
+agentic harness, a script of your own or a loop over LLMProvider all come in
+through here without the Orchestrator knowing the difference.
+
+The JSON keys below (resumo, desfecho, objetivo, limites, ...) are the wire
+contract with that external process and stay as they are.
 """
 
 from __future__ import annotations
@@ -26,15 +29,15 @@ from ...ports.workspace import AgentRunner, RunRequest, RunResult
 @dataclass(slots=True)
 class ScriptedRunner(AgentRunner):
     name: str = "roteiro"
-    #: chave da task -> desfecho declarado
+    #: task key -> declared outcome
     script: dict[str, dict[str, Any]] = field(default_factory=dict)
-    default_value: dict[str, Any] = field(default_factory=lambda: {"ok": True, "resumo": "sem alteracao"})
+    default_value: dict[str, Any] = field(default_factory=lambda: {"ok": True, "resumo": "no change"})
 
     def run(self, request: RunRequest) -> RunResult:
         key = request.contexto.get("chave", request.task_id)
         d = self.script.get(key, self.default_value)
-        # A area existe e e do worker: escrever nela prova que o isolamento
-        # funcionou, e deixa rastro para inspecao depois do tick.
+        # The area exists and belongs to the worker: writing in it proves the
+        # isolation worked, and leaves a trace to inspect after the tick.
         Path(request.area.path).mkdir(parents=True, exist_ok=True)
         (Path(request.area.path) / "run.json").write_text(
             json.dumps({"run": request.run_id, "objetivo": request.goal, "desfecho": d},
@@ -52,12 +55,12 @@ class ScriptedRunner(AgentRunner):
 
 @dataclass(slots=True)
 class CommandRunner(AgentRunner):
-    """Executa um comando externo na area do worker.
+    """Executes an external command in the worker's area.
 
-    Contrato com o processo: ele recebe o pedido como JSON no stdin e deve
-    imprimir um JSON de resultado no stdout. Saida ilegivel e tratada como falha
-    -- e nao como success silencioso -- porque um worker que nao consegue
-    relatar o que fez nao pode ser considerado bem-sucedido.
+    Contract with the process: it receives the request as JSON on stdin and must
+    print a result JSON on stdout. Unreadable output is treated as a failure --
+    and not as a silent success -- because a worker that cannot report what it
+    did cannot be considered to have succeeded.
     """
     command: list[str] = field(default_factory=list)
     name: str = "comando"
@@ -79,7 +82,7 @@ class CommandRunner(AgentRunner):
                 capture_output=True, encoding="utf-8", errors="replace",
                 timeout=request.limit_seconds + self.timeout_slack)
         except subprocess.TimeoutExpired:
-            return RunResult(ok=False, summary=f"estourou {request.limit_seconds}s",
+            return RunResult(ok=False, summary=f"timed out after {request.limit_seconds}s",
                              outcome="timebox")
         if p.returncode != 0:
             return RunResult(ok=False, outcome="error",
@@ -88,7 +91,7 @@ class CommandRunner(AgentRunner):
             d = json.loads((p.stdout or "").strip() or "{}")
         except ValueError:
             return RunResult(ok=False, outcome="error",
-                             summary=f"saida nao e JSON: {(p.stdout or '')[:200]}")
+                             summary=f"output is not JSON: {(p.stdout or '')[:200]}")
         return RunResult(
             ok=bool(d.get("ok", False)), summary=str(d.get("resumo", "")),
             outcome=str(d.get("desfecho", "concluido" if d.get("ok") else "error")),

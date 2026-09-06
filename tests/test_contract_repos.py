@@ -285,7 +285,7 @@ def test_timeout_becomes_error_of_adapter(provider, clones, monkeypatch):
     def estoura(*a, **k):
         raise subprocess.TimeoutExpired(cmd="git", timeout=0.1)
     monkeypatch.setattr(subprocess, "run", estoura)
-    with pytest.raises(AdapterError, match="estourou"):
+    with pytest.raises(AdapterError, match="timed out"):
         provider._git(clones / "api", "rev-parse", "HEAD")
 
 

@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
-"""RepositoryProvider sobre a hospedagem remota, via CLI oficial. SOMENTE LEITURA.
+"""RepositoryProvider over the remote hosting, via the official CLI. READ ONLY.
 
-Deliberadamente do tipo mais diferente possivel do adapter local: processo contra
-API remota, autenticacao delegada, paginacao, limite de taxa, indisponibilidade.
-Se o contrato do `RepositoryProvider` vale para os dois, ele vale.
+Deliberately of the most different kind possible from the local adapter: a
+process against a remote API, delegated authentication, pagination, rate
+limiting, unavailability. If the `RepositoryProvider` contract holds for both, it
+holds.
 
-**Somente leitura por construcao.** Toda invocacao passa por `_cli`, que recusa
-qualquer subcomando fora de uma lista fechada, e recusa explicitamente qualquer
-metodo HTTP diferente de GET quando a chamada e via `api`. Escrever exigiria
-adicionar um verbo a lista -- mudanca visivel, revisavel, deliberada.
+**Read-only by construction.** Every invocation goes through `_cli`, which
+refuses any subcommand outside a closed list, and explicitly refuses any HTTP
+method other than GET when the call goes via `api`. Writing would require adding
+a verb to the list -- a visible, reviewable, deliberate change.
 
-**Credencial nunca passa por aqui.** A CLI resolve a propria autenticacao com o
-que o sistema ja tem. O adapter nunca ve, nunca carrega e nunca registra token --
-o que tambem significa que uma falha de autenticacao aparece como error tipado, e
-nao como lista vazia.
+**Credentials never pass through here.** The CLI resolves its own authentication
+with what the system already has. The adapter never sees, never carries and never
+records a token -- which also means an authentication failure shows up as a typed
+error, and not as an empty list.
 """
 
 from __future__ import annotations
@@ -33,17 +34,17 @@ from ..tasks.transport import (Call, AuthFailure, RateLimited,
 from .readonly import cli_e_leitura
 
 
-#: Campos pedidos numa LISTAGEM. Enxuto: uma organizacao com centenas de
-#: repositorios devolve megabytes se cada item trouxer tudo.
+#: Fields requested in a LISTING. Trimmed: an organisation with hundreds of
+#: repositories returns megabytes if every item carries everything.
 LIST_FIELDS = "name,nameWithOwner,defaultBranchRef,isArchived,isPrivate,url"
 
-#: Campos do DETALHE. Pagos um repositorio por vez.
+#: Fields for the DETAIL. Paid for one repository at a time.
 DETAIL_FIELDS = LIST_FIELDS + ",description,sshUrl,pushedAt,primaryLanguage"
 
 
 @dataclass(slots=True)
 class GitHubRepos(RepositoryProvider):
-    """Le repositorios de uma organizacao na hospedagem remota."""
+    """Reads repositories of an organisation on the remote hosting."""
 
     org: str
     cli_path: str = "gh"
@@ -58,20 +59,20 @@ class GitHubRepos(RepositoryProvider):
                 "modo": "somente-leitura", "org": self.org}
 
     def verify(self) -> None:
-        """Prova autenticacao e alcance com a chamada mais barata que existe."""
+        """Proves authentication and reach with the cheapest call there is."""
         self._cli(["auth", "status"], json_esperado=False)
 
-    # ---- execucao --------------------------------------------------------
+    # ---- execution -------------------------------------------------------
 
     def _cli(self, args: list[str], json_esperado: bool = True) -> Any:
-        # Por INVOCACAO INTEIRA, nao por verbo. `repo list` le; `repo delete`
-        # apaga, e os dois comecam com `repo` -- foi assim que um `repo delete`
-        # atravessou o portao em 06/09/2026.
+        # Per WHOLE INVOCATION, not per verb. `repo list` reads; `repo delete`
+        # deletes, and both start with `repo` -- that is how a `repo delete` got
+        # through the gate on 06/09/2026.
         ok, reason = cli_e_leitura(args)
         if not ok:
             raise ReadOnlyRefused(
-                f"'{self.cli_path} {' '.join(args)}' recusado: {reason}. "
-                f"Nenhuma mutacao e executavel neste marco.")
+                f"'{self.cli_path} {' '.join(args)}' refused: {reason}. "
+                f"No mutation is executable in this milestone.")
 
         inicio = time.monotonic()
         try:
@@ -79,27 +80,27 @@ class GitHubRepos(RepositoryProvider):
                 [self.cli_path, *args], capture_output=True,
                 encoding="utf-8", errors="replace", timeout=self.timeout)
         except subprocess.TimeoutExpired as e:
-            self._notify_observer(args, inicio, False, None, f"timeout apos {self.timeout}s")
-            raise ProviderUnavailable(f"cli estourou {self.timeout}s") from e
+            self._notify_observer(args, inicio, False, None, f"timeout after {self.timeout}s")
+            raise ProviderUnavailable(f"cli timed out after {self.timeout}s") from e
         except FileNotFoundError as e:
-            self._notify_observer(args, inicio, False, None, "cli nao encontrada")
-            raise AdapterError(f"'{self.cli_path}' nao esta no PATH") from e
+            self._notify_observer(args, inicio, False, None, "cli not found")
+            raise AdapterError(f"'{self.cli_path}' is not on the PATH") from e
 
         if p.returncode != 0:
             error = (p.stderr or "").strip()[:400]
             baixo = error.lower()
             self._notify_observer(args, inicio, False, None, error)
-            # Traduzir a falha e o que permite o motor decidir: retentar,
-            # esperar ou parar. Um error generico obriga a tratar tudo igual.
+            # Translating the failure is what lets the engine decide: retry,
+            # wait or stop. A generic error forces everything to be treated alike.
             if "authentication" in baixo or "not logged" in baixo or "401" in baixo:
-                raise AuthFailure(f"credencial recusada: {error[:200]}")
+                raise AuthFailure(f"credential refused: {error[:200]}")
             if "rate limit" in baixo or "429" in baixo:
-                raise RateLimited(f"limite de taxa: {error[:200]}")
+                raise RateLimited(f"rate limit: {error[:200]}")
             if "not found" in baixo or "404" in baixo:
-                raise NotFound(f"nao existe ou sem acesso: {error[:200]}")
+                raise NotFound(f"does not exist or no access: {error[:200]}")
             if any(m in baixo for m in ("timeout", "connection", "dial tcp",
                                         "no such host", "502", "503", "504")):
-                raise ProviderUnavailable(f"indisponivel: {error[:200]}")
+                raise ProviderUnavailable(f"unavailable: {error[:200]}")
             raise AdapterError(f"cli rc={p.returncode}: {error}")
 
         self._notify_observer(args, inicio, True, 200, "")
@@ -107,11 +108,11 @@ class GitHubRepos(RepositoryProvider):
             return p.stdout
         raw = (p.stdout or "").strip()
         if not raw:
-            raise MalformedResponse("corpo vazio onde se esperava JSON")
+            raise MalformedResponse("empty body where JSON was expected")
         try:
             return json.loads(raw)
         except ValueError as e:
-            raise MalformedResponse(f"saida nao e JSON: {raw[:200]}") from e
+            raise MalformedResponse(f"output is not JSON: {raw[:200]}") from e
 
     def _notify_observer(self, args: list[str], inicio: float, ok: bool,
                status: int | None, error: str) -> None:
@@ -123,12 +124,12 @@ class GitHubRepos(RepositoryProvider):
             success=ok, status=status,
             rate_limited="rate limit" in error.lower(), error=error[:200]))
 
-    # ---- normalizacao ----------------------------------------------------
+    # ---- normalisation ---------------------------------------------------
 
     def _build(self, raw: dict[str, Any], partial: bool) -> RepoInfo:
         key = raw.get("nameWithOwner") or ""
         if not key:
-            raise AdapterError("repositorio sem identidade completa na resposta")
+            raise AdapterError("repository without a complete identity in the response")
         base = ((raw.get("defaultBranchRef") or {}) or {}).get("name") or ""
         return RepoInfo(
             ref=RepoRef(provider=self.name, key=key),
@@ -146,7 +147,7 @@ class GitHubRepos(RepositoryProvider):
                 ("linguagem", (raw.get("primaryLanguage") or {}).get("name")),
             ) if v})
 
-    # ---- descoberta ------------------------------------------------------
+    # ---- discovery -------------------------------------------------------
 
     def list_repositories(self, filtro: dict[str, Any] | None = None) -> list[RepoInfo]:
         f = filtro or {}
@@ -156,14 +157,14 @@ class GitHubRepos(RepositoryProvider):
             args.append("--no-archived")
         raw = self._cli(args)
         if not isinstance(raw, list):
-            raise AdapterError(f"listagem devolveu {type(raw).__name__}, esperava lista")
+            raise AdapterError(f"listing returned {type(raw).__name__}, expected a list")
         return [self._build(r, partial=True) for r in raw]
 
     def get_repository(self, key: str) -> RepoInfo:
         target = key if "/" in key else f"{self.org}/{key}"
         raw = self._cli(["repo", "view", target, "--json", DETAIL_FIELDS])
         if not isinstance(raw, dict):
-            raise AdapterError(f"detalhe devolveu {type(raw).__name__}, esperava objeto")
+            raise AdapterError(f"detail returned {type(raw).__name__}, expected an object")
         return self._build(raw, partial=False)
 
     def list_branches(self, key: str, filtro: dict[str, Any] | None = None) -> list[Branch]:
@@ -172,7 +173,7 @@ class GitHubRepos(RepositoryProvider):
         per_page = int((filtro or {}).get("por_pagina", 100))
         raw = self._cli(["api", f"repos/{target}/branches?per_page={per_page}"])
         if not isinstance(raw, list):
-            raise AdapterError("listagem de branches devolveu forma inesperada")
+            raise AdapterError("branch listing returned an unexpected shape")
         default_value = (filtro or {}).get("padrao", "")
         output = []
         for b in raw:
@@ -189,5 +190,5 @@ class GitHubRepos(RepositoryProvider):
         rota = f"repos/{target}/contents/{path}" + (f"?ref={ref}" if ref else "")
         raw = self._cli(["api", rota])
         if not isinstance(raw, dict) or "content" not in raw:
-            raise AdapterError(f"{path} nao e um arquivo em {target}")
+            raise AdapterError(f"{path} is not a file in {target}")
         return base64.b64decode(raw["content"]).decode("utf-8", "replace")
