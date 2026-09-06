@@ -121,13 +121,17 @@ def execute(
     ]
     # Nothing completed: the shadow has no history. The plan shows what the
     # engine would do on the FIRST tick against this board.
-    plan = plan(candidates, grafo, completed=set(), running_now={},
+    #
+    # Named `plano`, not `plan`: assigning to `plan` would make the name local
+    # to this function, and the call on the right-hand side would then raise
+    # UnboundLocalError against the `plan` imported from core.scheduling.
+    plano = plan(candidates, grafo, completed=set(), running_now={},
                     limits=limits, nomes={t.key: t.key for t in alive})
-    r.plan = plan
-    r.ready = len(plan.dispatch)
-    r.blocked = len(plan.deferred)
-    r.in_cycle = plan.in_cycle
-    for a in plan.deferred:
+    r.plan = plano
+    r.ready = len(plano.dispatch)
+    r.blocked = len(plano.deferred)
+    r.in_cycle = plano.in_cycle
+    for a in plano.deferred:
         # Group by CAUSE, not by text: "resource busy: parent:SG-1" and
         # "resource busy: parent:SG-2" are the same diagnosis.
         r.deferral_reasons[a.reason.split(":")[0].strip()] += 1
