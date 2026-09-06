@@ -100,6 +100,20 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
         site=o.get("site", ""))
 
 
+def _repos_git_local(o: dict[str, Any]) -> Port:
+    from .repos.git_local import GitLocal
+    return GitLocal(raiz=o["raiz"], observador=o.get("observador"),
+                    timeout=int(o.get("timeout", 60)))
+
+
+def _repos_github(o: dict[str, Any]) -> Port:
+    from .repos.github import GitHubRepos
+    return GitHubRepos(org=o["org"], caminho_cli=o.get("cli", "gh"),
+                       observador=o.get("observador"),
+                       timeout=int(o.get("timeout", 60)),
+                       limite_listagem=int(o.get("limite", 200)))
+
+
 def _segredos_escopados(o: dict[str, Any]) -> Port:
     from .segredos import Segredos
     return Segredos(permitidas=frozenset(o.get("permitidas", ())),
@@ -124,6 +138,8 @@ def _runner_comando(o: dict[str, Any]) -> Port:
 registra(Capability.TASKS, "filesystem", _tasks_filesystem)
 registra(Capability.TASKS, "jira", _tasks_jira)
 registra(Capability.SECRETS, "escopado", _segredos_escopados)
+registra(Capability.REPOSITORY, "git-local", _repos_git_local)
+registra(Capability.REPOSITORY, "github", _repos_github)
 registra(Capability.WORKSPACE, "diretorio", _workspace_diretorio)
 registra(Capability.WORKSPACE, "worktree", _workspace_worktree)
 registra(Capability.NOTIFICATION, "console", _notify_console)

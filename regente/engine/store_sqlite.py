@@ -105,16 +105,54 @@ CREATE TABLE IF NOT EXISTS approvals (
   decidida_por TEXT, escolha TEXT, nota TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS ix_approvals_abertos ON approvals(workspace_id, estado);
 
+-- A trava e (workspace, recurso), nunca so o recurso.
+--
+-- Dois clientes com um repositorio de MESMO NOME sao dois repositorios. Com o
+-- recurso nu como chave, um cliente atrasaria o outro: conservador o bastante
+-- para nunca corromper nada, e errado o bastante para ninguem descobrir por que
+-- o motor do cliente B fica parado quando o cliente A trabalha.
 CREATE TABLE IF NOT EXISTS leases (
-  recurso TEXT PRIMARY KEY, dono TEXT NOT NULL, workspace_id TEXT NOT NULL,
-  expira_em TEXT NOT NULL, renovado_em TEXT NOT NULL);
+  workspace_id TEXT NOT NULL, recurso TEXT NOT NULL, dono TEXT NOT NULL,
+  expira_em TEXT NOT NULL, renovado_em TEXT NOT NULL,
+  PRIMARY KEY (workspace_id, recurso));
 
 CREATE TABLE IF NOT EXISTS contadores (
   workspace_id TEXT NOT NULL, dia TEXT NOT NULL, nome TEXT NOT NULL,
   valor INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, dia, nome));
 """
 
-VERSAO_ESQUEMA = "1"
+VERSAO_ESQUEMA = "2"
+
+
+def _v1_para_v2(c: sqlite3.Connection) -> None:
+    """Lease deixa de ser global por chave e passa a ser (workspace, recurso).
+
+    A tabela e recriada em vez de alterada: `ALTER TABLE` do SQLite nao muda
+    chave primaria, e um lease e estado EFEMERO por definicao -- ele expira
+    sozinho. O pior caso desta migracao e um worker vivo perder a trava, e esse
+    caso ja tem tratamento: o lease vence, a recuperacao devolve a task a fila e
+    o proximo tick retoma. Preservar linhas aqui daria trabalho para salvar dado
+    que o motor foi desenhado para descartar.
+    """
+    # `execute`, nunca `executescript`: este ultimo faz COMMIT implicito e
+    # mataria a transacao da migracao no meio, deixando o banco entre duas
+    # versoes -- o unico estado que a escada existe para impedir.
+    c.execute("DROP TABLE IF EXISTS leases")
+    c.execute("""CREATE TABLE leases (
+                   workspace_id TEXT NOT NULL, recurso TEXT NOT NULL,
+                   dono TEXT NOT NULL, expira_em TEXT NOT NULL,
+                   renovado_em TEXT NOT NULL,
+                   PRIMARY KEY (workspace_id, recurso))""")
+
+
+#: Escada de migracao: versao de origem -> como chegar na proxima.
+#:
+#: Existe porque a alternativa e pedir ao dono que apague o banco -- e o banco e
+#: exatamente onde vive o estado que o motor promete nao perder. Um bump de
+#: esquema sem migracao transforma a promessa em pegadinha.
+MIGRACOES: dict[str, tuple[str, Any]] = {
+    "1": ("2", _v1_para_v2),
+}
 
 
 def _iso(d: datetime | None) -> str | None:
@@ -171,8 +209,24 @@ class SqliteStore(Store):
             if atual is None:
                 c.execute("INSERT INTO meta(chave, valor) VALUES('esquema', ?)", (VERSAO_ESQUEMA,))
             elif atual["valor"] != VERSAO_ESQUEMA:
+                self._sobe(c, atual["valor"])
+
+    def _sobe(self, c: sqlite3.Connection, de: str) -> None:
+        """Aplica a escada, um degrau por vez, dentro da transacao aberta."""
+        visitadas = {de}
+        while de != VERSAO_ESQUEMA:
+            if de not in MIGRACOES:
                 raise EstadoCorrompido(
-                    f"banco na versao {atual['valor']}, motor espera {VERSAO_ESQUEMA}")
+                    f"banco na versao {de} e nao ha caminho ate {VERSAO_ESQUEMA}. "
+                    f"Este banco veio de uma versao mais nova do motor, ou de um "
+                    f"caminho de migracao que ainda nao existe.")
+            proxima, aplicar = MIGRACOES[de]
+            aplicar(c)
+            de = proxima
+            if de in visitadas:
+                raise EstadoCorrompido(f"ciclo na escada de migracao em {de}")
+            visitadas.add(de)
+        c.execute("UPDATE meta SET valor=? WHERE chave='esquema'", (VERSAO_ESQUEMA,))
 
     def verifica(self) -> None:
         linha = self._con.execute("SELECT valor FROM meta WHERE chave='esquema'").fetchone()
@@ -480,30 +534,46 @@ class SqliteStore(Store):
         ts = agora()
         expira = ts + timedelta(seconds=segundos)
         with self._tx() as c:
-            r = c.execute("SELECT * FROM leases WHERE recurso=?", (recurso,)).fetchone()
+            r = c.execute("SELECT * FROM leases WHERE workspace_id=? AND recurso=?",
+                          (workspace_id, recurso)).fetchone()
             if r is not None:
                 vivo = _dt(r["expira_em"]) > ts
                 if vivo and r["dono"] != dono:
                     return None
-            c.execute("""INSERT INTO leases(recurso, dono, workspace_id, expira_em, renovado_em)
+            c.execute("""INSERT INTO leases(workspace_id, recurso, dono, expira_em, renovado_em)
                          VALUES(?,?,?,?,?)
-                         ON CONFLICT(recurso) DO UPDATE SET dono=excluded.dono,
-                           workspace_id=excluded.workspace_id, expira_em=excluded.expira_em,
+                         ON CONFLICT(workspace_id, recurso) DO UPDATE SET
+                           dono=excluded.dono, expira_em=excluded.expira_em,
                            renovado_em=excluded.renovado_em""",
-                      (recurso, dono, workspace_id, _iso(expira), _iso(ts)))
+                      (workspace_id, recurso, dono, _iso(expira), _iso(ts)))
         return Lease(recurso=recurso, dono=dono, expira_em=expira,
                      workspace_id=workspace_id, renovado_em=ts)
 
-    def renova_lease(self, recurso: str, dono: str, segundos: int) -> bool:
+    def renova_lease(self, recurso: str, dono: str, segundos: int,
+                     workspace_id: str | None = None) -> bool:
         ts = agora()
         with self._tx() as c:
-            cur = c.execute("UPDATE leases SET expira_em=?, renovado_em=? WHERE recurso=? AND dono=?",
-                            (_iso(ts + timedelta(seconds=segundos)), _iso(ts), recurso, dono))
+            if workspace_id:
+                cur = c.execute("""UPDATE leases SET expira_em=?, renovado_em=?
+                                   WHERE workspace_id=? AND recurso=? AND dono=?""",
+                                (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
+                                 workspace_id, recurso, dono))
+            else:
+                # Sem workspace, o dono do lease e o filtro. `dono` e um id de run,
+                # que ja e unico -- entao isto continua seguro, so menos explicito.
+                cur = c.execute("""UPDATE leases SET expira_em=?, renovado_em=?
+                                   WHERE recurso=? AND dono=?""",
+                                (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
+                                 recurso, dono))
             return cur.rowcount > 0
 
-    def solta_lease(self, recurso: str, dono: str) -> None:
+    def solta_lease(self, recurso: str, dono: str, workspace_id: str | None = None) -> None:
         with self._tx() as c:
-            c.execute("DELETE FROM leases WHERE recurso=? AND dono=?", (recurso, dono))
+            if workspace_id:
+                c.execute("DELETE FROM leases WHERE workspace_id=? AND recurso=? AND dono=?",
+                          (workspace_id, recurso, dono))
+            else:
+                c.execute("DELETE FROM leases WHERE recurso=? AND dono=?", (recurso, dono))
 
     def leases_vencidos(self, workspace_id: str, quando: datetime | None = None) -> list[Lease]:
         ts = quando or agora()

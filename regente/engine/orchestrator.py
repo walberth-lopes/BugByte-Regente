@@ -147,9 +147,9 @@ class Orchestrator:
             run.encerrado_em = agora()
             run.motivo = "lease vencido: worker nao renovou"
             self.store.salva_run(run)
-            self.store.solta_lease(run.id, run.id)
+            self.store.solta_lease(run.id, run.id, self.workspace.id)
             for recurso in (task.recursos if task else ()):
-                self.store.solta_lease(recurso, run.id)
+                self.store.solta_lease(recurso, run.id, self.workspace.id)
 
             if task is None:
                 continue
@@ -357,7 +357,7 @@ class Orchestrator:
             if self.store.adquire_lease(recurso, run.id, self.workspace.id,
                                         self.lease_segundos) is None:
                 for r in travados:
-                    self.store.solta_lease(r, run.id)
+                    self.store.solta_lease(r, run.id, self.workspace.id)
                 self._anota("adiada", task_id=task.id,
                             resumo=f"recurso {recurso} ficou ocupado entre o plano e o despacho")
                 return
@@ -399,7 +399,7 @@ class Orchestrator:
     def _colhe(self, task_id: str, run: Run, resultado, travados: list[str],
                rel: Relatorio) -> None:
         for r in travados:
-            self.store.solta_lease(r, run.id)
+            self.store.solta_lease(r, run.id, self.workspace.id)
         run.encerrado_em = agora()
 
         if resultado is None:

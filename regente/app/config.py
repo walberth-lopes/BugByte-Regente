@@ -68,6 +68,11 @@ class Config:
     #: que o SecretProvider usa como escopo -- o que nao esta aqui, este
     #: workspace nao alcanca, nem por engano de configuracao.
     segredos: tuple[str, ...] = ()
+    #: Onde cada trabalho roda, declarado. E a capacidade que falta no provedor
+    #: de tasks -- medido: o campo natural estava vazio em 100 de 100 issues, e
+    #: o sinal mais forte disponivel cobria 14. Enquanto a origem nao emitir o
+    #: alvo, este mapa e o que evita o motor adivinhar.
+    alvos: dict[str, dict[str, str]] = field(default_factory=dict)
     fatores_de_risco: tuple[dict[str, Any], ...] = ()
     modelos: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: Sombra: o motor decide e registra, mas nao executa escrita externa.
@@ -147,6 +152,7 @@ def carrega(caminho: str | Path) -> Config:
         policies=caminho_policies,
         lease_segundos=int(bruto.get('lease_segundos', 900)),
         segredos=tuple(str(x) for x in (bruto.get('segredos') or ())),
+        alvos={k: dict(v) for k, v in (bruto.get('alvos') or {}).items()},
         fatores_de_risco=tuple(bruto.get("fatores_de_risco") or ()),
         modelos=dict(bruto.get("modelos") or {}),
         sombra=bool(bruto.get("sombra", True)),

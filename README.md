@@ -13,12 +13,16 @@ Não é um chatbot que sabe programar.
 isolados, estado persistente, detecção de falha, escalonamento humano e retomada
 após `kill -9`.
 
-**Marco 3** — primeiro provedor real, em sombra: o motor lê um board de verdade,
-normaliza, monta o grafo e planeja, **sem autoridade para mutar nada**. Dois
-provedores completamente diferentes passam pelo mesmo contrato.
+**Marco 3** — primeiro provedor real de tasks, em sombra: o motor lê um board de
+verdade, normaliza, monta o grafo e planeja, **sem autoridade para mutar nada**.
 
-Ver [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md) e
-[MAPEAMENTO.md](MAPEAMENTO.md).
+**Marco 4** — provedor de repositórios, em sombra: dois adapters reais de tipos
+opostos (git local e hospedagem remota), identidade dentro da tenancy, e a cadeia
+`task → repositório → base → recursos → risco/policy → candidato` respondida sem
+tocar em nada.
+
+Ver [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md),
+[MAPEAMENTO.md](MAPEAMENTO.md) e [ALVO.md](ALVO.md).
 
 ## Sombra: ver sem tocar
 
@@ -59,6 +63,8 @@ regente status    # o que está acontecendo, o que precisa de você
 | `decide` | registra sua decisão num item da fila |
 | `log` | a trilha: toda transição, com ator e motivo |
 | `sombra` | vê o trabalho real e o que o motor faria, sem tocar em nada |
+| `repos` | repositórios visíveis, como o motor os enxerga |
+| `cadeia` | da task real ao candidato a execução, elo por elo |
 | `rules` | regras, limites e adapters em vigor |
 
 ## O primeiro tick é baseline

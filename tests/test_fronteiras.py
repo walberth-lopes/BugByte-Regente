@@ -176,3 +176,35 @@ def test_trocar_de_provedor_so_toca_em_adapter_e_configuracao():
     import regente.adapters.registry as reg
     assert len(reg.disponiveis()["tasks"]) >= 2, (
         "TaskProvider com um adapter so nao prova nada")
+
+
+def test_repositoryprovider_nao_conhece_fornecedor():
+    """A contraprova do Marco 4, no mesmo formato do Marco 3.
+
+    Trocar a hospedagem de codigo por outra completamente diferente deve exigir
+    adapter novo + configuracao, e nada mais.
+    """
+    arq = RAIZ / "ports" / "repository.py"
+    prosa = _linhas_de_prosa(arq)
+    for n, linha in enumerate(arq.read_text(encoding="utf-8").splitlines(), 1):
+        if n in prosa:
+            continue
+        achado = re.search("|".join(FORNECEDORES), linha, re.IGNORECASE)
+        assert not achado, f"ports/repository.py:{n} conhece '{achado.group()}'"
+
+    import regente.adapters.registry as reg
+    assert len(reg.disponiveis()["repository"]) >= 2, (
+        "RepositoryProvider com um adapter so nao prova nada")
+
+
+def test_resolucao_de_alvo_nao_conhece_fornecedor():
+    """O elo task->repositorio e o mais tentador de acoplar: e onde daria vontade
+    de olhar `nameWithOwner` ou um campo de um board especifico."""
+    for nome in ("alvo.py", "cadeia.py"):
+        arq = RAIZ / "engine" / nome
+        prosa = _linhas_de_prosa(arq)
+        for n, linha in enumerate(arq.read_text(encoding="utf-8").splitlines(), 1):
+            if n in prosa:
+                continue
+            achado = re.search("|".join(FORNECEDORES), linha, re.IGNORECASE)
+            assert not achado, f"engine/{nome}:{n} conhece '{achado.group()}'"

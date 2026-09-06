@@ -115,13 +115,19 @@ class Store(Port):
     @abstractmethod
     def adquire_lease(self, recurso: str, dono: str, workspace_id: str,
                       segundos: int) -> Lease | None:
-        """Devolve None quando ha lease vivo de outro dono. Nunca espera."""
+        """Devolve None quando ha lease vivo de outro dono. Nunca espera.
+
+        A trava e por (workspace, recurso). Recurso homonimo em dois clientes
+        sao dois recursos -- um cliente nunca segura a fila do outro.
+        """
 
     @abstractmethod
-    def renova_lease(self, recurso: str, dono: str, segundos: int) -> bool: ...
+    def renova_lease(self, recurso: str, dono: str, segundos: int,
+                     workspace_id: str | None = None) -> bool: ...
 
     @abstractmethod
-    def solta_lease(self, recurso: str, dono: str) -> None: ...
+    def solta_lease(self, recurso: str, dono: str,
+                    workspace_id: str | None = None) -> None: ...
 
     @abstractmethod
     def leases_vencidos(self, workspace_id: str, agora: datetime | None = None) -> list[Lease]: ...

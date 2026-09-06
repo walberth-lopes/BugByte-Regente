@@ -490,3 +490,46 @@ def test_hierarquia_nao_vira_dependencia(bancada):
     rel = orq.tick()
     assert set(rel.despachadas) == {"MAE-1", "F-1", "F-2"}
     assert not store.dependencias("wks_teste"), "relacionamento virou aresta"
+
+
+def test_banco_antigo_migra_em_vez_de_recusar(tmp_path):
+    """Bump de esquema sem migracao transforma a promessa de estado em pegadinha."""
+    import sqlite3
+    from regente.engine.store_sqlite import SqliteStore
+
+    caminho = tmp_path / "velho.db"
+    con = sqlite3.connect(str(caminho))
+    con.executescript("""
+        CREATE TABLE meta (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
+        INSERT INTO meta VALUES('esquema','1');
+        CREATE TABLE leases (
+          recurso TEXT PRIMARY KEY, dono TEXT NOT NULL, workspace_id TEXT NOT NULL,
+          expira_em TEXT NOT NULL, renovado_em TEXT NOT NULL);
+        INSERT INTO leases VALUES('repo:x','run_1','wks_a','2099-01-01T00:00:00.000000Z',
+                                  '2026-01-01T00:00:00.000000Z');
+    """)
+    con.commit(); con.close()
+
+    s = SqliteStore(caminho)
+    s.migra()
+    s.verifica()
+    # E o comportamento NOVO vale depois da subida.
+    assert s.adquire_lease("repo:x", "run_a", "wks_a", 60) is not None
+    assert s.adquire_lease("repo:x", "run_b", "wks_b", 60) is not None
+    s.fecha()
+
+
+def test_banco_de_versao_futura_e_recusado(tmp_path):
+    """Descer de versao em silencio corromperia o estado."""
+    import sqlite3
+    import pytest as _pytest
+    from regente.core.errors import EstadoCorrompido
+    from regente.engine.store_sqlite import SqliteStore
+
+    caminho = tmp_path / "futuro.db"
+    con = sqlite3.connect(str(caminho))
+    con.executescript("CREATE TABLE meta (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);"
+                      "INSERT INTO meta VALUES('esquema','99');")
+    con.commit(); con.close()
+    with _pytest.raises(EstadoCorrompido, match="versao mais nova|nao ha caminho"):
+        SqliteStore(caminho).migra()

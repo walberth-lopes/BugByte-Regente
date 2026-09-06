@@ -16,10 +16,12 @@ from ..core.model import Event, Project, Workspace
 from ..core.policy import PolicyEngine
 from ..core.risk import RiskEngine
 from ..engine.gate import Gate
+from ..engine.alvo import ResolvedorDeAlvo
 from ..engine.orchestrator import Orchestrator
 from ..engine.store_sqlite import SqliteStore
 from ..ports import Capability
 from ..ports.support import NotificationProvider
+from ..ports.repository import RepositoryProvider
 from ..ports.tasks import TaskProvider
 from ..ports.workspace import AgentRunner, WorkspaceProvider
 from .config import Config, carrega_policies
@@ -43,6 +45,11 @@ class Motor:
     workspace: Workspace
     orchestrator: Orchestrator
     gate: Gate
+    #: Opcional: um workspace pode governar tasks sem governar codigo.
+    repos: RepositoryProvider | None = None
+    resolvedor: ResolvedorDeAlvo | None = None
+    policy: PolicyEngine | None = None
+    risco: RiskEngine | None = None
 
     def fecha(self) -> None:
         self.store.fecha()
@@ -99,6 +106,10 @@ def monta(cfg: Config) -> Motor:
 
     tasks: TaskProvider = cria(Capability.TASKS, "tasks",
                                {"segredos": segredos, "observador": observa})
+    repos: RepositoryProvider | None = None
+    if "repository" in cfg.providers:
+        repos = cria(Capability.REPOSITORY, "repository",
+                     {"segredos": segredos, "observador": observa})
     areas: WorkspaceProvider = cria(Capability.WORKSPACE, "workspace_provider",
                                     {"raiz": str(cfg.areas)})
     runner: AgentRunner = cria(Capability.RUNNER, "runner")
@@ -116,7 +127,13 @@ def monta(cfg: Config) -> Motor:
         orcamento=cfg.orcamento, notificador=notificador, project_id=project_id,
         lease_segundos=cfg.lease_segundos)
 
-    return Motor(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate)
+    resolvedor = ResolvedorDeAlvo(
+        por_rotulo=dict(cfg.alvos.get("por_rotulo") or {}),
+        por_projeto=dict(cfg.alvos.get("por_projeto") or {}),
+        por_task=dict(cfg.alvos.get("por_task") or {}))
+
+    return Motor(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate,
+                 repos=repos, resolvedor=resolvedor, policy=policy, risco=risco)
 
 
 def diagnostico(cfg: Config) -> list[tuple[str, bool, str]]:
@@ -140,6 +157,7 @@ def diagnostico(cfg: Config) -> list[tuple[str, bool, str]]:
     confere("banco", banco)
 
     for chave, cap in (("tasks", Capability.TASKS),
+                       ("repository", Capability.REPOSITORY),
                        ("workspace_provider", Capability.WORKSPACE),
                        ("runner", Capability.RUNNER),
                        ("notification", Capability.NOTIFICATION)):
@@ -153,7 +171,7 @@ def diagnostico(cfg: Config) -> list[tuple[str, bool, str]]:
                 extras = {"raiz": str(cfg.areas)}
             elif cap is Capability.NOTIFICATION:
                 extras = {"jornal": str(cfg.jornal)}
-            elif cap is Capability.TASKS:
+            elif cap in (Capability.TASKS, Capability.REPOSITORY):
                 extras = {"segredos": registry.cria(
                     Capability.SECRETS, "escopado",
                     {"permitidas": cfg.segredos, "workspace": cfg.workspace})}

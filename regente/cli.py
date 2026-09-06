@@ -15,7 +15,7 @@ from pathlib import Path
 from .app import container
 from .app.config import Config, carrega
 from .core.states import TaskState
-from .engine import escalation, sombra
+from .engine import cadeia, escalation, sombra
 
 PADRAO = "regente.yaml"
 
@@ -243,6 +243,62 @@ def cmd_sombra(args) -> int:
         motor.fecha()
 
 
+def cmd_repos(args) -> int:
+    """Repositorios visiveis, como o motor os enxerga."""
+    cfg = _config(args)
+    motor = container.monta(cfg)
+    try:
+        if motor.repos is None:
+            print("nenhum provedor de repositorio configurado")
+            return 1
+        lista = motor.repos.list_repositories()
+        print(f"{len(lista)} repositorio(s) via {motor.repos.nome}")
+        print()
+        for r in sorted(lista, key=lambda x: x.ref.key):
+            marca = "!" if r.anomalias else " "
+            print(f" {marca} {r.ref.key:<46} base={r.branch_base or '(nao lida)':<10}")
+            if args.verboso:
+                print(f"     recurso: {r.ref.recurso(motor.workspace.id)}")
+                if r.anomalias:
+                    print(f"     anomalias: {'; '.join(r.anomalias)}")
+        return 0
+    finally:
+        motor.fecha()
+
+
+def cmd_cadeia(args) -> int:
+    """task -> repositorio -> base -> recursos -> risco/policy -> candidato."""
+    cfg = _config(args)
+    motor = container.monta(cfg)
+    try:
+        if motor.repos is None:
+            print("nenhum provedor de repositorio configurado")
+            return 1
+        tarefas = motor.orchestrator.tasks_provider.list_tasks()
+        repositorios = motor.repos.list_repositories()
+        branches = {}
+        if not args.sem_branches:
+            for r in repositorios:
+                try:
+                    branches[r.ref.key] = motor.repos.list_branches(r.ref.key)
+                except Exception:
+                    branches[r.ref.key] = []
+        rel = cadeia.monta(
+            workspace_nome=motor.workspace.nome, workspace_id=motor.workspace.id,
+            tasks=tarefas, repos=repositorios, resolvedor=motor.resolvedor,
+            policy=motor.policy, risco=motor.risco,
+            autonomia=motor.workspace.autonomia_maxima, branches=branches,
+            organizacao=cfg.organizacao, cliente=cfg.cliente)
+        print(cadeia.texto(rel, limite=args.limite))
+        if args.saida:
+            Path(args.saida).write_text(cadeia.texto(rel, limite=200), encoding="utf-8")
+            print()
+            print(f"  gravado em {args.saida}")
+        return 0
+    finally:
+        motor.fecha()
+
+
 def cmd_rules(args) -> int:
     cfg = _config(args)
     from .app.config import carrega_policies
@@ -310,6 +366,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--eu", help="nome do responsavel a contar como 'minhas'")
     p.add_argument("--saida", help="grava o relatorio neste arquivo")
     p.set_defaults(fn=cmd_sombra)
+
+    p = sub.add_parser("repos", help="repositorios visiveis, sem tocar em nada")
+    p.add_argument("-v", "--verboso", action="store_true")
+    p.set_defaults(fn=cmd_repos)
+
+    p = sub.add_parser("cadeia", help="da task real ao candidato a execucao, em sombra")
+    p.add_argument("--limite", type=int, default=10)
+    p.add_argument("--sem-branches", action="store_true",
+                   help="pula a leitura de branches (mais rapido, menos evidencia)")
+    p.add_argument("--saida", help="grava o relatorio neste arquivo")
+    p.set_defaults(fn=cmd_cadeia)
 
     p = sub.add_parser("rules", help="regras, limites e adapters em vigor")
     p.set_defaults(fn=cmd_rules)

@@ -120,12 +120,13 @@ def test_plano_de_um_cliente_ignora_trabalho_do_outro(tmp_path):
 
 
 def test_lease_de_um_cliente_nao_bloqueia_o_outro(tmp_path):
-    """Recursos homonimos entre clientes sao recursos DIFERENTES...
+    """Recurso homonimo em dois clientes sao dois recursos DIFERENTES.
 
-    ...e este teste marca a fronteira exata: hoje o lease e por chave crua, entao
-    dois clientes que usem `repo:api` competem pela MESMA trava. E conservador
-    (ninguem se atropela) mas errado (um cliente atrasa o outro). Fica registrado
-    como limite conhecido, e nao como comportamento desejado.
+    Dois clientes podem ter um repositorio de mesmo nome -- e no board real isso
+    ja acontece com `scamchecker`, cujo diretorio local sequer bate com o nome
+    remoto. Com a trava por chave nua, um cliente atrasaria o outro: conservador
+    o bastante para nunca corromper nada, e errado o bastante para ninguem
+    descobrir por que o motor do cliente B fica parado.
     """
     store = SqliteStore(tmp_path / "c.db")
     store.migra()
@@ -133,10 +134,37 @@ def test_lease_de_um_cliente_nao_bloqueia_o_outro(tmp_path):
     store.salva_workspace(Workspace(id="wks_b", client_id="b", nome="B"))
 
     assert store.adquire_lease("repo:api", "run_a", "wks_a", 60) is not None
-    tomado = store.adquire_lease("repo:api", "run_b", "wks_b", 60)
-    assert tomado is None, (
-        "hoje a trava e global por chave; se isto mudar, o escopo por workspace "
-        "precisa entrar tambem em `leases_vencidos` e na recuperacao")
+    assert store.adquire_lease("repo:api", "run_b", "wks_b", 60) is not None, (
+        "clientes diferentes competindo pela mesma trava")
+    # E dentro do MESMO cliente a exclusao continua valendo.
+    assert store.adquire_lease("repo:api", "run_a2", "wks_a", 60) is None
+
+
+def test_soltar_lease_de_um_cliente_nao_solta_o_do_outro(tmp_path):
+    store = SqliteStore(tmp_path / "c.db")
+    store.migra()
+    store.salva_workspace(Workspace(id="wks_a", client_id="a", nome="A"))
+    store.salva_workspace(Workspace(id="wks_b", client_id="b", nome="B"))
+    store.adquire_lease("repo:api", "run_x", "wks_a", 60)
+    store.adquire_lease("repo:api", "run_x", "wks_b", 60)
+
+    store.solta_lease("repo:api", "run_x", workspace_id="wks_a")
+    assert store.adquire_lease("repo:api", "outro", "wks_a", 60) is not None
+    assert store.adquire_lease("repo:api", "outro", "wks_b", 60) is None, (
+        "soltar a trava de um cliente soltou a do outro")
+
+
+def test_lease_vencido_e_listado_apenas_para_o_dono_do_escopo(tmp_path):
+    store = SqliteStore(tmp_path / "c.db")
+    store.migra()
+    store.salva_workspace(Workspace(id="wks_a", client_id="a", nome="A"))
+    store.salva_workspace(Workspace(id="wks_b", client_id="b", nome="B"))
+    store.adquire_lease("repo:api", "run_a", "wks_a", 60)
+    store.adquire_lease("repo:api", "run_b", "wks_b", 60)
+    store._con.execute("UPDATE leases SET expira_em='2000-01-01T00:00:00.000000Z'")
+
+    assert [l.dono for l in store.leases_vencidos("wks_a")] == ["run_a"]
+    assert [l.dono for l in store.leases_vencidos("wks_b")] == ["run_b"]
 
 
 # ---------------------------------------------------------------------------
@@ -196,3 +224,72 @@ def test_clientes_com_provedores_diferentes_convivem(tmp_path):
     # E a identidade guarda de QUAL provedor cada task veio.
     assert {t.externo.provider for t in store.tasks("wks_a")} == {"filesystem"}
     assert {t.externo.provider for t in do_b} == {"jira"}
+
+
+# ---------------------------------------------------------------------------
+# Identidade de repositorio dentro da tenancy
+# ---------------------------------------------------------------------------
+
+def test_repos_homonimos_em_clientes_diferentes_sao_recursos_diferentes():
+    """Dois clientes podem ter um repositorio chamado `api`. Sao dois."""
+    from regente.ports.repository import RepoRef
+    a = RepoRef(provider="github", key="clienteA/api")
+    b = RepoRef(provider="github", key="clienteB/api")
+
+    # Chaves diferentes: recursos diferentes, obviamente.
+    assert a.recurso("wks_1") != b.recurso("wks_1")
+    # MESMA chave em workspaces diferentes: tambem recursos diferentes.
+    assert a.recurso("wks_1") != a.recurso("wks_2")
+    # E o mesmo repositorio visto por dois provedores nao colide.
+    assert (RepoRef(provider="git-local", key="clienteA/api").recurso("wks_1")
+            != a.recurso("wks_1"))
+
+
+def test_dois_clientes_com_repo_de_mesmo_nome_nao_disputam_trava(tmp_path):
+    """O cenario completo: identidade -> recurso -> lease, entre clientes."""
+    from regente.ports.repository import RepoRef
+    store = SqliteStore(tmp_path / "c.db")
+    store.migra()
+    store.salva_workspace(Workspace(id="wks_a", client_id="a", nome="A"))
+    store.salva_workspace(Workspace(id="wks_b", client_id="b", nome="B"))
+
+    # Coincidencia total: mesmo provedor, mesma chave, clientes diferentes.
+    ref = RepoRef(provider="github", key="acme/api")
+    ra, rb = ref.recurso("wks_a"), ref.recurso("wks_b")
+
+    assert store.adquire_lease(ra, "run_a", "wks_a", 60) is not None
+    assert store.adquire_lease(rb, "run_b", "wks_b", 60) is not None, (
+        "o cliente B ficou esperando a trava do cliente A")
+    # Dentro do mesmo cliente, a exclusao continua valendo.
+    assert store.adquire_lease(ra, "run_a2", "wks_a", 60) is None
+
+
+def test_provedores_de_repo_diferentes_convivem(tmp_path):
+    """Cliente A le clones locais, cliente B le a hospedagem -- mesmo Core."""
+    import subprocess
+    from regente.adapters.repos.git_local import GitLocal
+
+    def repo(raiz, nome, remoto):
+        p = raiz / nome
+        p.mkdir(parents=True)
+        for args in (["init", "-q", "-b", "main"],
+                     ["config", "user.email", "t@e.invalido"],
+                     ["config", "user.name", "T"]):
+            subprocess.run(["git", *args], cwd=str(p), check=True, capture_output=True)
+        (p / "a.txt").write_text("x", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(p), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-q", "-m", "i"], cwd=str(p), check=True,
+                       capture_output=True)
+        subprocess.run(["git", "remote", "add", "origin", remoto], cwd=str(p),
+                       check=True, capture_output=True)
+        return p
+
+    a = tmp_path / "a"; b = tmp_path / "b"
+    repo(a, "api", "https://github.com/clienteA/api.git")
+    repo(b, "api", "https://github.com/clienteB/api.git")
+
+    pa, pb = GitLocal(raiz=a), GitLocal(raiz=b)
+    ka = pa.list_repositories()[0].ref
+    kb = pb.list_repositories()[0].ref
+    assert ka.key == "clienteA/api" and kb.key == "clienteB/api"
+    assert ka.recurso("wks_a") != kb.recurso("wks_b")

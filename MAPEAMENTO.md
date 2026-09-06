@@ -119,3 +119,62 @@ Seguindo a regra de não consertar o mundo no lugar errado:
 | Paginação por cursor, não por offset | **PROVIDER QUIRK** | tratado no adapter |
 | Resposta de 726 KB numa busca de rotina | **PROVIDER QUIRK** | campos enxutos, nunca `*all` |
 | Dependência apontando para fora do recorte do JQL | **DATA QUALITY** | contada e relatada, nunca inventada |
+
+
+---
+
+# Mapeamento: repositório → domínio
+
+Levantado contra 12 clones locais e 28 repositórios remotos reais, **06/09/2026**.
+
+## Identidade
+
+**Nome nunca é identidade.** Um repositório é `(provedor, chave)`, e o motor
+escopa isso pelo workspace antes de usar como trava ou estado:
+
+```
+RepoRef(provider, key).recurso(workspace_id)
+  → "repo:<workspace>/<provedor>/<chave>"
+```
+
+Três formas de falha que o nome nu produz, todas observadas:
+
+| falha | evidência real |
+|---|---|
+| diretório ≠ repositório | `scamchecker-legado/` aponta para `silverguard-br/scamchecker` |
+| clientes com repos homônimos | dois clientes podem ter `api`; a trava global fazia um esperar o outro |
+| mesmo repo por dois provedores | `git-local` e `github` veem `silverguard-br/scamchecker` |
+
+A chave sai do **remoto** quando existe; do caminho só quando não há remoto — e
+`local/<dir>` marca isso explicitamente, em vez de fingir uma origem.
+
+## Branch base
+
+Lida do provedor, **nunca presumida**. Ordem de tentativa: `origin/HEAD` →
+`origin/main` → `origin/master` → `origin/develop` → local. Nenhuma delas é
+`HEAD`: dos 12 clones reais, **11 estavam numa branch de trabalho**, e ler `HEAD`
+derivaria trabalho novo do código pela metade de outra pessoa.
+
+Repositório sem base é `REPO_INUTILIZAVEL` — não recebe trabalho.
+
+## Capacidades
+
+`capacidades` diz o que o adapter **consegue**; a policy diz o que ele **pode**.
+Misturar as duas produz `if pode_escrever` espalhado, que ninguém audita.
+
+O adapter local declara tudo de leitura **menos** `LER_PULL_REQUESTS`: git puro
+não tem pull request, é conceito do serviço de hospedagem. Declarar a ausência é
+o que permite a cadeia parar em `SEM_CAPACIDADE` antes de gastar um ciclo.
+
+## Achados classificados — Marco 4
+
+| achado | classe | onde foi corrigido |
+|---|---|---|
+| **`gh repo delete` atravessou o portão** — allowlist por verbo, não por invocação | **CORE BUG** | `adapters/repos/leitura.py` — invocação inteira |
+| Idem em git: `remote set-url`, `config x y`, `branch -D`, `symbolic-ref A B` | **CORE BUG** | idem |
+| `gh api -f k=v` envia POST sem `--method` | **PROVIDER QUIRK** | flag tratada como escrita |
+| Lease global por chave: clientes homônimos disputavam a mesma trava | **CORE BUG** | esquema v2, PK `(workspace, recurso)` |
+| Bump de esquema sem caminho de migração | **MISSING CAPABILITY** | escada `MIGRACOES` no store |
+| Task não declara em que repositório roda | **MISSING CAPABILITY** | ver [ALVO.md](ALVO.md) |
+| Diretório local ≠ nome do repositório | **DATA QUALITY** | detectado e sinalizado, nunca corrigido |
+| `scamchecker-crawler-engine` sem branch base | **DATA QUALITY** | vira `REPO_INUTILIZAVEL` |
