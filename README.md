@@ -69,6 +69,25 @@ regente status    # what is happening, what needs you
 | `cadeia` | from the real task to an execution candidate, link by link |
 | `rules` | the rules, limits and adapters in force |
 
+## Reports
+
+`sombra`, `cadeia` and `mission` print to the terminal. Add `--output` to keep a
+copy:
+
+```bash
+regente sombra --output r.txt        # -> reports/r.txt
+regente cadeia --output docs/r.txt   # -> docs/r.txt
+```
+
+A bare filename is a **name**, not a location: it lands in `reports/`, which is
+gitignored, so a report is never committed by accident. A value carrying a
+directory is a place you chose, and is used as given — `docs/r.txt`, `./r.txt`,
+`/tmp/r.txt`. Missing directories are created. Each command prints the path it
+actually wrote.
+
+Without `--output`, nothing is written. `mission` writes only with `--run`: a dry
+run has a briefing but no measurements, and returns before the report.
+
 ## The first tick is a baseline
 
 Switching the engine on against a full backlog **records** the work and
