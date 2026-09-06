@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "regente"
+version = "0.1.0"
+description = "Sistema operacional para agentes de engenharia de software."
+requires-python = ">=3.13"
+classifiers = ["Private :: Do Not Upload"]
+dependencies = [
+    "PyYAML>=6.0.2",
+]
+
+[project.optional-dependencies]
+# O motor nao depende de UI nem de LLM para rodar um tick. Extras carregam so
+# quem precisa: o Core Engine tem de subir num ambiente sem FastAPI e sem SDK.
+ui = ["fastapi>=0.115", "uvicorn>=0.30"]
+llm = ["anthropic>=0.40"]
+dev = ["pytest>=8.3"]
+
+[project.scripts]
+regente = "regente.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["regente"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

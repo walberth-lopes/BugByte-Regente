@@ -1,0 +1,108 @@
+# -*- coding: utf-8 -*-
+"""WorkspaceProvider e AgentRunner: onde o worker vive e como ele e executado."""
+
+from __future__ import annotations
+
+from abc import abstractmethod
+from dataclasses import dataclass, field
+from typing import Any
+
+from . import Capability, Port
+
+
+@dataclass(frozen=True, slots=True)
+class WorkArea:
+    """A area isolada de um worker.
+
+    Um worker nunca escreve na area de outro. O isolamento e do provedor --
+    worktree, container, VM -- e o motor so precisa do caminho e do identificador
+    para conseguir limpar depois de um crash.
+    """
+    id: str
+    caminho: str
+    branch: str | None = None
+    repo: str | None = None
+    dados: dict[str, Any] = field(default_factory=dict)
+
+
+class WorkspaceProvider(Port):
+    capability = Capability.WORKSPACE
+
+    @abstractmethod
+    def prepare(self, chave: str, repo: str | None = None,
+                branch: str | None = None, base: str | None = None) -> WorkArea:
+        """`chave` identifica a UNIDADE DE TRABALHO, nao a tentativa.
+
+        Chamar duas vezes com a mesma chave devolve a mesma area, com o que ja
+        estava la. E isso que faz uma retomada apos crash reencontrar os commits
+        WIP em vez de recomecar do zero -- endereca-la pelo run jogaria fora
+        exatamente o trabalho que a recuperacao existe para salvar.
+        """
+
+    @abstractmethod
+    def discard(self, area: WorkArea) -> None:
+        """Solta a area. Precisa ser seguro chamar em area ja perdida.
+
+        Limpeza acontece depois de crash, quando o processo que criou a area nao
+        existe mais -- entao 'ja nao esta la' e sucesso, nao erro.
+        """
+
+    def list_areas(self) -> list[WorkArea]:
+        return []
+
+
+@dataclass(frozen=True, slots=True)
+class RunRequest:
+    """O que o motor entrega a um worker.
+
+    `contexto` ja vem montado e reduzido: o motor coleta o necessario e nada
+    alem. Despejar o projeto inteiro aqui e o que torna um agente caro, lento e
+    impreciso ao mesmo tempo.
+    """
+    run_id: str
+    task_id: str
+    agente: str
+    objetivo: str
+    area: WorkArea
+    contexto: dict[str, Any] = field(default_factory=dict)
+    #: Acoes que este worker pode sequer tentar. O Policy Engine ainda decide
+    #: cada chamada; esta lista so evita oferecer ao agente o que ele nunca
+    #: poderia usar.
+    ferramentas: tuple[str, ...] = ()
+    limite_iteracoes: int = 24
+    limite_tool_calls: int = 120
+    limite_custo_usd: float = 5.0
+    limite_segundos: int = 2700
+
+
+@dataclass(frozen=True, slots=True)
+class RunResult:
+    ok: bool
+    resumo: str
+    #: Como o worker terminou: 'concluido', 'timebox', 'sem_progresso',
+    #: 'orcamento', 'erro', 'precisa_humano'. O motor decide o proximo passo a
+    #: partir daqui -- por isso e vocabulario fechado, nao texto livre.
+    desfecho: str = "concluido"
+    artefatos: dict[str, Any] = field(default_factory=dict)
+    custo_usd: float = 0.0
+    tokens: int = 0
+    chamadas_tool: int = 0
+    iteracoes: int = 0
+    #: Pergunta ao humano, quando `desfecho == 'precisa_humano'`.
+    pergunta: dict[str, Any] | None = None
+
+
+class AgentRunner(Port):
+    """Executa um agente. A implementacao decide o substrato.
+
+    Esta porta e o que impede o motor de virar refem de um harness. Um runner
+    pode ser um harness agentico ja pronto, um laco proprio sobre LLMProvider, ou
+    um script deterministico. O Orchestrator nao muda em nenhum dos casos.
+    """
+    capability = Capability.RUNNER
+
+    @abstractmethod
+    def run(self, pedido: RunRequest) -> RunResult: ...
+
+    def cancel(self, run_id: str) -> None:
+        return None

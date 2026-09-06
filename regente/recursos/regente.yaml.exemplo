@@ -1,0 +1,46 @@
+# Configuracao do Regente. Um arquivo por workspace.
+#
+# Trocar de fornecedor e editar `providers`. O Core Engine nao muda.
+
+organizacao: minha-org
+cliente: cliente-zero
+workspace: primeiro
+
+# Ate onde o motor vai sozinho: L0 leitura, L1 codigo, L2 PR, L3 staging, L4 producao.
+autonomia: L2
+
+# Sombra: o motor decide, registra e mostra -- mas nao executa escrita externa.
+# Nasce ligado. Desligar e decisao explicita, depois de conferir a sombra.
+sombra: true
+
+raiz: .regente
+policies: ../policies/padrao.yaml
+
+providers:
+  tasks:
+    nome: filesystem
+    diretorio: ./tasks
+  workspace_provider:
+    nome: diretorio
+  runner:
+    nome: roteiro
+  notification:
+    nome: console
+
+projetos:
+  - nome: padrao
+    ambiente_padrao: staging
+
+limites:
+  max_workers: 2
+  max_despachos_dia: 8
+
+orcamento:
+  max_iteracoes: 24
+  max_tool_calls: 120
+  max_custo_usd: 5.0
+  max_segundos: 2700
+  max_tentativas: 3
+
+# Somam aos fatores da base; nao os substituem.
+fatores_de_risco: []
