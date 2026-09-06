@@ -38,7 +38,7 @@ class ScopedSecrets(SecretProvider):
     Nao existe forma `literal:` de proposito. Se ela existisse, o primeiro
     segredo de producao apareceria num YAML versionado dentro de uma semana.
     """
-    name: str = "escopado"
+    name: str = "scoped"
     #: Referencias que ESTE workspace pode resolver. Vazio = nenhuma.
     allowed_from: frozenset[str] = field(default_factory=frozenset)
     workspace: str = "?"
@@ -51,19 +51,19 @@ class ScopedSecrets(SecretProvider):
 
         esquema, _, resto = reference.partition(":")
         if esquema == "env":
-            valor = os.environ.get(resto, "")
-            if not valor:
+            value = os.environ.get(resto, "")
+            if not value:
                 raise SecretMissing(
                     f"variavel de ambiente {resto} nao esta definida ou esta vazia")
-            return valor
+            return value
         if esquema == "arquivo":
             path = Path(resto).expanduser()
             if not path.is_file():
                 raise SecretMissing(f"arquivo de segredo nao existe: {path}")
-            valor = path.read_text(encoding="utf-8").strip()
-            if not valor:
+            value = path.read_text(encoding="utf-8").strip()
+            if not value:
                 raise SecretMissing(f"arquivo de segredo esta vazio: {path}")
-            return valor
+            return value
         raise SecretMissing(
             f"esquema de referencia desconhecido: {esquema!r}. Use env: ou arquivo:")
 

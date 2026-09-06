@@ -37,10 +37,10 @@ class AutonomyLevel(IntEnum):
     L4 = 4   # PRODUCTION -- deploy em producao
 
     @classmethod
-    def from_text(cls, valor: str | int) -> AutonomyLevel:
-        if isinstance(valor, int):
-            return cls(valor)
-        t = str(valor).strip().upper()
+    def from_text(cls, value: str | int) -> AutonomyLevel:
+        if isinstance(value, int):
+            return cls(value)
+        t = str(value).strip().upper()
         apelidos = {
             "READ_ONLY": cls.L0, "READONLY": cls.L0,
             "CODE": cls.L1, "PR": cls.L2,
@@ -132,17 +132,17 @@ class Rule:
     def matches(self, ctx: dict[str, str]) -> bool:
         """Todo criterio declarado precisa casar. Criterio ausente e curinga."""
         for field, esperado in self.match.items():
-            valor = ctx.get(field, "")
+            value = ctx.get(field, "")
             patterns = esperado if isinstance(esperado, (list, tuple)) else [esperado]
-            if not any(_matches_one(valor, str(p)) for p in patterns):
+            if not any(_matches_one(value, str(p)) for p in patterns):
                 return False
         return True
 
 
-def _matches_one(valor: str, default_value: str) -> bool:
+def _matches_one(value: str, default_value: str) -> bool:
     if default_value == "*":
         return True
-    v, p = valor.lower(), default_value.lower()
+    v, p = value.lower(), default_value.lower()
     if "*" in p or "?" in p:
         return fnmatch.fnmatch(v, p)
     return v == p

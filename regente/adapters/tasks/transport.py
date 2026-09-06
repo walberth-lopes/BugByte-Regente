@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Transporte HTTP para provedores de task. Onde o shadow mode vira garantia.
 
-**A porta so tem `get`.** Não existe `post`, `put` nem `delete` neste modulo.
+**A port so tem `get`.** Não existe `post`, `put` nem `delete` neste modulo.
 Isso não é disciplina, é impossibilidade: o adapter não pode mutar o sistema
 externo porque não há função que o faça. Ligar escrita exigiria adicionar um
 metodo -- uma mudança visivel num diff, revisavel por um humano, e não um
@@ -76,7 +76,7 @@ class Call:
     error: str = ""
 
 
-#: Assinatura do observador. O transporte nao conhece o Store: ele avisa, e quem
+#: Assinatura do observer. O transport nao conhece o Store: ele avisa, e quem
 #: escuta decide o que fazer com o aviso.
 Observer = Callable[[Call], None]
 
@@ -101,7 +101,7 @@ class HttpTransport:
     credencial: Callable[[], tuple[str, str]]
     timeout: int = 30
     max_attempts: int = 3
-    observador: Observer | None = None
+    observer: Observer | None = None
     user_agent: str = "regente/0.1 (+leitura)"
 
     def _authorization(self) -> str:
@@ -109,8 +109,8 @@ class HttpTransport:
         user, segredo = self.credencial()
         if not user or not segredo:
             raise AuthFailure("credencial ausente ou vazia")
-        bruto = f"{user}:{segredo}".encode("utf-8")
-        return "Basic " + base64.b64encode(bruto).decode("ascii")
+        raw = f"{user}:{segredo}".encode("utf-8")
+        return "Basic " + base64.b64encode(raw).decode("ascii")
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         url = self.base_url.rstrip("/") + "/" + path.lstrip("/")
@@ -119,7 +119,7 @@ class HttpTransport:
             url += "?" + urllib.parse.urlencode(limpos, doseq=True)
 
         inicio = time.monotonic()
-        ultimo: Exception | None = None
+        last: Exception | None = None
         for tentativa in range(1, self.max_attempts + 1):
             try:
                 data, status, req_id = self._one_attempt(url)
@@ -130,7 +130,7 @@ class HttpTransport:
                 self._notify_observer(path, inicio, False, tentativa, error=str(e), status=404)
                 raise
             except RateLimited as e:
-                ultimo = e
+                last = e
                 if tentativa == self.max_attempts:
                     self._notify_observer(path, inicio, False, tentativa, error=str(e),
                                 status=429, rate_limited=True)
@@ -139,7 +139,7 @@ class HttpTransport:
                 time.sleep(e.retry_after_seconds if e.retry_after_seconds is not None
                            else min(30.0, 2.0 ** tentativa))
             except ProviderUnavailable as e:
-                ultimo = e
+                last = e
                 if tentativa == self.max_attempts:
                     self._notify_observer(path, inicio, False, tentativa, error=str(e))
                     raise
@@ -148,17 +148,17 @@ class HttpTransport:
                 self._notify_observer(path, inicio, True, tentativa, status=status,
                             request_id=req_id)
                 return data
-        raise ultimo or ProviderUnavailable("sem tentativas restantes")
+        raise last or ProviderUnavailable("sem tentativas restantes")
 
     def _one_attempt(self, url: str) -> tuple[Any, int, str | None]:
-        pedido = urllib.request.Request(url, method="GET", headers={
+        request = urllib.request.Request(url, method="GET", headers={
             "Authorization": self._authorization(),
             "Accept": "application/json",
             "User-Agent": self.user_agent,
         })
         try:
-            with urllib.request.urlopen(pedido, timeout=self.timeout) as r:
-                bruto = r.read()
+            with urllib.request.urlopen(request, timeout=self.timeout) as r:
+                raw = r.read()
                 req_id = r.headers.get("X-Arequestid") or r.headers.get("X-Request-Id")
                 status = r.status
         except urllib.error.HTTPError as e:
@@ -183,19 +183,19 @@ class HttpTransport:
         except TimeoutError as e:
             raise ProviderUnavailable(f"timeout apos {self.timeout}s") from e
 
-        if not bruto:
+        if not raw:
             raise MalformedResponse("corpo vazio onde se esperava JSON")
         try:
-            return json.loads(bruto.decode("utf-8")), status, req_id
+            return json.loads(raw.decode("utf-8")), status, req_id
         except (ValueError, UnicodeDecodeError) as e:
             raise MalformedResponse(f"corpo nao e JSON valido: {e}") from e
 
     def _notify_observer(self, path: str, inicio: float, ok: bool, attempts: int,
                status: int | None = None, rate_limited: bool = False,
                request_id: str | None = None, error: str = "") -> None:
-        if not self.observador:
+        if not self.observer:
             return
-        self.observador(Call(
+        self.observer(Call(
             operation="GET", path=path.split("?")[0],
             duration_ms=int((time.monotonic() - inicio) * 1000),
             success=ok, status=status, attempts=attempts,
@@ -211,11 +211,11 @@ class SnapshotTransport:
     o que o mundo realmente respondeu, sem credencial e sem rede.
 
     `falhas` injeta error numa rota especifica, e e assim que os testes de
-    contrato exercitam resiliencia: o transporte levanta o mesmo tipo de error
+    contrato exercitam resiliencia: o transport levanta o mesmo tipo de error
     que a rede levantaria.
     """
-    diretorio: Path
-    observador: Observer | None = None
+    directory: Path
+    observer: Observer | None = None
     #: caminho -> excecao a levantar em vez de responder
     failures: dict[str, Exception] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
@@ -244,21 +244,21 @@ class SnapshotTransport:
             if rota in path:
                 self._notify_observer(path, inicio, False, str(error))
                 raise error
-        arquivo = self.diretorio / self.nome_de(path, params)
-        if not arquivo.is_file():
+        file = self.directory / self.nome_de(path, params)
+        if not file.is_file():
             self._notify_observer(path, inicio, False, "instantaneo ausente")
-            raise NotFound(f"sem instantaneo para {path} em {self.diretorio}")
+            raise NotFound(f"sem instantaneo para {path} em {self.directory}")
         try:
-            data = json.loads(arquivo.read_text(encoding="utf-8"))
+            data = json.loads(file.read_text(encoding="utf-8"))
         except ValueError as e:
             self._notify_observer(path, inicio, False, str(e))
-            raise MalformedResponse(f"{arquivo.name}: {e}") from e
+            raise MalformedResponse(f"{file.name}: {e}") from e
         self._notify_observer(path, inicio, True, "")
         return data
 
     def _notify_observer(self, path: str, inicio: float, ok: bool, error: str) -> None:
-        if self.observador:
-            self.observador(Call(
+        if self.observer:
+            self.observer(Call(
                 operation="GET", path=path.split("?")[0],
                 duration_ms=int((time.monotonic() - inicio) * 1000),
                 success=ok, status=200 if ok else None, error=error[:200]))

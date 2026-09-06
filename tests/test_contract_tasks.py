@@ -53,7 +53,7 @@ def _monta_filesystem(tmp_path: Path) -> tuple[TaskProvider, str]:
 
 
 def _monta_jira(tmp_path: Path) -> tuple[TaskProvider, str]:
-    return (JiraTasks(transporte=SnapshotTransport(diretorio=SNAPSHOTS),
+    return (JiraTasks(transport=SnapshotTransport(directory=SNAPSHOTS),
                       site="https://exemplo.atlassian.net"),
             KEYS["issue_individual"])
 
@@ -63,8 +63,8 @@ PROVIDERS = {"filesystem": _monta_filesystem, "jira": _monta_jira}
 
 @pytest.fixture(params=sorted(PROVIDERS))
 def provider(request, tmp_path):
-    porta, key = PROVIDERS[request.param](tmp_path)
-    return porta, key
+    port, key = PROVIDERS[request.param](tmp_path)
+    return port, key
 
 
 # ---------------------------------------------------------------------------
@@ -72,30 +72,30 @@ def provider(request, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_declares_the_that_is(provider):
-    porta, _ = provider
-    d = porta.describe()
+    port, _ = provider
+    d = port.describe()
     assert d["capability"] == "tasks"
     assert d["adapter"] and d["adapter"] != "desconhecido"
 
 
 def test_list_returns_tasks(provider):
-    porta, _ = provider
-    items = porta.list_tasks()
+    port, _ = provider
+    items = port.list_tasks()
     assert items, "list_tasks nao pode devolver vazio quando ha trabalho"
     assert all(t.key for t in items), "toda task precisa de identidade"
 
 
 def test_identity_is_unique(provider):
-    porta, _ = provider
-    chaves = [t.key for t in porta.list_tasks()]
+    port, _ = provider
+    chaves = [t.key for t in port.list_tasks()]
     assert len(chaves) == len(set(chaves)), f"chaves duplicadas: {chaves}"
 
 
 def test_get_returns_the_same_task_that_the_list(provider):
-    porta, key = provider
-    um = porta.get_task(key)
+    port, key = provider
+    um = port.get_task(key)
     assert um.key == key
-    da_lista = {t.key: t for t in porta.list_tasks()}
+    da_lista = {t.key: t for t in port.list_tasks()}
     if key in da_lista:
         assert da_lista[key].title == um.title
         assert da_lista[key].status is um.status
@@ -103,9 +103,9 @@ def test_get_returns_the_same_task_that_the_list(provider):
 
 def test_task_missing_raises_is_not_returns_none(provider):
     """Ausencia precisa ser error. `None` silencioso vira 'nao havia trabalho'."""
-    porta, _ = provider
+    port, _ = provider
     with pytest.raises(AdapterError):
-        porta.get_task("NAO-EXISTE-999")
+        port.get_task("NAO-EXISTE-999")
 
 
 # ---------------------------------------------------------------------------
@@ -113,21 +113,21 @@ def test_task_missing_raises_is_not_returns_none(provider):
 # ---------------------------------------------------------------------------
 
 def test_status_is_of_vocabulario_of_motor(provider):
-    porta, _ = provider
-    for t in porta.list_tasks():
+    port, _ = provider
+    for t in port.list_tasks():
         assert isinstance(t.status, ExternalStatus)
 
 
 def test_status_raw_is_preserved(provider):
     """Sem ele, uma situacao DESCONHECIDA nao diz o que apareceu no board."""
-    porta, _ = provider
-    assert any(t.external_status for t in porta.list_tasks())
+    port, _ = provider
+    assert any(t.external_status for t in port.list_tasks())
 
 
 def test_status_desconhecido_not_is_coerced(provider):
     """O pecado que este teste impede: mapear o desconhecido para o vizinho."""
-    porta, _ = provider
-    desconhecidas = [t for t in porta.list_tasks()
+    port, _ = provider
+    desconhecidas = [t for t in port.list_tasks()
                      if t.status is ExternalStatus.UNKNOWN]
     assert desconhecidas, "a fixture precisa conter um status nao mapeado"
     for t in desconhecidas:
@@ -136,15 +136,15 @@ def test_status_desconhecido_not_is_coerced(provider):
 
 
 def test_priority_is_integer_comparable(provider):
-    porta, _ = provider
-    for t in porta.list_tasks():
+    port, _ = provider
+    for t in port.list_tasks():
         assert isinstance(t.priority, int)
         assert 0 < t.priority <= 1000
 
 
 def test_link_declares_if_blocks(provider):
-    porta, _ = provider
-    for t in porta.list_tasks():
+    port, _ = provider
+    for t in port.list_tasks():
         for v in t.links:
             assert v.key
             assert isinstance(v.blocking, bool)
@@ -152,24 +152,24 @@ def test_link_declares_if_blocks(provider):
 
 def test_hierarchy_never_is_block(provider):
     """Subtarefa nao espera a mae. Confundir isso trava um board inteiro."""
-    porta, _ = provider
-    for t in porta.list_tasks():
+    port, _ = provider
+    for t in port.list_tasks():
         for v in t.links:
             if v.kind in ("parent", "child", "related"):
                 assert not v.blocking, f"{t.key} -> {v.key} ({v.kind}) nao pode bloquear"
 
 
 def test_anomaly_is_reportada_is_not_fixed(provider):
-    porta, _ = provider
-    items = porta.list_tasks()
+    port, _ = provider
+    items = port.list_tasks()
     assert any(t.anomalies for t in items), "a fixture precisa ter dado torto"
     # Dado torto nao derruba a listagem: ele vira relato.
     assert len(items) >= 3
 
 
 def test_data_missing_not_break_the_normalization(provider):
-    porta, _ = provider
-    for t in porta.list_tasks():
+    port, _ = provider
+    for t in port.list_tasks():
         assert isinstance(t.title, str)
         assert isinstance(t.description, str)
         assert isinstance(t.labels, tuple)
@@ -192,11 +192,11 @@ def test_nenhuma_write_is_executed(provider, operation):
     que nao pode existir e o meio-termo silencioso: aceitar a chamada, nao fazer
     nada e devolver success.
     """
-    porta, key = provider
-    if porta.name == "filesystem":
+    port, key = provider
+    if port.name == "filesystem":
         pytest.skip("filesystem nao esta em modo somente-leitura neste marco")
     with pytest.raises(ReadOnlyRefused):
-        getattr(porta, operation)(key, "qualquer-coisa")
+        getattr(port, operation)(key, "qualquer-coisa")
 
 
 def test_transporte_of_read_not_tem_verb_of_write():
@@ -213,23 +213,23 @@ def test_transporte_of_read_not_tem_verb_of_write():
 # ---------------------------------------------------------------------------
 
 def _jira(**kw) -> JiraTasks:
-    return JiraTasks(transporte=SnapshotTransport(diretorio=SNAPSHOTS, **kw),
+    return JiraTasks(transport=SnapshotTransport(directory=SNAPSHOTS, **kw),
                      site="https://exemplo.atlassian.net")
 
 
 def test_pagination_walks_all_the_pages():
     """Paginar errado devolve a primeira pagina para sempre."""
-    porta = _jira()
-    items = porta.list_tasks()
+    port = _jira()
+    items = port.list_tasks()
     assert len(items) == KEYS["total"], (
         f"esperava {KEYS['total']} de duas paginas, vieram {len(items)}")
     assert len({t.key for t in items}) == len(items)
 
 
 def test_pagination_respects_ceiling_of_pages():
-    porta = _jira()
-    porta.max_pages = 1
-    assert len(porta.list_tasks()) == 5, "o teto precisa cortar de verdade"
+    port = _jira()
+    port.max_pages = 1
+    assert len(port.list_tasks()) == 5, "o teto precisa cortar de verdade"
 
 
 @pytest.mark.parametrize("error", [
@@ -242,9 +242,9 @@ def test_pagination_respects_ceiling_of_pages():
 def test_failure_of_provider_sobe_como_error_of_adapter(error):
     """O motor nao pode quebrar porque o provedor caiu -- nem confundir queda
     com ausencia de trabalho."""
-    porta = _jira(failures={"search": error})
+    port = _jira(failures={"search": error})
     with pytest.raises(AdapterError):
-        porta.list_tasks()
+        port.list_tasks()
 
 
 def test_failure_of_authentication_not_is_retried():
@@ -264,26 +264,26 @@ def test_failure_of_authentication_not_is_retried():
 
 
 def test_snapshot_missing_is_not_found_is_not_list_empty():
-    porta = _jira()
+    port = _jira()
     with pytest.raises(NotFound):
-        porta.get_task("SG-NAO-CAPTURADA")
+        port.get_task("SG-NAO-CAPTURADA")
 
 
 def test_response_of_kind_wrong_is_refused(tmp_path):
     """200 com corpo valido mas de forma errada nao pode virar 'zero tasks'."""
     (tmp_path / "rest_api_3_search_jql.json").write_text("[]", encoding="utf-8")
-    porta = JiraTasks(transporte=SnapshotTransport(diretorio=tmp_path))
+    port = JiraTasks(transport=SnapshotTransport(directory=tmp_path))
     with pytest.raises(AdapterError):
-        porta.list_tasks()
+        port.list_tasks()
 
 
 def test_issue_without_key_is_refused(tmp_path):
     (tmp_path / "rest_api_3_search_jql.json").write_text(
         json.dumps({"issues": [{"id": "1", "fields": {"summary": "sem key"}}]}),
         encoding="utf-8")
-    porta = JiraTasks(transporte=SnapshotTransport(diretorio=tmp_path))
+    port = JiraTasks(transport=SnapshotTransport(directory=tmp_path))
     with pytest.raises(AdapterError):
-        porta.list_tasks()
+        port.list_tasks()
 
 
 # ---------------------------------------------------------------------------
@@ -292,8 +292,8 @@ def test_issue_without_key_is_refused(tmp_path):
 
 def test_every_call_produces_registry_diagnosable():
     vistas = []
-    porta = _jira(observador=vistas.append)
-    porta.list_tasks()
+    port = _jira(observer=vistas.append)
+    port.list_tasks()
     assert len(vistas) == 2, "duas paginas, duas chamadas"
     for c in vistas:
         assert c.operation and c.path
@@ -303,6 +303,6 @@ def test_every_call_produces_registry_diagnosable():
 
 def test_registry_not_carries_body_nor_credential():
     vistas = []
-    _jira(observador=vistas.append).list_tasks()
+    _jira(observer=vistas.append).list_tasks()
     campos = {f for c in vistas for f in c.__slots__}
     assert not (campos & {"corpo", "body", "credencial", "token", "autorizacao"})

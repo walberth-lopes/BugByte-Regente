@@ -311,7 +311,7 @@ def test_decision_human_is_recorded_is_resumes(bench):
     orq.tick()
 
     a = store.open_approvals("wks_teste")[0]
-    decidido = store.decide_approval(a.id, "seguir", por="walberth", note="manter compat")
+    decidido = store.decide_approval(a.id, "seguir", per="walberth", note="manter compat")
     assert decidido.choice == "seguir"
     assert not store.open_approvals("wks_teste")
 
@@ -329,12 +329,12 @@ def test_choice_outside_of_options_is_refused(bench):
     orq.tick()
     a = store.open_approvals("wks_teste")[0]
     with pytest.raises(Exception):
-        store.decide_approval(a.id, "opcao_inventada", por="walberth")
+        store.decide_approval(a.id, "opcao_inventada", per="walberth")
 
 
 def test_worker_that_blowing_up_not_bringing_down_the_tick(bench):
     class Explode(ScriptedRunner):
-        def run(self, pedido):
+        def run(self, request):
             raise RuntimeError("estourou")
 
     write_task(bench.tasks, "A-1", resources=["repo:a"])

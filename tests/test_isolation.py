@@ -214,7 +214,7 @@ def test_clientes_with_providers_different_coexist(tmp_path):
     store.migrate()
     a = _engine(store, "wks_a", "A", _yaml_tasks(tmp_path / "a", ["A-1"]), tmp_path)
     b = _engine(store, "wks_b", "B",
-               JiraTasks(transporte=SnapshotTransport(diretorio=SNAPSHOTS),
+               JiraTasks(transport=SnapshotTransport(directory=SNAPSHOTS),
                          site="https://exemplo.atlassian.net"), tmp_path)
     a.tick(); b.tick()
 
@@ -253,7 +253,7 @@ def test_two_clientes_with_repo_of_same_name_not_compete_lock(tmp_path):
     store.save_workspace(Workspace(id="wks_a", client_id="a", name="A"))
     store.save_workspace(Workspace(id="wks_b", client_id="b", name="B"))
 
-    # Coincidencia total: mesmo provedor, mesma chave, clientes diferentes.
+    # Coincidencia total: mesmo provider, mesma chave, clientes diferentes.
     ref = RepoRef(provider="github", key="acme/api")
     ra, rb = ref.resource("wks_a"), ref.resource("wks_b")
 

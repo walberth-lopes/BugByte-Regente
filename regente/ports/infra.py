@@ -3,7 +3,7 @@
 
 As duas portas mais perigosas do motor, e por isso as duas mais assimetricas:
 leitura e farta, escrita e minima. `DatabaseProvider` expoe `query_readonly()` e
-nada mais de consulta -- nao existe `execute()` na porta. Um adapter que precise
+nada mais de consulta -- nao existe `execute()` na port. Um adapter que precise
 escrever no banco declara isso como acao propria, passa pelo Policy Engine e
 carrega o nivel de autonomia L4. Deixar um `execute()` generico aqui seria pedir
 que a policy adivinhasse o que uma string SQL faz.
@@ -38,7 +38,7 @@ class LogEntry:
 @dataclass(frozen=True, slots=True)
 class Metric:
     name: str
-    valor: float
+    value: float
     unidade: str = ""
     ts: str = ""
 

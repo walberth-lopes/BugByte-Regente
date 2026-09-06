@@ -616,7 +616,7 @@ class SqliteStore(Store):
         r = self._con.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
         return self._approval_row(r) if r else None
 
-    def decide_approval(self, approval_id: str, choice: str, por: str, note: str = "") -> Approval:
+    def decide_approval(self, approval_id: str, choice: str, per: str, note: str = "") -> Approval:
         with self._tx() as c:
             r = c.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
             if r is None:
@@ -628,15 +628,15 @@ class SqliteStore(Store):
             if valid and choice not in valid:
                 raise CorruptedState(
                     f"choice '{choice}' is not among the options: {', '.join(sorted(valid))}")
-            a.state, a.choice, a.decided_by = ApprovalState.DECIDED, choice, por
+            a.state, a.choice, a.decided_by = ApprovalState.DECIDED, choice, per
             a.decided_at, a.note = agora(), note
             c.execute("""UPDATE approvals SET state=?, choice=?, decided_by=?,
                            decided_at=?, note=? WHERE id=?""",
-                      (a.state.value, choice, por, _iso(a.decided_at), note, approval_id))
+                      (a.state.value, choice, per, _iso(a.decided_at), note, approval_id))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
                       (ids.new_id(ids.EVENT), a.workspace_id, _iso(agora()), "decisao_humana",
-                       a.task_id, a.run_id, por, f"escolheu '{choice}'",
+                       a.task_id, a.run_id, per, f"escolheu '{choice}'",
                        _j({"approval_id": approval_id, "note": note})))
         return a
 

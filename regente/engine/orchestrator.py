@@ -211,7 +211,7 @@ class Orchestrator:
         O estado do motor e do motor: se a pessoa moveu a issue no board, isso
         muda a *relevancia* do trabalho, nao a etapa em que o worker parou.
         """
-        antes = task.data.get("situacao_externa")
+        before = task.data.get("situacao_externa")
         current_status = e.status.value
         task.title = e.title
         task.priority = e.priority
@@ -220,11 +220,11 @@ class Orchestrator:
                            "rotulos": list(e.labels)})
         task.updated_at = agora()
         self.store.save_task(task)
-        if antes and antes != current_status:
-            rel.changes += ((task.key, antes, current_status),)
+        if before and before != current_status:
+            rel.changes += ((task.key, before, current_status),)
             self._record("mudou_na_origem", task_id=task.id,
-                        summary=f"{antes} -> {current_status} ({e.external_status})",
-                        de=antes, to_state=current_status)
+                        summary=f"{before} -> {current_status} ({e.external_status})",
+                        de=before, to_state=current_status)
 
     def _create_task(self, e: ExternalTask) -> Task:
         t = Task(
@@ -376,7 +376,7 @@ class Orchestrator:
         self._record("despachada", task_id=task.id, run_id=run.id,
                     summary=f"{run.agent} em {area.path}")
 
-        pedido = RunRequest(
+        request = RunRequest(
             run_id=run.id, task_id=task.id, agent=run.agent,
             goal=task.title, area=area,
             contexto={"descricao": task.description, "chave": task.key,
@@ -388,7 +388,7 @@ class Orchestrator:
             limit_seconds=self.budget.max_seconds)
 
         try:
-            resultado = self.runner.run(pedido)
+            resultado = self.runner.run(request)
         except Exception as e:   # noqa: BLE001
             resultado = None
             run.reason = f"{type(e).__name__}: {e}"[:300]
@@ -524,9 +524,9 @@ class Orchestrator:
         disponivel. Conservador de proposito: nao saber se alguem esta na task
         precisa custar um adiamento, nunca um atropelo.
         """
-        bruto = t.data.get("situacao_externa")
+        raw = t.data.get("situacao_externa")
         try:
-            return ExternalStatus(bruto)
+            return ExternalStatus(raw)
         except ValueError:
             return ExternalStatus.UNKNOWN
 

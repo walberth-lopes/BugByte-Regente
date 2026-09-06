@@ -23,7 +23,7 @@ providers:
   workspace_provider:
     name: diretorio
   runner:
-    name: roteiro
+    name: script
   notification:
     name: console
 

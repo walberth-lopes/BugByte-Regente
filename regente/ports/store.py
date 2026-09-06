@@ -108,7 +108,7 @@ class Store(Port):
     def approval(self, approval_id: str) -> Approval | None: ...
 
     @abstractmethod
-    def decide_approval(self, approval_id: str, choice: str, por: str,
+    def decide_approval(self, approval_id: str, choice: str, per: str,
                         note: str = "") -> Approval: ...
 
     # ---- travas ----------------------------------------------------------

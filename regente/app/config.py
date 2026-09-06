@@ -28,15 +28,15 @@ class AdapterConf:
     options: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def de(cls, bruto: Any, field: str) -> AdapterConf:
-        if isinstance(bruto, str):
-            return cls(name=bruto)
-        if isinstance(bruto, dict):
-            if "name" not in bruto:
+    def de(cls, raw: Any, field: str) -> AdapterConf:
+        if isinstance(raw, str):
+            return cls(name=raw)
+        if isinstance(raw, dict):
+            if "name" not in raw:
                 raise ValueError(f"{field}: missing the 'name' key")
-            return cls(name=str(bruto["name"]),
-                       options={k: v for k, v in bruto.items() if k != "name"})
-        raise ValueError(f"{field}: esperava texto ou mapeamento, veio {type(bruto).__name__}")
+            return cls(name=str(raw["name"]),
+                       options={k: v for k, v in raw.items() if k != "name"})
+        raise ValueError(f"{field}: esperava texto ou mapeamento, veio {type(raw).__name__}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,34 +102,34 @@ def load(path: str | Path) -> Config:
     p = Path(path)
     if not p.is_file():
         raise FileNotFoundError(f"configuracao nao encontrada: {p}")
-    bruto = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    if not isinstance(bruto, dict):
+    raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
         raise ValueError(f"{p}: o arquivo precisa ser um mapeamento")
 
-    faltando = [c for c in REQUIRED_FIELDS if not bruto.get(c)]
+    faltando = [c for c in REQUIRED_FIELDS if not raw.get(c)]
     if faltando:
         raise ValueError(f"{p}: faltam campos obrigatorios: {', '.join(faltando)}")
 
-    providers_brutos = bruto.get("providers") or {}
+    providers_brutos = raw.get("providers") or {}
     providers = {k: AdapterConf.de(v, f"providers.{k}") for k, v in providers_brutos.items()}
-    sem = [c for c in ESSENTIAL_PROVIDERS if c not in providers]
-    if sem:
-        raise ValueError(f"{p}: providers essenciais ausentes: {', '.join(sem)}")
+    without = [c for c in ESSENTIAL_PROVIDERS if c not in providers]
+    if without:
+        raise ValueError(f"{p}: providers essenciais ausentes: {', '.join(without)}")
 
-    root = Path(bruto.get("root") or (p.parent / ".regente")).expanduser()
-    lim = bruto.get("limits") or {}
-    orc = bruto.get("budget") or {}
+    root = Path(raw.get("root") or (p.parent / ".regente")).expanduser()
+    lim = raw.get("limits") or {}
+    orc = raw.get("budget") or {}
 
-    policies = bruto.get("policies")
+    policies = raw.get("policies")
     caminho_policies = (p.parent / policies).resolve() if policies else None
     if caminho_policies and not caminho_policies.is_file():
         raise ValueError(f"{p}: arquivo de policies nao existe: {caminho_policies}")
 
     return Config(
-        organization=str(bruto["organization"]),
-        client=str(bruto["client"]),
-        workspace=str(bruto["workspace"]),
-        autonomy=AutonomyLevel.from_text(bruto.get("autonomy", "L2")),
+        organization=str(raw["organization"]),
+        client=str(raw["client"]),
+        workspace=str(raw["workspace"]),
+        autonomy=AutonomyLevel.from_text(raw.get("autonomy", "L2")),
         root=root,
         providers=providers,
         projects=tuple(
@@ -139,7 +139,7 @@ def load(path: str | Path) -> Config:
                 autonomy=(AutonomyLevel.from_text(pr["autonomy"])
                            if pr.get("autonomy") is not None else None),
                 repositories=tuple(str(r) for r in (pr.get("repositories") or [])))
-            for pr in (bruto.get("projects") or [])),
+            for pr in (raw.get("projects") or [])),
         limits=Limits(
             max_workers=int(lim.get("max_workers", 2)),
             max_dispatches_per_day=int(lim.get("max_dispatches_per_day", 8))),
@@ -150,20 +150,20 @@ def load(path: str | Path) -> Config:
             max_seconds=int(orc.get("max_seconds", 2700)),
             max_attempts=int(orc.get("max_attempts", 3))),
         policies=caminho_policies,
-        lease_seconds=int(bruto.get('lease_seconds', 900)),
-        secrets=tuple(str(x) for x in (bruto.get('secrets') or ())),
-        targets={k: dict(v) for k, v in (bruto.get('targets') or {}).items()},
-        risk_factors=tuple(bruto.get("risk_factors") or ()),
-        modelos=dict(bruto.get("models") or {}),
-        shadow=bool(bruto.get("shadow", True)),
+        lease_seconds=int(raw.get('lease_seconds', 900)),
+        secrets=tuple(str(x) for x in (raw.get('secrets') or ())),
+        targets={k: dict(v) for k, v in (raw.get('targets') or {}).items()},
+        risk_factors=tuple(raw.get("risk_factors") or ()),
+        modelos=dict(raw.get("models") or {}),
+        shadow=bool(raw.get("shadow", True)),
     )
 
 
 def load_policies(path: Path | None) -> list[dict[str, Any]]:
     if path is None:
         return []
-    bruto = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    regras = bruto.get("rules")
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    regras = raw.get("rules")
     if not isinstance(regras, list):
         raise ValueError(f"{path}: esperava uma lista em 'regras'")
     return regras

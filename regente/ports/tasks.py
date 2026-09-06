@@ -17,7 +17,7 @@ class ExternalStatus(str, Enum):
     Existe porque `estado_externo` cru e texto livre, e o motor precisa de UMA
     decisao a partir dele: este trabalho esta disponivel, ja tem alguem nele, ou
     acabou? Sem isso o Core teria de conhecer os nomes de status de cada
-    fornecedor -- que e exatamente o acoplamento que a porta impede.
+    fornecedor -- que e exatamente o acoplamento que a port impede.
 
     O vocabulario e o menor que responde a essa pergunta. Nao e traducao do
     fluxo de nenhuma ferramenta: e a posicao no ciclo de vida, que todo sistema

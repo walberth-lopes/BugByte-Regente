@@ -79,7 +79,7 @@ class DeploymentProvider(Port):
         raise NotImplementedError
 
     def deploy_production(self, project: str, version: str) -> Deployment:
-        """Separado de staging na porta, de proposito.
+        """Separado de staging na port, de proposito.
 
         Um unico `deploy(ambiente)` faria a diferenca entre staging e producao
         virar o valor de uma string vinda do contexto -- exatamente o tipo de

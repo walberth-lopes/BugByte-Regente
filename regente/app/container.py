@@ -81,7 +81,7 @@ def build(cfg: Config) -> Engine:
 
     # Segredos sao escopados ao workspace ANTES de qualquer adapter existir:
     # nenhum adapter recebe um resolvedor que alcance outro cliente.
-    secrets = registry.create(Capability.SECRETS, "escopado",
+    secrets = registry.create(Capability.SECRETS, "scoped",
                              {"allowed": cfg.secrets, "workspace": ws.name})
 
     # Observador: toda call a provedor externo vira evento, com tenancy.
@@ -173,10 +173,10 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
                 extras = {"journal": str(cfg.journal)}
             elif cap in (Capability.TASKS, Capability.REPOSITORY):
                 extras = {"secrets": registry.create(
-                    Capability.SECRETS, "escopado",
+                    Capability.SECRETS, "scoped",
                     {"allowed": cfg.secrets, "workspace": cfg.workspace})}
-            porta = registry.create(cap, conf.name, {**conf.options, **extras})
-            porta.verify()
+            port = registry.create(cap, conf.name, {**conf.options, **extras})
+            port.verify()
             return conf.name
         expect_prefix(f"provider {key}", prova)
 

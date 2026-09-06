@@ -72,7 +72,7 @@ class ChainReport:
     mutations: int = 0
 
     @property
-    def candidatos(self) -> tuple[Step, ...]:
+    def candidates(self) -> tuple[Step, ...]:
         return tuple(p for p in self.steps if p.elo.executable)
 
 
@@ -196,17 +196,17 @@ def render(rel: ChainReport, limit: int = 10) -> str:
         for c, n in rel.by_confidence.most_common():
             lines.append(f"    {c:<22} {n}")
 
-    candidatos = rel.candidatos
-    lines += ["", f"  CANDIDATOS A EXECUCAO ({len(candidatos)})"]
-    for p in candidatos[:limit]:
+    candidates = rel.candidates
+    lines += ["", f"  CANDIDATOS A EXECUCAO ({len(candidates)})"]
+    for p in candidates[:limit]:
         lines.append(f"    {p.task.key:<10} -> {p.repo.ref.key}")
         lines.append(f"                  base={p.base_branch}  branch={p.work_branch}")
         lines.append(f"                  recurso={p.resources[0]}")
         lines.append(f"                  risco={p.risk.level.name}  policy={p.decision.effect}"
                       f" ({p.decision.rule})")
         lines.append(f"                  evidencia: {p.target.reason[:70]}")
-    if len(candidatos) > limit:
-        lines.append(f"    ... mais {len(candidatos) - limit}")
+    if len(candidates) > limit:
+        lines.append(f"    ... mais {len(candidates) - limit}")
 
     ambiguos = [p for p in rel.steps if p.elo is Stage.ALVO_AMBIGUO]
     if ambiguos:

@@ -50,7 +50,7 @@ class GitLocal(RepositoryProvider):
     #: que nao existem em git puro -- sao conceito do servico de hospedagem.
     capabilities: frozenset[RepoCapability] = field(
         default_factory=lambda: READ_CAPS - {RepoCapability.LER_PULL_REQUESTS})
-    observador: Observer | None = None
+    observer: Observer | None = None
     timeout: int = 60
 
     def __post_init__(self) -> None:
@@ -96,10 +96,10 @@ class GitLocal(RepositoryProvider):
         return p.stdout
 
     def _notify_observer(self, args: tuple[str, ...], inicio: float, ok: bool, error: str) -> None:
-        if not self.observador:
+        if not self.observer:
             return
         import time
-        self.observador(Call(
+        self.observer(Call(
             operation="git", path=args[0] if args else "?",
             duration_ms=int((time.monotonic() - inicio) * 1000),
             success=ok, status=0 if ok else None, error=error[:200]))

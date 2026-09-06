@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """TaskProvider que le trabalho de arquivos YAML no disco.
 
-Nao e simulacao de outro provedor: e um provedor de verdade, util para quem
+Nao e simulacao de outro provider: e um provedor de verdade, util para quem
 descreve trabalho em arquivo versionado, e serve de segunda implementacao para
 provar que o Core Engine nao sabe o que e Jira. O adapter de Jira entra ao lado
 deste sem que nenhuma linha do motor mude -- se mudar, a abstracao estava errada.
@@ -27,8 +27,8 @@ def _field(data: dict[str, Any], name: str, legacy: str) -> Any:
     Arquivo de task ja escrito por alguem nao pode deixar de ser lido porque o
     projeto padronizou o vocabulario. O nome novo vence quando os dois existem.
     """
-    valor = data.get(name)
-    return valor if valor is not None else data.get(legacy)
+    value = data.get(name)
+    return value if value is not None else data.get(legacy)
 from ...ports.tasks import (BLOCKS, RELATED, Comment, ExternalTask,
                             ExternalStatus, TaskProvider, TaskRef)
 
@@ -36,8 +36,8 @@ from ...ports.tasks import (BLOCKS, RELATED, Comment, ExternalTask,
 class FilesystemTasks(TaskProvider):
     name = "filesystem"
 
-    def __init__(self, diretorio: str | Path):
-        self.dir = Path(diretorio)
+    def __init__(self, directory: str | Path):
+        self.dir = Path(directory)
 
     def verify(self) -> None:
         if not self.dir.is_dir():
@@ -138,7 +138,7 @@ class FilesystemTasks(TaskProvider):
 
     def _write(self, path: Path, data: dict[str, Any]) -> None:
         # Grava em temporario e troca: interrupcao no meio nao pode deixar o
-        # arquivo pela metade, porque ele e o estado do provedor.
+        # arquivo pela metade, porque ele e o estado do provider.
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
                        encoding="utf-8")

@@ -159,7 +159,7 @@ def cmd_decide(args) -> int:
     motor = container.build(cfg)
     try:
         a = motor.store.decide_approval(args.approval_id, args.option,
-                                        por=args.por, note=args.note or "")
+                                        per=args.per, note=args.note or "")
         t = motor.store.task(a.task_id)
         print(f"{t.key}: registrado '{args.option}'.")
         print("O proximo tick retoma a task a partir daqui.")
@@ -251,10 +251,10 @@ def cmd_repos(args) -> int:
         if motor.repos is None:
             print("nenhum provedor de repositorio configurado")
             return 1
-        lista = motor.repos.list_repositories()
-        print(f"{len(lista)} repositorio(s) via {motor.repos.name}")
+        items = motor.repos.list_repositories()
+        print(f"{len(items)} repositorio(s) via {motor.repos.name}")
         print()
-        for r in sorted(lista, key=lambda x: x.ref.key):
+        for r in sorted(items, key=lambda x: x.ref.key):
             mark = "!" if r.anomalies else " "
             print(f" {mark} {r.ref.key:<46} base={r.base_branch or '(nao lida)':<10}")
             if args.verbose:

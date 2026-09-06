@@ -134,14 +134,14 @@ def execute(
     r.parallel_groups = len(layers)
     r.largest_group = max((len(c) for c in layers), default=0)
 
-    transporte = getattr(provider, "transporte", None)
-    r.calls = len(getattr(transporte, "chamadas", []) or [])
+    transport = getattr(provider, "transport", None)
+    r.calls = len(getattr(transport, "chamadas", []) or [])
     return r
 
 
 def render(r: ShadowReport, limite_anomalias: int = 12) -> str:
-    def linha(rotulo: str, valor) -> str:
-        return f"  {rotulo:<28} {valor}"
+    def linha(rotulo: str, value) -> str:
+        return f"  {rotulo:<28} {value}"
 
     output = [
         "TASK PROVIDER SHADOW REPORT",

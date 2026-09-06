@@ -30,14 +30,14 @@ class ScriptedRunner(AgentRunner):
     script: dict[str, dict[str, Any]] = field(default_factory=dict)
     default_value: dict[str, Any] = field(default_factory=lambda: {"ok": True, "resumo": "sem alteracao"})
 
-    def run(self, pedido: RunRequest) -> RunResult:
-        key = pedido.contexto.get("chave", pedido.task_id)
+    def run(self, request: RunRequest) -> RunResult:
+        key = request.contexto.get("chave", request.task_id)
         d = self.script.get(key, self.default_value)
         # A area existe e e do worker: escrever nela prova que o isolamento
         # funcionou, e deixa rastro para inspecao depois do tick.
-        Path(pedido.area.path).mkdir(parents=True, exist_ok=True)
-        (Path(pedido.area.path) / "run.json").write_text(
-            json.dumps({"run": pedido.run_id, "objetivo": pedido.goal, "desfecho": d},
+        Path(request.area.path).mkdir(parents=True, exist_ok=True)
+        (Path(request.area.path) / "run.json").write_text(
+            json.dumps({"run": request.run_id, "objetivo": request.goal, "desfecho": d},
                        ensure_ascii=False, indent=2), encoding="utf-8")
         return RunResult(
             ok=bool(d.get("ok", True)),
@@ -63,23 +63,23 @@ class CommandRunner(AgentRunner):
     name: str = "comando"
     timeout_slack: int = 120
 
-    def run(self, pedido: RunRequest) -> RunResult:
-        entrada = json.dumps({
-            "run_id": pedido.run_id, "task_id": pedido.task_id, "agente": pedido.agent,
-            "objetivo": pedido.goal, "area": pedido.area.path,
-            "branch": pedido.area.branch, "contexto": pedido.contexto,
-            "limites": {"iteracoes": pedido.limit_iterations,
-                        "tool_calls": pedido.limit_tool_calls,
-                        "custo_usd": pedido.limit_cost_usd,
-                        "segundos": pedido.limit_seconds},
+    def run(self, request: RunRequest) -> RunResult:
+        payload = json.dumps({
+            "run_id": request.run_id, "task_id": request.task_id, "agente": request.agent,
+            "objetivo": request.goal, "area": request.area.path,
+            "branch": request.area.branch, "contexto": request.contexto,
+            "limites": {"iteracoes": request.limit_iterations,
+                        "tool_calls": request.limit_tool_calls,
+                        "custo_usd": request.limit_cost_usd,
+                        "segundos": request.limit_seconds},
         }, ensure_ascii=False)
         try:
             p = subprocess.run(
-                self.command, input=entrada, cwd=pedido.area.path,
+                self.command, input=payload, cwd=request.area.path,
                 capture_output=True, encoding="utf-8", errors="replace",
-                timeout=pedido.limit_seconds + self.timeout_slack)
+                timeout=request.limit_seconds + self.timeout_slack)
         except subprocess.TimeoutExpired:
-            return RunResult(ok=False, summary=f"estourou {pedido.limit_seconds}s",
+            return RunResult(ok=False, summary=f"estourou {request.limit_seconds}s",
                              outcome="timebox")
         if p.returncode != 0:
             return RunResult(ok=False, outcome="error",

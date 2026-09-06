@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """RepositoryProvider: onde o codigo vive.
 
-Duas decisoes sustentam esta porta:
+Duas decisoes sustentam esta port:
 
 **1. Nome nao e identidade.** Um repositorio se identifica por
-`(provedor, chave)`, e o motor ainda escopa isso pelo workspace antes de usar
+`(provider, chave)`, e o motor ainda escopa isso pelo workspace antes de usar
 como chave de trava ou de estado. Nome nu falha de tres formas ja observadas no
 ambiente real: o diretorio local pode nao bater com o repositorio remoto; dois
 clientes podem ter repositorios homonimos; e o mesmo repositorio pode ser visto
@@ -94,7 +94,7 @@ class RepoInfo:
     """Um repositorio como o provedor o descreve."""
     ref: RepoRef
     name: str
-    #: Branch de integracao REAL, lida do provedor.
+    #: Branch de integracao REAL, lida do provider.
     #:
     #: Nunca presumir 'main'. Derivar branch de trabalho da base errada produz um
     #: PR cheio de conflito que ninguem pediu, e o error so aparece depois do
@@ -193,7 +193,7 @@ class RepositoryProvider(Port):
 
     @abstractmethod
     def get_repository(self, key: str) -> RepoInfo:
-        """Detalhe completo de um repositorio, pela chave do provedor."""
+        """Detalhe completo de um repositorio, pela chave do provider."""
 
     def list_branches(self, key: str, filtro: dict[str, Any] | None = None) -> list[Branch]:
         return []

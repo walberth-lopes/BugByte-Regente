@@ -2,10 +2,10 @@
 """TaskProvider para Jira Cloud. SOMENTE LEITURA.
 
 Este arquivo e o unico do motor que sabe o que e um `issuelink`, um `parent`,
-uma `statusCategory` ou um ADF. Nada disso atravessa a porta.
+uma `statusCategory` ou um ADF. Nada disso atravessa a port.
 
-**Autoridade operacional: nenhuma.** Os metodos de escrita da porta levantam
-`SomenteLeitura`. E a garantia de verdade nao esta aqui e sim no transporte, que
+**Autoridade operacional: nenhuma.** Os metodos de escrita da port levantam
+`SomenteLeitura`. E a garantia de verdade nao esta aqui e sim no transport, que
 so tem `get` -- este adapter nao poderia mutar o Jira nem se o codigo tentasse.
 
 Tres fatos do Jira real que o desenho precisa respeitar, todos medidos em
@@ -137,7 +137,7 @@ def _text_from(content: Any, limit: int = 4000) -> str:
 class JiraTasks(TaskProvider):
     """Le trabalho de um site Jira Cloud. Nunca escreve."""
 
-    transporte: Transport
+    transport: Transport
     #: JQL que define o que este workspace considera trabalho seu. Vem da
     #: configuracao: e o unico lugar onde a nocao de "relevante" e declarada.
     jql: str = "statusCategory != Done ORDER BY updated DESC"
@@ -157,11 +157,11 @@ class JiraTasks(TaskProvider):
     def verify(self) -> None:
         """Prova credencial e alcance com a chamada mais barata que existe."""
         try:
-            self.transporte.get("/rest/api/3/myself", {"expand": ""})
+            self.transport.get("/rest/api/3/myself", {"expand": ""})
         except AdapterError:
             raise
         except Exception as e:  # noqa: BLE001
-            raise AdapterError(f"transporte falhou: {type(e).__name__}: {e}") from e
+            raise AdapterError(f"transport falhou: {type(e).__name__}: {e}") from e
 
     # ---- leitura ---------------------------------------------------------
 
@@ -174,7 +174,7 @@ class JiraTasks(TaskProvider):
         items: list[ExternalTask] = []
         cursor: str | None = None
         for _ in range(self.max_pages):
-            body = self.transporte.get("/rest/api/3/search/jql", {
+            body = self.transport.get("/rest/api/3/search/jql", {
                 "jql": jql,
                 "fields": ",".join(LIST_FIELDS),
                 "maxResults": self.per_page,
@@ -182,8 +182,8 @@ class JiraTasks(TaskProvider):
             })
             if not isinstance(body, dict):
                 raise AdapterError(f"busca devolveu {type(body).__name__}, esperava objeto")
-            for bruto in (body.get("issues") or []):
-                items.append(self._normalize(bruto, partial=True))
+            for raw in (body.get("issues") or []):
+                items.append(self._normalize(raw, partial=True))
             cursor = body.get("nextPageToken")
             # `isLast` nem sempre vem; ausencia de cursor e o sinal confiavel.
             if not cursor:
@@ -191,14 +191,14 @@ class JiraTasks(TaskProvider):
         return items
 
     def get_task(self, key: str) -> ExternalTask:
-        body = self.transporte.get(f"/rest/api/3/issue/{key}",
+        body = self.transport.get(f"/rest/api/3/issue/{key}",
                                     {"fields": ",".join(DETAIL_FIELDS)})
         if not isinstance(body, dict) or "fields" not in body:
             raise AdapterError(f"issue {key} veio sem 'fields'")
         return self._normalize(body)
 
     def get_comments(self, key: str) -> list[Comment]:
-        body = self.transporte.get(f"/rest/api/3/issue/{key}/comment",
+        body = self.transport.get(f"/rest/api/3/issue/{key}/comment",
                                     {"maxResults": 50, "orderBy": "created"})
         output = []
         for c in (body.get("comments") or []):
@@ -233,9 +233,9 @@ class JiraTasks(TaskProvider):
 
     # ---- normalizacao ----------------------------------------------------
 
-    def _normalize(self, bruto: dict[str, Any], partial: bool = False) -> ExternalTask:
-        campos = bruto.get("fields") or {}
-        key = str(bruto.get("key") or "")
+    def _normalize(self, raw: dict[str, Any], partial: bool = False) -> ExternalTask:
+        campos = raw.get("fields") or {}
+        key = str(raw.get("key") or "")
         if not key:
             raise AdapterError("issue sem 'key' -- impossivel dar identidade")
 

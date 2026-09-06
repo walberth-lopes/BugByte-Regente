@@ -49,7 +49,7 @@ def test_without_evidence_is_missing_is_not_a_guess():
     a = TargetResolver().resolve(task("K-1"), REPOS)
     assert a.confidence is Confidence.ABSENT
     assert a.repo is None
-    assert not a.candidatos
+    assert not a.candidates
 
 
 def test_map_by_task_is_declared():
@@ -75,7 +75,7 @@ def test_map_accepts_name_short_when_not_ha_ambiguity():
 
 def test_name_short_ambiguous_not_enters_in_index():
     """Dois repositorios chamados `api` em orgs diferentes nao podem ser
-    resolvidos por nome curto -- isso seria reintroduzir o chute pela porta
+    resolvidos por nome curto -- isso seria reintroduzir o chute pela port
     dos fundos."""
     repos = REPOS + [repo("outra/api")]
     a = TargetResolver(by_task={"K-1": "api"}).resolve(task("K-1"), repos)
@@ -113,7 +113,7 @@ def test_tie_is_ambiguous_is_the_motor_not_tiebreak():
                   "acme/web": [Branch(name="fix/K-1-y")]})
     assert a.confidence is Confidence.AMBIGUOUS
     assert a.repo is None, "o motor escolheu um dos dois"
-    assert len(a.candidatos) == 2
+    assert len(a.candidates) == 2
 
 
 def test_declaration_tiebreak_the_ambiguous():
@@ -128,9 +128,9 @@ def test_every_evidence_is_auditable():
     a = TargetResolver(by_label={"backend": "acme/api"}).resolve(
         task("K-1", labels=["backend"]), REPOS,
         branches={"acme/api": [Branch(name="feat/K-1-x")]})
-    fontes = {e.fonte for e in a.candidatos[0].evidence}
+    fontes = {e.source for e in a.candidates[0].evidence}
     assert fontes == {"mapa:rotulo", "branch"}
-    assert all(e.detalhe for e in a.candidatos[0].evidence)
+    assert all(e.detail for e in a.candidates[0].evidence)
 
 
 def test_target_that_not_exists_in_provider_is_ignored():
@@ -236,7 +236,7 @@ def test_report_tells_where_the_chain_stopped():
     assert r.by_stage["CANDIDATO"] == 1
     assert r.by_stage["SEM_TRABALHO"] == 1
     assert r.by_stage["SEM_ALVO"] == 1
-    assert len(r.candidatos) == 1
+    assert len(r.candidates) == 1
 
 
 def test_text_of_report_mostra_evidence():

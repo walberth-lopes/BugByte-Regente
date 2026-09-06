@@ -22,7 +22,7 @@ CONTRATO FUTURO ENTRE TaskProvider E RepositoryProvider
 O que falta nao e codigo, e **dado declarado**. Em ordem de preferencia:
 
 1. O provedor de tasks passa a emitir o alvo (campo proprio, componente,
-   convencao de rotulo). E a unica fonte que nao envelhece, porque quem escreve
+   convencao de rotulo). E a unica source que nao envelhece, porque quem escreve
    a task sabe onde ela roda.
 2. Enquanto isso nao existe, um mapa na configuracao do workspace
    (`rotulo -> repo`, `projeto -> repo`) cobre o caso comum com zero adivinhacao.
@@ -50,13 +50,13 @@ class Confidence(str, Enum):
     alguem, ou e observada no mundo, ou nao existe.
     """
     #: Alguem declarou explicitamente. Nao ha o que interpretar.
-    DECLARED = "DECLARADA"
+    DECLARED = "DECLARED"
     #: O mundo mostra trabalho ja comecado num repositorio (branch com a chave).
-    OBSERVED = "OBSERVADA"
+    OBSERVED = "OBSERVED"
     #: Mais de um candidato com a mesma forca. O motor NAO desempata.
-    AMBIGUOUS = "AMBIGUA"
+    AMBIGUOUS = "AMBIGUOUS"
     #: Nenhuma evidencia. O motor nao chuta.
-    ABSENT = "AUSENTE"
+    ABSENT = "ABSENT"
 
     @property
     def actionable(self) -> bool:
@@ -66,8 +66,8 @@ class Confidence(str, Enum):
 @dataclass(frozen=True, slots=True)
 class Evidence:
     """Por que este repositorio e candidato. Sem isto, nada e auditavel."""
-    fonte: str
-    detalhe: str
+    source: str
+    detail: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,14 +83,14 @@ class Target:
     """O resultado da resolucao. Pode legitimamente nao ter repositorio."""
     task_key: str
     confidence: Confidence
-    candidatos: tuple[Candidate, ...] = ()
+    candidates: tuple[Candidate, ...] = ()
     reason: str = ""
 
     @property
     def repo(self) -> RepoInfo | None:
         """O alvo, quando ha exatamente um e a evidencia sustenta."""
-        if self.confidence.actionable and len(self.candidatos) == 1:
-            return self.candidatos[0].repo
+        if self.confidence.actionable and len(self.candidates) == 1:
+            return self.candidates[0].repo
         return None
 
     @property
@@ -158,11 +158,11 @@ class TargetResolver:
         # --- 2. observado no mundo ---------------------------------------
         # Casamento por palavra inteira: `SG-11` nao pode casar com `SG-110`.
         alvo_re = re.compile(rf"\b{re.escape(task.key.upper())}\b")
-        for key, lista in (branches or {}).items():
+        for key, items in (branches or {}).items():
             repo = by_key.get(key)
             if repo is None:
                 continue
-            for b in lista:
+            for b in items:
                 if alvo_re.search(b.name.upper()):
                     mark(repo, Evidence("branch", f"'{b.name}' cita {task.key}"),
                           WEIGHT_BRANCH)
@@ -175,18 +175,18 @@ class TargetResolver:
 
         best = max(strengths.values())
         winners = [k for k, f in strengths.items() if f == best]
-        candidatos = tuple(
+        candidates = tuple(
             Candidate(repo=by_key[k], evidence=tuple(findings[k]), strength=strengths[k])
             for k in sorted(winners))
 
         if len(winners) > 1:
             return Target(task_key=task.key, confidence=Confidence.AMBIGUOUS,
-                        candidatos=candidatos,
+                        candidates=candidates,
                         reason=f"{len(winners)} repositorios com evidencia de mesma "
                                f"forca: {', '.join(winners)}")
 
         return Target(
             task_key=task.key,
             confidence=Confidence.DECLARED if best >= WEIGHT_DECLARED else Confidence.OBSERVED,
-            candidatos=candidatos,
-            reason="; ".join(e.detalhe for e in candidatos[0].evidence))
+            candidates=candidates,
+            reason="; ".join(e.detail for e in candidates[0].evidence))

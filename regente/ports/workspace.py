@@ -95,14 +95,14 @@ class RunResult:
 class AgentRunner(Port):
     """Executa um agente. A implementacao decide o substrato.
 
-    Esta porta e o que impede o motor de virar refem de um harness. Um runner
+    Esta port e o que impede o motor de virar refem de um harness. Um runner
     pode ser um harness agentico ja pronto, um laco proprio sobre LLMProvider, ou
     um script deterministico. O Orchestrator nao muda em nenhum dos casos.
     """
     capability = Capability.RUNNER
 
     @abstractmethod
-    def run(self, pedido: RunRequest) -> RunResult: ...
+    def run(self, request: RunRequest) -> RunResult: ...
 
     def cancel(self, run_id: str) -> None:
         return None

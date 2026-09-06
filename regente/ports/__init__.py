@@ -6,7 +6,7 @@ capacidade, nunca a ferramenta.** `TaskProvider.transition()` existe porque todo
 sistema de trabalho tem estados; `jira_transition_id` nao existe em lugar nenhum
 daqui. Um nome de fornecedor nesta pasta e bug, e o teste de fronteira falha.
 
-Falha de adapter nunca vira ausencia. Toda porta levanta `AdapterErro` quando a
+Falha de adapter nunca vira ausencia. Toda port levanta `AdapterErro` quando a
 operacao nao pode ser cumprida -- e proibido devolver lista vazia para dizer
 "nao consegui perguntar". Confundir as duas coisas ja custou tabelas com milhoes
 de linhas declaradas inexistentes.

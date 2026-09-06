@@ -26,7 +26,7 @@ class SecretProvider(Port):
     def resolve(self, reference: str) -> str:
         """Resolve uma REFERENCIA a segredo.
 
-        O valor devolvido nunca entra em prompt, evento, log ou estado. A porta
+        O valor devolvido nunca entra em prompt, evento, log ou estado. A port
         existe para que o adapter possa usar o segredo dentro de uma operacao
         fechada -- o agente pede a operacao, nao a credencial.
         """
@@ -65,7 +65,7 @@ class ModelSpec:
     modelo e o fornecedor.
     """
     profile: str
-    #: Vazio de proposito: a porta nao tem fornecedor preferido.
+    #: Vazio de proposito: a port nao tem fornecedor preferido.
     #: Quem escolhe e a configuracao do cliente.
     provider: str = ""
     model: str = ""

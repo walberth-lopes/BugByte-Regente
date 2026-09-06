@@ -110,25 +110,25 @@ def _values_for(contexto: dict[str, Any], field: str) -> list[str]:
 def _fires(fator: Factor, contexto: dict[str, Any]) -> str | None:
     """Devolve a evidencia se o fator disparou, ou None."""
     if fator.greater_than is not None:
-        bruto = contexto.get(fator.field)
+        raw = contexto.get(fator.field)
         try:
-            n = float(bruto)  # type: ignore[arg-type]
+            n = float(raw)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
-        return f"{fator.field}={bruto} > {fator.greater_than:g}" if n > fator.greater_than else None
+        return f"{fator.field}={raw} > {fator.greater_than:g}" if n > fator.greater_than else None
 
     if fator.equal_to is not None:
         return f"{fator.field}={fator.equal_to}" if contexto.get(fator.field) == fator.equal_to else None
 
-    for valor in _values_for(contexto, fator.field):
-        target = valor.lower()
+    for value in _values_for(contexto, fator.field):
+        target = value.lower()
         for default_value in fator.matches:
             p = default_value.lower()
             # Padrao sem curinga casa por substring: 'auth' precisa pegar
             # 'src/auth/handler.py' sem que cada regra vire '*auth*'.
             bateu = fnmatch.fnmatch(target, p) if ("*" in p or "?" in p) else (p in target)
             if bateu:
-                return f"{fator.field}={valor}"
+                return f"{fator.field}={value}"
     return None
 
 

@@ -20,7 +20,7 @@ import ast
 import re
 from pathlib import Path
 
-RAIZ = Path(__file__).resolve().parent.parent / "regente"
+ROOT = Path(__file__).resolve().parent.parent / "regente"
 
 #: Nomes de fornecedor. Se um deles aparecer no Core ou no Engine, a
 #: abstracao falhou -- e o teste diz exatamente onde.
@@ -35,7 +35,7 @@ IO_PROIBIDO = {"sqlite3", "httpx", "requests", "urllib", "socket", "subprocess",
 
 
 def _modulos(pasta: str) -> list[Path]:
-    return sorted((RAIZ / pasta).rglob("*.py"))
+    return sorted((ROOT / pasta).rglob("*.py"))
 
 
 def _imports(path: Path) -> list[str]:
@@ -98,11 +98,11 @@ def _linhas_de_prosa(arq: Path) -> set[int]:
     for no in ast.walk(ast.parse(text, filename=str(arq))):
         if not isinstance(no, portadores) or not no.body:
             continue
-        primeiro = no.body[0]
-        if (isinstance(primeiro, ast.Expr) and isinstance(primeiro.value, ast.Constant)
-                and isinstance(primeiro.value.value, str)):
-            prosa.update(range(primeiro.lineno,
-                               (primeiro.end_lineno or primeiro.lineno) + 1))
+        first = no.body[0]
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            prosa.update(range(first.lineno,
+                               (first.end_lineno or first.lineno) + 1))
     return prosa
 
 
@@ -125,8 +125,8 @@ def test_no_vendor_in_code_of_core_nor_of_engine():
 def test_registry_is_the_only_the_importar_adapters():
     """Um segundo lugar importando adapter e o comeco do acoplamento."""
     culpados = []
-    for arq in RAIZ.rglob("*.py"):
-        relativo = arq.relative_to(RAIZ).as_posix()
+    for arq in ROOT.rglob("*.py"):
+        relativo = arq.relative_to(ROOT).as_posix()
         if relativo.startswith("adapters/"):
             continue
         if any("adapters" in name for name in _imports(arq)):
@@ -153,8 +153,8 @@ def test_swapping_of_provider_only_touches_in_adapter_is_configuration():
     # 1. Ninguem fora de adapters/ decide QUAL implementacao usar. As duas
     #    excecoes sao a raiz de composicao e a superficie que a exibe.
     escolhem = set()
-    for arq in RAIZ.rglob("*.py"):
-        rel = arq.relative_to(RAIZ).as_posix()
+    for arq in ROOT.rglob("*.py"):
+        rel = arq.relative_to(ROOT).as_posix()
         if rel.startswith("adapters/"):
             continue
         if any("adapters" in name for name in _imports(arq)):
@@ -162,10 +162,10 @@ def test_swapping_of_provider_only_touches_in_adapter_is_configuration():
     assert escolhem == {"app/container.py", "cli.py"}, (
         f"quem mais escolhe implementacao: {escolhem - {'app/container.py', 'cli.py'}}")
 
-    # 2. O motor fala com a PORTA, e a porta nao conhece fornecedor.
-    porta = (RAIZ / "ports" / "tasks.py").read_text(encoding="utf-8")
-    prosa = _linhas_de_prosa(RAIZ / "ports" / "tasks.py")
-    for n, linha in enumerate(porta.splitlines(), 1):
+    # 2. O motor fala com a PORTA, e a port nao conhece fornecedor.
+    port = (ROOT / "ports" / "tasks.py").read_text(encoding="utf-8")
+    prosa = _linhas_de_prosa(ROOT / "ports" / "tasks.py")
+    for n, linha in enumerate(port.splitlines(), 1):
         if n in prosa:
             continue
         assert not re.search("|".join(FORNECEDORES), linha, re.IGNORECASE), (
@@ -184,7 +184,7 @@ def test_repositoryprovider_not_knows_vendor():
     Trocar a hospedagem de codigo por outra completamente diferente deve exigir
     adapter novo + configuracao, e nada mais.
     """
-    arq = RAIZ / "ports" / "repository.py"
+    arq = ROOT / "ports" / "repository.py"
     prosa = _linhas_de_prosa(arq)
     for n, linha in enumerate(arq.read_text(encoding="utf-8").splitlines(), 1):
         if n in prosa:
@@ -201,7 +201,7 @@ def test_resolution_of_target_not_knows_vendor():
     """O elo task->repositorio e o mais tentador de acoplar: e onde daria vontade
     de olhar `nameWithOwner` ou um campo de um board especifico."""
     for name in ("target.py", "chain.py"):
-        arq = RAIZ / "engine" / name
+        arq = ROOT / "engine" / name
         prosa = _linhas_de_prosa(arq)
         for n, linha in enumerate(arq.read_text(encoding="utf-8").splitlines(), 1):
             if n in prosa:

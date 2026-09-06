@@ -49,7 +49,7 @@ class GitHubRepos(RepositoryProvider):
     cli_path: str = "gh"
     name: str = "github"
     capabilities: frozenset[RepoCapability] = field(default_factory=lambda: READ_CAPS)
-    observador: Observer | None = None
+    observer: Observer | None = None
     timeout: int = 60
     list_limit: int = 200
 
@@ -105,19 +105,19 @@ class GitHubRepos(RepositoryProvider):
         self._notify_observer(args, inicio, True, 200, "")
         if not json_esperado:
             return p.stdout
-        bruto = (p.stdout or "").strip()
-        if not bruto:
+        raw = (p.stdout or "").strip()
+        if not raw:
             raise MalformedResponse("corpo vazio onde se esperava JSON")
         try:
-            return json.loads(bruto)
+            return json.loads(raw)
         except ValueError as e:
-            raise MalformedResponse(f"saida nao e JSON: {bruto[:200]}") from e
+            raise MalformedResponse(f"saida nao e JSON: {raw[:200]}") from e
 
     def _notify_observer(self, args: list[str], inicio: float, ok: bool,
                status: int | None, error: str) -> None:
-        if not self.observador:
+        if not self.observer:
             return
-        self.observador(Call(
+        self.observer(Call(
             operation="cli", path=" ".join(args[:2]),
             duration_ms=int((time.monotonic() - inicio) * 1000),
             success=ok, status=status,
@@ -125,25 +125,25 @@ class GitHubRepos(RepositoryProvider):
 
     # ---- normalizacao ----------------------------------------------------
 
-    def _build(self, bruto: dict[str, Any], partial: bool) -> RepoInfo:
-        key = bruto.get("nameWithOwner") or ""
+    def _build(self, raw: dict[str, Any], partial: bool) -> RepoInfo:
+        key = raw.get("nameWithOwner") or ""
         if not key:
             raise AdapterError("repositorio sem identidade completa na resposta")
-        base = ((bruto.get("defaultBranchRef") or {}) or {}).get("name") or ""
+        base = ((raw.get("defaultBranchRef") or {}) or {}).get("name") or ""
         return RepoInfo(
             ref=RepoRef(provider=self.name, key=key),
-            name=bruto.get("name") or key.rsplit("/", 1)[-1],
+            name=raw.get("name") or key.rsplit("/", 1)[-1],
             base_branch=base,
             clone_origin=f"https://github.com/{key}.git",
-            url=bruto.get("url"),
-            archived=bool(bruto.get("isArchived")),
-            private=bruto.get("isPrivate"),
+            url=raw.get("url"),
+            archived=bool(raw.get("isArchived")),
+            private=raw.get("isPrivate"),
             capabilities=self.capabilities,
             partial=partial,
             data={k: v for k, v in (
-                ("descricao", bruto.get("description")),
-                ("empurrado_em", bruto.get("pushedAt")),
-                ("linguagem", (bruto.get("primaryLanguage") or {}).get("name")),
+                ("descricao", raw.get("description")),
+                ("empurrado_em", raw.get("pushedAt")),
+                ("linguagem", (raw.get("primaryLanguage") or {}).get("name")),
             ) if v})
 
     # ---- descoberta ------------------------------------------------------
@@ -154,28 +154,28 @@ class GitHubRepos(RepositoryProvider):
                 "--json", LIST_FIELDS]
         if f.get("sem_arquivados", True):
             args.append("--no-archived")
-        bruto = self._cli(args)
-        if not isinstance(bruto, list):
-            raise AdapterError(f"listagem devolveu {type(bruto).__name__}, esperava lista")
-        return [self._build(r, partial=True) for r in bruto]
+        raw = self._cli(args)
+        if not isinstance(raw, list):
+            raise AdapterError(f"listagem devolveu {type(raw).__name__}, esperava lista")
+        return [self._build(r, partial=True) for r in raw]
 
     def get_repository(self, key: str) -> RepoInfo:
         target = key if "/" in key else f"{self.org}/{key}"
-        bruto = self._cli(["repo", "view", target, "--json", DETAIL_FIELDS])
-        if not isinstance(bruto, dict):
-            raise AdapterError(f"detalhe devolveu {type(bruto).__name__}, esperava objeto")
-        return self._build(bruto, partial=False)
+        raw = self._cli(["repo", "view", target, "--json", DETAIL_FIELDS])
+        if not isinstance(raw, dict):
+            raise AdapterError(f"detalhe devolveu {type(raw).__name__}, esperava objeto")
+        return self._build(raw, partial=False)
 
     def list_branches(self, key: str, filtro: dict[str, Any] | None = None) -> list[Branch]:
         target = key if "/" in key else f"{self.org}/{key}"
         base = self.get_repository(target).base_branch
         per_page = int((filtro or {}).get("por_pagina", 100))
-        bruto = self._cli(["api", f"repos/{target}/branches?per_page={per_page}"])
-        if not isinstance(bruto, list):
+        raw = self._cli(["api", f"repos/{target}/branches?per_page={per_page}"])
+        if not isinstance(raw, list):
             raise AdapterError("listagem de branches devolveu forma inesperada")
         default_value = (filtro or {}).get("padrao", "")
         output = []
-        for b in bruto:
+        for b in raw:
             name = b.get("name") or ""
             if default_value and default_value.lower() not in name.lower():
                 continue
@@ -187,7 +187,7 @@ class GitHubRepos(RepositoryProvider):
         import base64
         target = key if "/" in key else f"{self.org}/{key}"
         rota = f"repos/{target}/contents/{path}" + (f"?ref={ref}" if ref else "")
-        bruto = self._cli(["api", rota])
-        if not isinstance(bruto, dict) or "content" not in bruto:
+        raw = self._cli(["api", rota])
+        if not isinstance(raw, dict) or "content" not in raw:
             raise AdapterError(f"{path} nao e um arquivo em {target}")
-        return base64.b64decode(bruto["content"]).decode("utf-8", "replace")
+        return base64.b64decode(raw["content"]).decode("utf-8", "replace")
