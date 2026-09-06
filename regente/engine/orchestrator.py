@@ -23,7 +23,7 @@ from typing import Any
 from ..core import ids
 from ..core.graph import DependencyGraph
 from ..core.model import (Dependency, Event, ExternalRef, Run, RunState, Task, Workspace,
-                          agora)
+                          now)
 from ..core.policy import AutonomyLevel
 from ..core.risk import RiskEngine, RiskLevel
 from ..core.scheduling import Candidate, Limits, Plan, plan
@@ -144,7 +144,7 @@ class Orchestrator:
                 continue
             task = self.store.task(run.task_id)
             run.state = RunState.INTERRUPTED
-            run.ended_at = agora()
+            run.ended_at = now()
             run.reason = "lease vencido: worker nao renovou"
             self.store.save_run(run)
             self.store.release_lease(run.id, run.id, self.workspace.id)
@@ -218,7 +218,7 @@ class Orchestrator:
         task.data.update({"situacao_externa": current_status,
                            "estado_externo": e.external_status,
                            "rotulos": list(e.labels)})
-        task.updated_at = agora()
+        task.updated_at = now()
         self.store.save_task(task)
         if before and before != current_status:
             rel.changes += ((task.key, before, current_status),)
@@ -325,7 +325,7 @@ class Orchestrator:
                       resources=frozenset(t.resources), key=t.key)
             for t in todas if t.state is TaskState.READY
         ]
-        hoje = agora().strftime("%Y-%m-%d")
+        hoje = now().strftime("%Y-%m-%d")
         return plan(candidates, self._graph(), completed, running_now,
                        self.limits, self.store.dispatch_count(self.workspace.id, hoje),
                        nomes={t.id: t.key for t in todas})
@@ -369,7 +369,7 @@ class Orchestrator:
                                           branch=f"regente/{task.key.lower()}")
         run.workspace_path, run.branch = area.path, area.branch
         self.store.save_run(run)
-        self.store.mark_dispatch(self.workspace.id, agora().strftime("%Y-%m-%d"))
+        self.store.mark_dispatch(self.workspace.id, now().strftime("%Y-%m-%d"))
         self.store.transition(task.id, TaskState.IMPLEMENTING, actor=run.agent,
                                reason="worker iniciou")
         rel.dispatched += (task.key,)
@@ -400,7 +400,7 @@ class Orchestrator:
                rel: TickReport) -> None:
         for r in held:
             self.store.release_lease(r, run.id, self.workspace.id)
-        run.ended_at = agora()
+        run.ended_at = now()
 
         if resultado is None:
             self._failed(task_id, run, run.reason or "worker levantou excecao", rel)

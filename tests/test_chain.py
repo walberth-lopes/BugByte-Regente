@@ -197,7 +197,7 @@ def test_repositorio_without_branch_base_not_receives_work():
 
 
 def test_capacidade_missing_to_the_chain_before_of_spending_a_cycle():
-    repos = [repo("acme/api", caps=frozenset({RepoCapability.LER_METADADOS}))]
+    repos = [repo("acme/api", caps=frozenset({RepoCapability.READ_METADATA}))]
     r = build([task("K-1")], repos=repos,
               resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))
     p = r.steps[0]

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,7 +31,15 @@ from ..ports.agent import TestResult
 #: environment when the mark is unambiguous -- calling a regression an
 #: environment problem would approve broken code.
 ENVIRONMENT_MARKS = (
-    "modulenotfounderror", "importerror: no module named",
+    "modulenotfounderror",
+    # `python -m pytest` with pytest absent prints neither of the two forms
+    # above: the launcher says "<interpreter>: No module named pytest". Missing
+    # it cost a real misclassification -- the run came back
+    # PREEXISTING_FAILURE, which reads as "the change is fine, the red is
+    # inherited", when in truth nothing had been verified at all. The bare form
+    # is matched deliberately: erring toward ENVIRONMENT blocks the mission,
+    # and erring the other way approves unverified work.
+    "no module named",
     "connection refused", "could not connect", "no such host",
     "address already in use", "authentication failed",
     "database .* does not exist", "could not translate host name",
@@ -201,6 +210,24 @@ TEST_DETECTION = (
 )
 
 
+def python_for(root: str | Path) -> str:
+    """Which interpreter can actually run this repository's tests.
+
+    `python` from PATH is the wrong default and fails quietly: it resolves to
+    whatever interpreter happens to be first, which usually lacks the test
+    dependencies. Order: the repository's own virtualenv, then the interpreter
+    running the engine (which at least has pytest), then PATH as a last resort.
+    """
+    base = Path(root)
+    for candidate in (base / ".venv" / "Scripts" / "python.exe",
+                      base / ".venv" / "bin" / "python",
+                      base / "venv" / "Scripts" / "python.exe",
+                      base / "venv" / "bin" / "python"):
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable or "python"
+
+
 def detect_command(root: str | Path) -> list[str] | None:
     """Discover how to test, from evidence. `None` when it cannot be known."""
     r = Path(root)
@@ -214,5 +241,8 @@ def detect_command(root: str | Path) -> list[str] | None:
             # nothing to run -- which would look like infrastructure failure.
             if "pytest" not in text and not (r / "tests").is_dir():
                 continue
-        return list(command)
+        resolved = list(command)
+        if resolved[0] == "python":
+            resolved[0] = python_for(r)
+        return resolved
     return None

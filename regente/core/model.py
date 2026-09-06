@@ -26,7 +26,7 @@ from .risk import RiskLevel
 from .states import TaskState
 
 
-def agora() -> datetime:
+def now() -> datetime:
     """UTC, sempre. Horario local so aparece na superficie de apresentacao."""
     return datetime.now(timezone.utc)
 
@@ -110,8 +110,8 @@ class Task:
     #: arquivo. Ex.: "repo:acme/api", "migration:acme/api", "file:src/auth.py".
     resources: tuple[str, ...] = ()
     attempts: int = 0
-    created_at: datetime = field(default_factory=agora)
-    updated_at: datetime = field(default_factory=agora)
+    created_at: datetime = field(default_factory=now)
+    updated_at: datetime = field(default_factory=now)
     data: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -152,7 +152,7 @@ class Run:
     worker: str | None = None
     workspace_path: str | None = None
     branch: str | None = None
-    started_at: datetime = field(default_factory=agora)
+    started_at: datetime = field(default_factory=now)
     ended_at: datetime | None = None
     reason: str = ""
     cost_usd: float = 0.0
@@ -172,7 +172,7 @@ class Event:
     id: str
     workspace_id: str
     kind: str
-    ts: datetime = field(default_factory=agora)
+    ts: datetime = field(default_factory=now)
     task_id: str | None = None
     run_id: str | None = None
     actor: str = "engine"
@@ -212,7 +212,7 @@ class Approval:
     risk: RiskLevel = RiskLevel.MEDIUM
     state: ApprovalState = ApprovalState.OPEN
     run_id: str | None = None
-    created_at: datetime = field(default_factory=agora)
+    created_at: datetime = field(default_factory=now)
     decided_at: datetime | None = None
     decided_by: str | None = None
     choice: str | None = None
@@ -233,7 +233,7 @@ class ActionRecord:
     resource: str
     effect: str                # ALLOW | DENY | HUMAN_APPROVAL
     risk: str
-    ts: datetime = field(default_factory=agora)
+    ts: datetime = field(default_factory=now)
     task_id: str | None = None
     run_id: str | None = None
     rule: str | None = None
@@ -256,4 +256,4 @@ class Lease:
     owner: str
     expires_at: datetime
     workspace_id: str
-    renewed_at: datetime = field(default_factory=agora)
+    renewed_at: datetime = field(default_factory=now)

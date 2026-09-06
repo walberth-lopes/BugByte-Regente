@@ -114,6 +114,19 @@ def _repos_github(o: dict[str, Any]) -> Port:
                        list_limit=int(o.get("limit", 200)))
 
 
+def _agent_external(o: dict[str, Any]) -> Port:
+    from .runner.external import ExternalAgent
+    return ExternalAgent(command=list(o["command"]), env=dict(o.get("env", {})))
+
+
+def _agent_deterministic(o: dict[str, Any]) -> Port:
+    from .runner.external import DeterministicAgent
+    return DeterministicAgent(script=dict(o.get("script", {})),
+                              fallback=dict(o.get("fallback", {})) or None
+                              or {"outcome": "NO_PROGRESS",
+                                  "summary": "no edit declared for this task"})
+
+
 def _scoped_secrets(o: dict[str, Any]) -> Port:
     from .secrets import ScopedSecrets
     return ScopedSecrets(allowed_from=frozenset(o.get("allowed", ())),
@@ -151,3 +164,5 @@ register(Capability.WORKSPACE, "clone", _workspace_clone)
 register(Capability.NOTIFICATION, "console", _notify_console)
 register(Capability.RUNNER, "script", _runner_script)
 register(Capability.RUNNER, "command", _runner_command)
+register(Capability.RUNNER, "external-agent", _agent_external)
+register(Capability.RUNNER, "deterministic-agent", _agent_deterministic)

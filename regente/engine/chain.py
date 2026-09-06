@@ -83,7 +83,7 @@ class ChainReport:
 WORK_ACTION = "repo.branch"
 
 #: Capacidades sem as quais nao ha como comecar trabalho de codigo.
-REQUIRED_CAPS = (RepoCapability.LER_ARQUIVOS, RepoCapability.CLONAR)
+REQUIRED_CAPS = (RepoCapability.READ_FILES, RepoCapability.CLONE)
 
 
 def build(
@@ -131,7 +131,7 @@ def build(
             continue
         faltando = [c.value for c in REQUIRED_CAPS if not repo.can(c)]
         if faltando:
-            # Descobrir isto agora poupa um ciclo inteiro -- e poupa uma
+            # Descobrir isto now poupa um ciclo inteiro -- e poupa uma
             # escalonada ao humano por um motivo que o motor ja sabia.
             steps.append(Step(t, Stage.SEM_CAPACIDADE,
                                 f"o provedor nao oferece: {', '.join(faltando)}",

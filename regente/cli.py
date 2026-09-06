@@ -142,7 +142,7 @@ def cmd_needs_me(args) -> int:
     try:
         open_items = motor.store.open_approvals(motor.workspace.id)
         if not open_items:
-            print("nada precisa de voce agora.")
+            print("nada precisa de voce now.")
             return 0
         for a in open_items:
             t = motor.store.task(a.task_id)
@@ -299,6 +299,38 @@ def cmd_cadeia(args) -> int:
         motor.close()
 
 
+def cmd_mission(args) -> int:
+    """Select one task and show the briefing. Executes only with --run."""
+    cfg = _load_config(args)
+    engine = container.build(cfg)
+    try:
+        if engine.repos is None:
+            print("no repository provider configured")
+            return 1
+        outcome = engine.run_mission(execute=args.run, only=args.task)
+        if outcome.refused:
+            print(outcome.refusal)
+            return 3
+        print(outcome.briefing.render())
+        if not args.run:
+            print()
+            print("  DRY: nothing was executed. Add --run to execute.")
+            return 0
+        print()
+        print(f"VERDICT  {outcome.verdict.value}")
+        print(f"  {outcome.loop.reason}")
+        if outcome.loop.changed_files:
+            print(f"  changed: {', '.join(outcome.loop.changed_files[:8])}")
+        print()
+        print(outcome.measurements.render())
+        if args.output:
+            report = outcome.briefing.render() + "\n\n" + outcome.measurements.render()
+            Path(args.output).write_text(report, encoding="utf-8")
+        return 0
+    finally:
+        engine.close()
+
+
 def cmd_rules(args) -> int:
     cfg = _load_config(args)
     from .app.config import load_policies
@@ -343,7 +375,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(fn=cmd_status)
 
-    p = sub.add_parser("plan", help="o que o scheduler faria agora")
+    p = sub.add_parser("plan", help="o que o scheduler faria now")
     p.set_defaults(fn=cmd_plan)
 
     p = sub.add_parser("needs-me", help="a fila de decisoes humanas")
@@ -377,6 +409,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="pula a leitura de branches (mais rapido, menos evidencia)")
     p.add_argument("--saida", help="grava o relatorio neste arquivo")
     p.set_defaults(fn=cmd_cadeia)
+
+    p = sub.add_parser("mission", help="select one task, show the briefing, optionally run")
+    p.add_argument("--run", action="store_true", help="execute; without it, nothing runs")
+    p.add_argument("--task", help="restrict selection to this task key")
+    p.add_argument("--output", help="write briefing and metrics to this file")
+    p.set_defaults(fn=cmd_mission)
 
     p = sub.add_parser("rules", help="regras, limites e adapters em vigor")
     p.set_defaults(fn=cmd_rules)

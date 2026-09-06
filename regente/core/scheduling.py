@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Scheduler: escolhe o que roda agora. Funcao pura, testavel sem banco.
+"""Scheduler: escolhe o que roda now. Funcao pura, testavel sem banco.
 
 O objetivo declarado do motor e **trabalho util concluido por unidade de tempo**,
 nao volume de analise. O scheduler e onde isso vira codigo: ele maximiza

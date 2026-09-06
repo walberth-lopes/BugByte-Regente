@@ -18,7 +18,7 @@ from regente.adapters.notify.console import Console
 from regente.adapters.runner.scripted import ScriptedRunner
 from regente.adapters.tasks.filesystem import FilesystemTasks
 from regente.adapters.workspace.local import IsolatedDirectory
-from regente.core.model import RunState, Workspace, agora
+from regente.core.model import RunState, Workspace, now
 from regente.core.policy import AutonomyLevel, PolicyEngine
 from regente.core.risk import RiskEngine
 from regente.core.scheduling import Limits

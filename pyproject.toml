@@ -28,3 +28,7 @@ packages = ["regente"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Every test here is a function. Without this, pytest tries to collect domain
+# classes whose names merely start with "Test" -- `TestResult` is an enum, not
+# a suite, and the warning would train everyone to ignore warnings.
+python_classes = []

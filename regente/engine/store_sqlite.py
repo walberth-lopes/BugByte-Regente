@@ -28,7 +28,7 @@ from ..core import ids
 from ..core.errors import CorruptedState
 from ..core.model import (ActionRecord, Approval, ApprovalState, Dependency, Event,
                           ExternalRef, Lease, Option, Project, Repository, Run,
-                          RunState, Task, Workspace, agora)
+                          RunState, Task, Workspace, now)
 from ..core.policy import AutonomyLevel
 from ..core.risk import RiskLevel
 from ..core.states import TaskState, require
@@ -471,12 +471,12 @@ class SqliteStore(Store):
 
             t.paused_at = source if destination is TaskState.WAITING_HUMAN else None
             t.state = destination
-            t.updated_at = agora()
+            t.updated_at = now()
             self._save_task_row(c, t)
 
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, actor, summary, data)
                          VALUES(?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), t.workspace_id, _iso(agora()), "transicao",
+                      (ids.new_id(ids.EVENT), t.workspace_id, _iso(now()), "transicao",
                        t.id, actor, f"{source.value} -> {destination.value}",
                        _j({"from": source.value, "to": destination.value,
                            "reason": reason, **(data or {})})))
@@ -603,7 +603,7 @@ class SqliteStore(Store):
                        a.recommendation, _iso(a.created_at)))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(agora()), "escalou",
+                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(now()), "escalou",
                        a.task_id, a.run_id, "engine", a.what_happened,
                        _j({"approval_id": a.id, "risk": a.risk.name})))
 
@@ -629,13 +629,13 @@ class SqliteStore(Store):
                 raise CorruptedState(
                     f"choice '{choice}' is not among the options: {', '.join(sorted(valid))}")
             a.state, a.choice, a.decided_by = ApprovalState.DECIDED, choice, per
-            a.decided_at, a.note = agora(), note
+            a.decided_at, a.note = now(), note
             c.execute("""UPDATE approvals SET state=?, choice=?, decided_by=?,
                            decided_at=?, note=? WHERE id=?""",
                       (a.state.value, choice, per, _iso(a.decided_at), note, approval_id))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(agora()), "decisao_humana",
+                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(now()), "decisao_humana",
                        a.task_id, a.run_id, per, f"escolheu '{choice}'",
                        _j({"approval_id": approval_id, "note": note})))
         return a
@@ -645,7 +645,7 @@ class SqliteStore(Store):
     def acquire_lease(self, resource: str, owner: str, workspace_id: str,
                       segundos: int) -> Lease | None:
         """Concede se livre, vencido, ou ja do mesmo owner (renovacao)."""
-        ts = agora()
+        ts = now()
         expira = ts + timedelta(seconds=segundos)
         with self._tx() as c:
             r = c.execute("SELECT * FROM leases WHERE workspace_id=? AND resource=?",
@@ -665,7 +665,7 @@ class SqliteStore(Store):
 
     def renew_lease(self, resource: str, owner: str, segundos: int,
                      workspace_id: str | None = None) -> bool:
-        ts = agora()
+        ts = now()
         with self._tx() as c:
             if workspace_id:
                 cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
@@ -690,7 +690,7 @@ class SqliteStore(Store):
                 c.execute("DELETE FROM leases WHERE resource=? AND owner=?", (resource, owner))
 
     def expired_leases(self, workspace_id: str, when: datetime | None = None) -> list[Lease]:
-        ts = when or agora()
+        ts = when or now()
         return [Lease(resource=r["resource"], owner=r["owner"], expires_at=_dt(r["expires_at"]),
                       workspace_id=r["workspace_id"], renewed_at=_dt(r["renewed_at"]))
                 for r in self._con.execute(
@@ -698,6 +698,76 @@ class SqliteStore(Store):
                     (workspace_id, _iso(ts)))]
 
     # ---- counters ------------------------------------------------------
+
+    # ---- targets: where each task runs, and how we know -----------------
+
+    def record_target(self, workspace_id: str, task_key: str, provider: str,
+                      repo_key: str, source: str, confidence: str, strength: int,
+                      evidence: list[str], alternatives: list[str]) -> int:
+        """Store the claim and return how many times it has been seen.
+
+        Repeating the SAME discovery does NOT promote it -- it only increments
+        the count. Promotion to VALIDATED is a decision, and decisions do not
+        belong in a write path that runs on every tick: code moves, and a
+        discovery that is right today can be wrong next month.
+        """
+        ts = _iso(now())
+        with self._tx() as c:
+            row = c.execute("""SELECT confirmations, source FROM targets
+                               WHERE workspace_id=? AND task_key=? AND repo_provider=?
+                                 AND repo_key=?""",
+                            (workspace_id, task_key, provider, repo_key)).fetchone()
+            if row is None:
+                c.execute("""INSERT INTO targets(workspace_id, task_key, repo_provider,
+                               repo_key, source, confidence, strength, evidence,
+                               alternatives, discovered_at)
+                             VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                          (workspace_id, task_key, provider, repo_key, source,
+                           confidence, strength, _j(evidence), _j(alternatives), ts))
+                return 1
+            n = row["confirmations"] + 1
+            # A previously DECLARED target is never downgraded by a later
+            # discovery: someone who knew wrote it down, and an investigation
+            # agreeing with them is confirmation, not a new source of truth.
+            kept = row["source"] if row["source"] == "DECLARED" else source
+            c.execute("""UPDATE targets SET source=?, confidence=?, strength=?,
+                           evidence=?, alternatives=?, confirmed_at=?, confirmations=?
+                         WHERE workspace_id=? AND task_key=? AND repo_provider=?
+                           AND repo_key=?""",
+                      (kept, confidence, strength, _j(evidence), _j(alternatives),
+                       ts, n, workspace_id, task_key, provider, repo_key))
+            return n
+
+    def promote_target(self, workspace_id: str, task_key: str, provider: str,
+                       repo_key: str) -> bool:
+        """Mark a discovery as VALIDATED: a real execution confirmed it.
+
+        Separate from `record_target` on purpose. Writing evidence is routine;
+        declaring evidence sufficient is not, and mixing them would let a busy
+        tick quietly turn a guess into a fact.
+        """
+        with self._tx() as c:
+            cur = c.execute("""UPDATE targets SET source='VALIDATED', confirmed_at=?
+                               WHERE workspace_id=? AND task_key=? AND repo_provider=?
+                                 AND repo_key=? AND source='DISCOVERED'""",
+                            (_iso(now()), workspace_id, task_key, provider, repo_key))
+            return cur.rowcount > 0
+
+    def targets(self, workspace_id: str, task_key: str | None = None) -> list[dict]:
+        q = "SELECT * FROM targets WHERE workspace_id=?"
+        args: list[Any] = [workspace_id]
+        if task_key:
+            q += " AND task_key=?"
+            args.append(task_key)
+        return [{"task_key": r["task_key"], "provider": r["repo_provider"],
+                 "repo_key": r["repo_key"], "source": r["source"],
+                 "confidence": r["confidence"], "strength": r["strength"],
+                 "evidence": json.loads(r["evidence"]),
+                 "alternatives": json.loads(r["alternatives"]),
+                 "discovered_at": r["discovered_at"],
+                 "confirmed_at": r["confirmed_at"],
+                 "confirmations": r["confirmations"]}
+                for r in self._con.execute(q + " ORDER BY task_key", args)]
 
     def dispatch_count(self, workspace_id: str, day: str) -> int:
         r = self._con.execute(

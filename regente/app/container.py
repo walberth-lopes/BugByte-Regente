@@ -21,6 +21,8 @@ from ..engine.orchestrator import Orchestrator
 from ..engine.store_sqlite import SqliteStore
 from ..ports import Capability
 from ..ports.support import NotificationProvider
+from ..core.errors import CapabilityMissing
+from ..ports import AdapterError
 from ..ports.repository import RepositoryProvider
 from ..ports.tasks import TaskProvider
 from ..ports.workspace import AgentRunner, WorkspaceProvider
@@ -47,12 +49,89 @@ class Engine:
     gate: Gate
     #: Opcional: um workspace pode governar tasks sem governar codigo.
     repos: RepositoryProvider | None = None
-    resolvedor: TargetResolver | None = None
+    areas: object | None = None
+    agent: object | None = None
+    resolver: TargetResolver | None = None
     policy: PolicyEngine | None = None
     risk: RiskEngine | None = None
 
     def close(self) -> None:
         self.store.close()
+
+    def run_mission(self, execute: bool = False, only: str | None = None):
+        """Select one task and, when asked, execute it in isolation.
+
+        Selection always runs; execution is opt-in. That asymmetry is the point:
+        seeing what the engine WOULD do must never cost a clone, a branch or a
+        test run, so the safe call is also the cheap one.
+        """
+        from ..engine import mission as mission_mod
+        from ..engine.discovery import Investigator
+        from ..engine.runner import MissionRunner
+        from ..ports.agent import Budget, Permissions
+
+        if self.repos is None:
+            raise CapabilityMissing("this workspace has no repository provider")
+
+        items = self.orchestrator.tasks_provider.list_tasks()
+        if only:
+            items = [t for t in items if t.key == only]
+        catalog = self.repos.list_repositories()
+        branches = {}
+        for r in catalog:
+            try:
+                branches[r.ref.key] = self.repos.list_branches(r.ref.key)
+            except Exception:   # noqa: BLE001 - a provider hiccup is not a target
+                branches[r.ref.key] = []
+
+        planner = mission_mod.MissionPlanner(
+            repos=self.repos,
+            investigator=Investigator(repos=self.repos, resolver=self.resolver),
+            policy=self.policy, risk=self.risk,
+            autonomy=self.workspace.max_autonomy,
+            workspace_name=self.workspace.name, workspace_id=self.workspace.id,
+            organization=self.config.organization, client=self.config.client)
+
+        selection = planner.select(items, catalog, branches,
+                                   branch_is_ahead=self._branch_is_ahead)
+        runner = MissionRunner(
+            store=self.store, workspace_id=self.workspace.id,
+            workspace_name=self.workspace.name, repos=self.repos,
+            areas=self.areas, agent=self.agent, planner=planner,
+            budget=Budget(max_iterations=self.config.budget.max_iterations,
+                          max_tool_calls=self.config.budget.max_tool_calls,
+                          max_cost_usd=self.config.budget.max_cost_usd,
+                          max_seconds=self.config.budget.max_seconds),
+            permissions=Permissions(read=True, write_code=True, run_tests=True,
+                                    commit=True))
+        if not execute:
+            from ..engine.runner import MissionOutcome
+            if selection.mission is None:
+                return MissionOutcome(None, None, None, None, refusal=selection.render())
+            m = selection.mission
+            briefing = mission_mod.briefing_for(
+                m, workspace_path=str(self.config.areas / m.task.key),
+                agent=self.agent.name, budget=runner.budget,
+                permissions=runner.permissions, baseline_command=None,
+                timeout_seconds=runner.budget.max_seconds)
+            return MissionOutcome(briefing, None, None, None, refusal="")
+        return runner.run(selection)
+
+    def _branch_is_ahead(self, repo_key: str, branch: str) -> bool:
+        """Does this branch carry commits the base branch does not?
+
+        Answered by the repository provider through its own read path, so the
+        check works the same for a local clone and for a hosted remote.
+        """
+        info = self.repos.get_repository(repo_key)
+        base = info.base_branch
+        items = {b.name: b.sha for b in self.repos.list_branches(repo_key)}
+        head, base_sha = items.get(branch), items.get(base)
+        if not head or not base_sha:
+            # Missing either end means the comparison cannot be made. Saying
+            # "not ahead" here would turn ignorance into permission.
+            raise AdapterError(f"cannot compare '{branch}' with '{base}' in {repo_key}")
+        return head != base_sha
 
 
 def build(cfg: Config) -> Engine:
@@ -80,7 +159,7 @@ def build(cfg: Config) -> Engine:
         store.save_project(Project(id=project_id, workspace_id=ws.id, name="padrao"))
 
     # Segredos sao escopados ao workspace ANTES de qualquer adapter existir:
-    # nenhum adapter recebe um resolvedor que alcance outro cliente.
+    # nenhum adapter recebe um resolver que alcance outro cliente.
     secrets = registry.create(Capability.SECRETS, "scoped",
                              {"allowed": cfg.secrets, "workspace": ws.name})
 
@@ -107,6 +186,8 @@ def build(cfg: Config) -> Engine:
     tasks: TaskProvider = create(Capability.TASKS, "tasks",
                                {"secrets": secrets, "observer": observe})
     repos: RepositoryProvider | None = None
+    areas: object | None = None
+    agent: object | None = None
     if "repository" in cfg.providers:
         repos = create(Capability.REPOSITORY, "repository",
                      {"secrets": secrets, "observer": observe})
@@ -127,13 +208,14 @@ def build(cfg: Config) -> Engine:
         budget=cfg.budget, notificador=notificador, project_id=project_id,
         lease_seconds=cfg.lease_seconds)
 
-    resolvedor = TargetResolver(
-        by_label=dict(cfg.targets.get("por_rotulo") or {}),
-        by_project=dict(cfg.targets.get("por_projeto") or {}),
-        by_task=dict(cfg.targets.get("por_task") or {}))
+    resolver = TargetResolver(
+        by_label=dict(cfg.targets.get("by_label") or {}),
+        by_project=dict(cfg.targets.get("by_project") or {}),
+        by_task=dict(cfg.targets.get("by_task") or {}))
 
     return Engine(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate,
-                 repos=repos, resolvedor=resolvedor, policy=policy, risk=risk)
+                  repos=repos, resolver=resolver, policy=policy, risk=risk,
+                  areas=areas, agent=runner)
 
 
 def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:

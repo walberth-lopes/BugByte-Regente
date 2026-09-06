@@ -21,7 +21,7 @@ import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from ..core.model import Run, RunState, Task, agora
+from ..core.model import Run, RunState, Task, now
 from ..core.states import ACTIVE, TaskState
 
 
@@ -37,7 +37,7 @@ class Budget:
 
 
 @dataclass(frozen=True, slots=True)
-class Veredito:
+class StopVerdict:
     """O que o supervisor manda fazer. Vocabulario fechado, nao texto livre."""
     stop: bool
     reason: str = ""
@@ -45,18 +45,18 @@ class Veredito:
     next_action: str = "seguir"
 
 
-def over_budget(run: Run, orc: Budget, when: datetime | None = None) -> Veredito:
-    ts = when or agora()
+def over_budget(run: Run, orc: Budget, when: datetime | None = None) -> StopVerdict:
+    ts = when or now()
     if run.iterations > orc.max_iterations:
-        return Veredito(True, f"{run.iterations} iteracoes (teto {orc.max_iterations})", "escalar")
+        return StopVerdict(True, f"{run.iterations} iteracoes (teto {orc.max_iterations})", "escalar")
     if run.tool_calls > orc.max_tool_calls:
-        return Veredito(True, f"{run.tool_calls} chamadas de tool (teto {orc.max_tool_calls})", "escalar")
+        return StopVerdict(True, f"{run.tool_calls} chamadas de tool (teto {orc.max_tool_calls})", "escalar")
     if run.cost_usd > orc.max_cost_usd:
-        return Veredito(True, f"US$ {run.cost_usd:.2f} gastos (teto {orc.max_cost_usd:.2f})", "escalar")
+        return StopVerdict(True, f"US$ {run.cost_usd:.2f} gastos (teto {orc.max_cost_usd:.2f})", "escalar")
     elapsed = (ts - run.started_at).total_seconds()
     if elapsed > orc.max_seconds:
-        return Veredito(True, f"{int(elapsed)}s decorridos (teto {orc.max_seconds}s)", "trocar_estrategia")
-    return Veredito(False)
+        return StopVerdict(True, f"{int(elapsed)}s decorridos (teto {orc.max_seconds}s)", "trocar_estrategia")
+    return StopVerdict(False)
 
 
 def _signature(text: str) -> str:
@@ -79,20 +79,20 @@ class LoopDetector:
     limit: int = 3
     _marcas: dict[str, int] = field(default_factory=dict)
 
-    def register(self, kind: str, detalhe: str) -> int:
-        key = f"{kind}:{_signature(detalhe)}"
+    def register(self, kind: str, detail: str) -> int:
+        key = f"{kind}:{_signature(detail)}"
         self._marcas[key] = self._marcas.get(key, 0) + 1
         return self._marcas[key]
 
-    def repeated(self, kind: str, detalhe: str) -> Veredito:
-        n = self.register(kind, detalhe)
+    def repeated(self, kind: str, detail: str) -> StopVerdict:
+        n = self.register(kind, detail)
         if n >= self.limit:
-            return Veredito(True, f"{kind} repetido {n}x sem progresso: {detalhe[:120]}",
+            return StopVerdict(True, f"{kind} repetido {n}x sem progresso: {detail[:120]}",
                             "trocar_estrategia")
-        return Veredito(False)
+        return StopVerdict(False)
 
 
-def no_progress(task: Task, runs: list[Run], window: int = 3) -> Veredito:
+def no_progress(task: Task, runs: list[Run], window: int = 3) -> StopVerdict:
     """Acusa a task que consumiu varios runs e nao mudou de estado.
 
     Comparar estado entre runs -- e nao "o agente escreveu arquivos?" -- e o que
@@ -100,10 +100,10 @@ def no_progress(task: Task, runs: list[Run], window: int = 3) -> Veredito:
     """
     finished_runs = [r for r in runs if r.state is not RunState.RUNNING][-window:]
     if len(finished_runs) < window:
-        return Veredito(False)
+        return StopVerdict(False)
     if all(r.state in (RunState.FAILED, RunState.ABORTED) for r in finished_runs):
-        return Veredito(True, f"{window} execucoes seguidas sem sair de {task.state.value}", "escalar")
-    return Veredito(False)
+        return StopVerdict(True, f"{window} execucoes seguidas sem sair de {task.state.value}", "escalar")
+    return StopVerdict(False)
 
 
 def next_recovery_step(task: Task, orc: Budget) -> str:

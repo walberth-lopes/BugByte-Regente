@@ -145,7 +145,7 @@ class TaskProvider(Port):
 
     @abstractmethod
     def list_tasks(self, filtro: dict[str, Any] | None = None) -> list[ExternalTask]:
-        """Trabalho visivel agora. Erro sobe como AdapterErro, nunca lista vazia."""
+        """Trabalho visivel now. Erro sobe como AdapterErro, nunca lista vazia."""
 
     @abstractmethod
     def get_task(self, key: str) -> ExternalTask: ...

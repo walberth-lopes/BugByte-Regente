@@ -49,7 +49,7 @@ class GitLocal(RepositoryProvider):
     #: Reflete o que o adapter consegue: le tudo do disco, menos pull requests,
     #: que nao existem em git puro -- sao conceito do servico de hospedagem.
     capabilities: frozenset[RepoCapability] = field(
-        default_factory=lambda: READ_CAPS - {RepoCapability.LER_PULL_REQUESTS})
+        default_factory=lambda: READ_CAPS - {RepoCapability.READ_PULL_REQUESTS})
     observer: Observer | None = None
     timeout: int = 60
 

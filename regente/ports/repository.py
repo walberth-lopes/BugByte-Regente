@@ -18,7 +18,7 @@ duas nocoes produz o pior dos casos: um `if pode_escrever` espalhado pelo codigo
 que ninguem consegue auditar num lugar so.
 
 Escrita existe aqui apenas como CONTRATO. As assinaturas estao declaradas para
-que o desenho futuro seja visivel e criticavel agora; nenhuma implementacao deste
+que o desenho futuro seja visivel e criticavel now; nenhuma implementacao deste
 marco as executa.
 """
 
@@ -40,26 +40,26 @@ class RepoCapability(str, Enum):
     inteiro -- e, pior, uma escalonada ao humano por um motivo que o motor
     poderia ter previsto sozinho.
     """
-    LER_METADADOS = "read_metadata"
-    LER_ARQUIVOS = "read_files"
-    LER_HISTORICO = "read_history"
-    LER_BRANCHES = "read_branches"
-    LER_PULL_REQUESTS = "read_pull_requests"
-    CLONAR = "clone"
+    READ_METADATA = "read_metadata"
+    READ_FILES = "read_files"
+    READ_HISTORY = "read_history"
+    READ_BRANCHES = "read_branches"
+    READ_PULL_REQUESTS = "read_pull_requests"
+    CLONE = "clone"
     # As de escrita existem no vocabulario para que a policy e a UI possam
     # raciocinar sobre elas antes de qualquer implementacao existir.
-    CRIAR_BRANCH = "create_branch"
-    COMMITAR = "commit"
-    EMPURRAR = "push"
-    ABRIR_PR = "open_pr"
-    REVISAR = "review"
-    MERGEAR = "merge"
+    CREATE_BRANCH = "create_branch"
+    COMMIT = "commit"
+    PUSH = "push"
+    OPEN_PR = "open_pr"
+    REVIEW = "review"
+    MERGE = "merge"
 
 
 READ_CAPS: frozenset[RepoCapability] = frozenset({
-    RepoCapability.LER_METADADOS, RepoCapability.LER_ARQUIVOS,
-    RepoCapability.LER_HISTORICO, RepoCapability.LER_BRANCHES,
-    RepoCapability.LER_PULL_REQUESTS, RepoCapability.CLONAR,
+    RepoCapability.READ_METADATA, RepoCapability.READ_FILES,
+    RepoCapability.READ_HISTORY, RepoCapability.READ_BRANCHES,
+    RepoCapability.READ_PULL_REQUESTS, RepoCapability.CLONE,
 })
 
 WRITE_CAPS: frozenset[RepoCapability] = frozenset(RepoCapability) - READ_CAPS
@@ -213,7 +213,7 @@ class RepositoryProvider(Port):
     # ---- escrita: contrato declarado, nada implementado -----------------
     #
     # As assinaturas existem para que o desenho futuro seja visivel e criticavel
-    # agora. Cada uma tem a forma que impede um defeito ja conhecido -- e por
+    # now. Cada uma tem a forma que impede um defeito ja conhecido -- e por
     # isso vale escreve-las antes, e nao depois de o defeito acontecer.
 
     def create_branch(self, key: str, name: str, a_partir_de: str) -> Branch:
@@ -236,7 +236,7 @@ class RepositoryProvider(Port):
     def submit_review(self, key: str, numero: int, head_sha: str,
                       body: str, veredito: str) -> Review:
         """`head_sha` e obrigatorio na assinatura para que nenhum adapter possa
-        publicar 'no head que existir agora'. O adapter deve reler o head e
+        publicar 'no head que existir now'. O adapter deve reler o head e
         abortar se mudou: parecer que nasce vencido e pior que parecer ausente."""
         raise NotImplementedError
 

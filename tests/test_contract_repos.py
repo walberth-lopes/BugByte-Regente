@@ -175,7 +175,7 @@ def test_filter_of_branch(provider):
 def test_declares_capabilities(provider):
     for r in provider.list_repositories():
         assert r.capabilities
-        assert r.can(RepoCapability.LER_METADADOS)
+        assert r.can(RepoCapability.READ_METADATA)
 
 
 def test_not_declares_capacidade_of_write_neste_milestone(provider):
@@ -186,7 +186,7 @@ def test_not_declares_capacidade_of_write_neste_milestone(provider):
 
 def test_capacidade_missing_is_declared_is_not_simulated(provider):
     """Git puro nao tem pull request -- e o adapter precisa DIZER isso."""
-    assert not provider.list_repositories()[0].can(RepoCapability.LER_PULL_REQUESTS)
+    assert not provider.list_repositories()[0].can(RepoCapability.READ_PULL_REQUESTS)
 
 
 # ---------------------------------------------------------------------------
