@@ -288,7 +288,7 @@ def cmd_cadeia(args) -> int:
                     branches[r.ref.key] = []
         rel = chain.build(
             workspace_nome=motor.workspace.name, workspace_id=motor.workspace.id,
-            tasks=items, repos=repositories, resolvedor=motor.resolvedor,
+            tasks=items, repos=repositories, resolvedor=motor.resolver,
             policy=motor.policy, risk=motor.risk,
             autonomy=motor.workspace.max_autonomy, branches=branches,
             organization=cfg.organization, client=cfg.client)
@@ -386,9 +386,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("decide", help="decide one item in the queue")
     p.add_argument("approval_id")
-    p.add_argument("opcao")
-    p.add_argument("--por", default="humano")
-    p.add_argument("--nota", default="")
+    p.add_argument("option")
+    # `dest="per"` because that is the keyword `Store.decide_approval` takes.
+    p.add_argument("--by", dest="per", default="humano")
+    p.add_argument("--note", default="")
     p.set_defaults(fn=cmd_decide)
 
     p = sub.add_parser("log", help="the trail of what the engine did")
@@ -397,9 +398,9 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_log)
 
     p = sub.add_parser("sombra", help="see the real work without touching anything")
-    p.add_argument("--minhas", action="store_true", help="only what is assigned to me")
+    p.add_argument("--mine", action="store_true", help="only what is assigned to me")
     p.add_argument("--eu", help="assignee name to count as 'mine'")
-    p.add_argument("--saida", help="write the report to this file")
+    p.add_argument("--output", help="write the report to this file")
     p.set_defaults(fn=cmd_sombra)
 
     p = sub.add_parser("repos", help="visible repositories, without touching anything")
@@ -407,10 +408,10 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(fn=cmd_repos)
 
     p = sub.add_parser("cadeia", help="from the real task to an execution candidate, in shadow")
-    p.add_argument("--limite", type=int, default=10)
+    p.add_argument("--limit", type=int, default=10)
     p.add_argument("--sem-branches", action="store_true",
                    help="skip reading branches (faster, less evidence)")
-    p.add_argument("--saida", help="write the report to this file")
+    p.add_argument("--output", help="write the report to this file")
     p.set_defaults(fn=cmd_cadeia)
 
     p = sub.add_parser("mission", help="select one task, show the briefing, optionally run")
