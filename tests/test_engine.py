@@ -150,7 +150,7 @@ def test_resource_shared_serializes(bench):
     plan = orq.plan()
     assert len(plan.dispatch) == 1
     assert store.task(plan.dispatch[0]).key == "A-1"
-    assert any("recurso ocupado" in a.reason for a in plan.deferred)
+    assert any("resource busy" in a.reason for a in plan.deferred)
 
 
 def test_cycle_escalates_in_instead_of_blocking(bench):

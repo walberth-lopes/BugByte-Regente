@@ -126,8 +126,8 @@ def execute(
     r.blocked = len(plan.deferred)
     r.in_cycle = plan.in_cycle
     for a in plan.deferred:
-        # Agrupar pela CAUSA, nao pelo texto: "recurso ocupado: parent:SG-1" e
-        # "recurso ocupado: parent:SG-2" sao o mesmo diagnostico.
+        # Group by CAUSE, not by text: "resource busy: parent:SG-1" and
+        # "resource busy: parent:SG-2" are the same diagnosis.
         r.deferral_reasons[a.reason.split(":")[0].strip()] += 1
 
     layers = grafo.layers()

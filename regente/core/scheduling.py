@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Scheduler: escolhe o que roda now. Funcao pura, testavel sem banco.
+"""Scheduler: picks what runs now. A pure function, testable without a database.
 
-O objetivo declarado do motor e **trabalho util concluido por unidade de tempo**,
-nao volume de analise. O scheduler e onde isso vira codigo: ele maximiza
-paralelismo, mas nunca ao preco de dois workers se atropelando.
+The engine's stated goal is **useful work completed per unit of time**, not
+volume of analysis. The scheduler is where that becomes code: it maximises
+parallelism, but never at the price of two workers running each other over.
 
-Nao paralelizar as cegas. Antes de abrir dois slots, o plano verifica:
+Do not parallelise blindly. Before opening two slots, the plan checks:
 
-- **dependencia**: os pais concluiram?
-- **conflito de recurso**: os dois tocam o mesmo arquivo, migration, modulo,
-  API ou repositorio em exclusividade?
-- **ciclo**: o par se autobloqueia e ninguem percebeu?
-- **limite**: ha slot, e o teto diario de despacho foi respeitado?
+- **dependency**: have the parents completed?
+- **resource conflict**: do the two touch the same file, migration, module,
+  API or repository exclusively?
+- **cycle**: does the pair block itself without anyone noticing?
+- **limit**: is there a slot, and was the daily dispatch cap respected?
 
-Conflito e declarado, nao adivinhado. Uma task diz quais chaves de recurso toca
-(`repo:acme/api`, `migration:acme/api`, `file:src/auth.py`) e o scheduler trata
-qualquer interseccao como exclusao mutua. Detectar conflito semantico de verdade
-exige ler o codigo -- isso e trabalho de um agente de analise, que alimenta esta
-lista. O scheduler nunca decide sozinho que dois diffs "provavelmente" convivem.
+A conflict is declared, not guessed. A task states which resource keys it
+touches (`repo:acme/api`, `migration:acme/api`, `file:src/auth.py`) and the
+scheduler treats any intersection as mutual exclusion. Detecting a genuine
+semantic conflict requires reading the code -- that is the job of an analysis
+agent, which feeds this list. The scheduler never decides on its own that two
+diffs "probably" coexist.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from .graph import DependencyGraph
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
-    """O que o scheduler precisa saber de uma task. Nada alem disso."""
+    """What the scheduler needs to know about a task. Nothing beyond that."""
     task_id: str
     priority: int = 100
     resources: frozenset[str] = frozenset()
@@ -52,7 +53,8 @@ class Deferred:
 class Plan:
     dispatch: tuple[str, ...] = ()
     deferred: tuple[Deferred, ...] = ()
-    #: Tasks que se autobloqueiam. Nao viram trabalho: viram pergunta ao humano.
+    #: Self-blocking tasks. They do not become work: they become a question for
+    #: the human.
     in_cycle: tuple[str, ...] = ()
 
     @property
@@ -69,21 +71,21 @@ def plan(
     dispatched_today: int = 0,
     nomes: dict[str, str] | None = None,
 ) -> Plan:
-    """`em_execucao` mapeia task_id -> recursos que ela ja segurou.
+    """`running_now` maps task_id -> resources it already holds.
 
-    `nomes` traduz id interno para a chave que um humano reconhece. Um motivo de
-    adiamento que cita id opaco obriga quem le a ir consultar o banco -- e o
-    motivo existe justamente para evitar isso.
+    `nomes` translates an internal id into the key a human recognises. A
+    deferral reason quoting an opaque id forces the reader to go and query the
+    database -- and the reason exists precisely to avoid that.
 
-    Ordem de decisao: prioridade, depois chave. Ordenacao estavel importa mais do
-    que parece -- sem ela, um empate faz o mesmo tick escolher tasks diferentes a
-    cada execucao, e o motor fica indo e voltando sem terminar nada.
+    Decision order: priority, then key. Stable ordering matters more than it
+    looks -- without it a tie makes the same tick pick different tasks on each
+    run, and the engine keeps going back and forth without finishing anything.
     """
     chave_de = (nomes or {})
     locked = grafo.in_cycle()
     unblocked = grafo.unblocked(completed)
 
-    # Recursos ja ocupados por quem esta rodando. Um worker vivo tem posse.
+    # Resources already taken by whoever is running. A live worker owns them.
     taken: set[str] = set()
     for resources in running_now.values():
         taken |= set(resources)
@@ -96,29 +98,30 @@ def plan(
 
     for c in sorted(candidates, key=lambda x: (x.priority, x.key or x.task_id)):
         if c.task_id in locked:
-            continue  # reportada em `em_ciclo`, nunca despachada
+            continue  # reported in `in_cycle`, never dispatched
         if c.task_id in running_now:
             continue
         if c.task_id not in unblocked:
             pending = sorted(chave_de.get(p, p) for p in grafo.parents(c.task_id) - completed)
-            deferred.append(Deferred(c.task_id, f"depende de {', '.join(pending) or 'trabalho nao concluido'}"))
+            deferred.append(Deferred(c.task_id, f"depends on {', '.join(pending) or 'work not completed'}"))
             continue
 
         collision = c.resources & taken
         if collision:
-            deferred.append(Deferred(c.task_id, f"recurso ocupado: {', '.join(sorted(collision))}"))
+            deferred.append(Deferred(c.task_id, f"resource busy: {', '.join(sorted(collision))}"))
             continue
         if not free_slots:
-            deferred.append(Deferred(c.task_id, "sem slot livre"))
+            deferred.append(Deferred(c.task_id, "no free slot"))
             continue
         if not daily_budget:
-            deferred.append(Deferred(c.task_id, "teto diario de despachos atingido"))
+            deferred.append(Deferred(c.task_id, "daily dispatch cap reached"))
             continue
 
         dispatch.append(c.task_id)
-        # Reserva ja aqui: duas candidatas do MESMO plano nao podem sair juntas
-        # se compartilham recurso. Esquecer isto e o jeito classico de despachar
-        # dois workers para a mesma migration no primeiro tick paralelo.
+        # Reserve right here: two candidates from the SAME plan cannot go out
+        # together if they share a resource. Forgetting this is the classic way
+        # to dispatch two workers onto the same migration on the first parallel
+        # tick.
         taken |= c.resources
         free_slots -= 1
         daily_budget -= 1

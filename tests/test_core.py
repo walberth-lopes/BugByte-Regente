@@ -85,7 +85,7 @@ def ctx(kind: str, environment: str = "staging",
 def test_action_without_rule_is_denied():
     d = motor_policy().decide(ctx("cloud.provision"))
     assert d.effect == Effect.DENY
-    assert "nenhuma regra" in d.reason
+    assert "no rule allows" in d.reason
 
 
 def test_read_passes():
@@ -213,7 +213,7 @@ def test_not_parallelize_who_touches_the_same_resource():
              Candidate("B", priority=2, resources=frozenset({"migration:api"}))]
     p = plan(cands, g, set(), {}, Limits(max_workers=4))
     assert p.dispatch == ("A",)
-    assert any("recurso ocupado" in a.reason for a in p.deferred)
+    assert any("resource busy" in a.reason for a in p.deferred)
 
 
 def test_respects_worker_already_running():
@@ -239,7 +239,7 @@ def test_ceiling_daily():
     p = plan([Candidate("A")], g, set(), {}, Limits(max_dispatches_per_day=8),
                 dispatched_today=8)
     assert not p.dispatch
-    assert any("teto diario" in a.reason for a in p.deferred)
+    assert any("daily dispatch cap" in a.reason for a in p.deferred)
 
 
 def test_order_is_stable():
