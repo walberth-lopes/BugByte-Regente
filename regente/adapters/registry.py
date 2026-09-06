@@ -60,6 +60,52 @@ def _workspace_worktree(o: dict[str, Any]) -> Port:
     return GitWorktree(clones=o.get("clones", {}), raiz=o["raiz"])
 
 
+def _tasks_jira(o: dict[str, Any]) -> Port:
+    """Jira Cloud, somente leitura.
+
+    Dois transportes pelo mesmo adapter: `http` fala com o site de verdade,
+    `instantaneo` reproduz respostas reais gravadas. O adapter e identico nos
+    dois casos -- e por isso o teste de contrato exercita o mesmo codigo que
+    roda contra a rede.
+    """
+    from .tasks.jira import JiraTasks
+    from .tasks.transporte import TransporteHTTP, TransporteInstantaneo
+
+    observador = o.get("observador")
+    modo = o.get("transporte", "http")
+    if modo == "instantaneo":
+        from pathlib import Path
+        transporte = TransporteInstantaneo(
+            diretorio=Path(o["instantaneos"]), observador=observador)
+    elif modo == "http":
+        site = o["site"].rstrip("/")
+        segredos = o["segredos"]           # SecretProvider, injetado pela composicao
+        ref_usuario = o.get("usuario_ref") or "env:JIRA_EMAIL"
+        ref_token = o.get("token_ref") or "env:JIRA_API_TOKEN"
+        transporte = TransporteHTTP(
+            base_url=site,
+            credencial=lambda: (segredos.resolve(ref_usuario), segredos.resolve(ref_token)),
+            timeout=int(o.get("timeout", 30)),
+            max_tentativas=int(o.get("max_tentativas", 3)),
+            observador=observador)
+    else:
+        raise KeyError(f"transporte desconhecido para jira: {modo!r}. Use http ou instantaneo")
+
+    return JiraTasks(
+        transporte=transporte,
+        jql=o.get("jql") or "statusCategory != Done ORDER BY updated DESC",
+        recursos_por=o.get("recursos_por", "parent"),
+        max_paginas=int(o.get("max_paginas", 10)),
+        por_pagina=int(o.get("por_pagina", 100)),
+        site=o.get("site", ""))
+
+
+def _segredos_escopados(o: dict[str, Any]) -> Port:
+    from .segredos import Segredos
+    return Segredos(permitidas=frozenset(o.get("permitidas", ())),
+                    workspace=o.get("workspace", "?"))
+
+
 def _notify_console(o: dict[str, Any]) -> Port:
     from .notify.console import Console
     return Console(jornal=o.get("jornal"))
@@ -76,6 +122,8 @@ def _runner_comando(o: dict[str, Any]) -> Port:
 
 
 registra(Capability.TASKS, "filesystem", _tasks_filesystem)
+registra(Capability.TASKS, "jira", _tasks_jira)
+registra(Capability.SECRETS, "escopado", _segredos_escopados)
 registra(Capability.WORKSPACE, "diretorio", _workspace_diretorio)
 registra(Capability.WORKSPACE, "worktree", _workspace_worktree)
 registra(Capability.NOTIFICATION, "console", _notify_console)

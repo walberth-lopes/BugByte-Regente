@@ -7,7 +7,7 @@ Marco não fecha sem prova em disco.
 |---|---|---|
 | **1** | **Core, estado, policy, scheduler** ✅ | tick descobre, monta grafo, despacha em paralelo, sobrevive a `kill -9` e escala ao humano |
 | 2 | Mission Control (UI local) | as 4 perguntas na tela; decidir um item da fila pelo navegador |
-| 3 | TaskProvider real | segundo adapter de tasks lendo o board de verdade, em sombra |
+| **3** | **TaskProvider real** ✅ | adapter real lendo o board de verdade em sombra; contrato passa em dois provedores; zero mutacao |
 | 4 | RepositoryProvider real | branch, commit, push e PR pelo motor |
 | 5 | CoderAgent | worker que escreve código de verdade em worktree isolado |
 | 6 | CI + PR | motor acompanha checks e reage a vermelho |

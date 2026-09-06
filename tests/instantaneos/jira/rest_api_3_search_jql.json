@@ -1,0 +1,463 @@
+{
+ "issues": [
+  {
+   "id": "21718",
+   "key": "SG-1220",
+   "fields": {
+    "summary": "Trabalho de exemplo 1",
+    "issuetype": {
+     "id": "10024",
+     "description": "As subtarefas monitoram pequenas partes do trabalho que fazem parte de uma tarefa maior.",
+     "name": "Subtarefa",
+     "subtask": true,
+     "hierarchyLevel": -1
+    },
+    "parent": {
+     "id": "21686",
+     "key": "SG-1188",
+     "fields": {
+      "summary": "[🧹FAXINA SC] [JOB][SCAM CHECKER] Isolar sincronizações PostgreSQL↔BigQuery fora dos Services",
+      "status": {
+       "description": "",
+       "name": "PLANNING",
+       "id": "10194",
+       "statusCategory": {
+        "id": 4,
+        "key": "indeterminate",
+        "colorName": "yellow",
+        "name": "In Progress"
+       }
+      },
+      "priority": {
+       "name": "High",
+       "id": "2"
+      },
+      "issuetype": {
+       "id": "10022",
+       "description": "Tasks track small, distinct pieces of work.",
+       "name": "Task",
+       "subtask": false,
+       "hierarchyLevel": 0
+      }
+     }
+    },
+    "components": [],
+    "project": {
+     "id": "10007",
+     "key": "SG",
+     "name": "Squad Tech",
+     "projectTypeKey": "software",
+     "simplified": true
+    },
+    "issuelinks": [],
+    "assignee": {
+     "displayName": "Pessoa 1",
+     "accountId": "acct-1"
+    },
+    "priority": {
+     "name": "High",
+     "id": "2"
+    },
+    "updated": "2026-09-06T12:42:35.489-0300",
+    "status": {
+     "description": "",
+     "name": "PLANNING",
+     "id": "10194",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "labels": [
+     "rotulo-1"
+    ]
+   }
+  },
+  {
+   "id": "21872",
+   "key": "SG-1370",
+   "fields": {
+    "summary": "Trabalho de exemplo 2",
+    "issuetype": {
+     "id": "10022",
+     "description": "Tasks track small, distinct pieces of work.",
+     "name": "Task",
+     "subtask": false,
+     "hierarchyLevel": 0
+    },
+    "components": [],
+    "project": {
+     "id": "10007",
+     "key": "SG",
+     "name": "Squad Tech",
+     "projectTypeKey": "software",
+     "simplified": true
+    },
+    "issuelinks": [],
+    "assignee": {
+     "displayName": "Pessoa 2",
+     "accountId": "acct-2"
+    },
+    "priority": {
+     "name": "Medium",
+     "id": "3"
+    },
+    "updated": "2026-09-06T09:02:50.514-0300",
+    "status": {
+     "description": "",
+     "name": "CODING",
+     "id": "10063",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "labels": []
+   }
+  },
+  {
+   "id": "21968",
+   "key": "SG-1433",
+   "fields": {
+    "summary": "Trabalho de exemplo 3",
+    "issuetype": {
+     "id": "10024",
+     "description": "As subtarefas monitoram pequenas partes do trabalho que fazem parte de uma tarefa maior.",
+     "name": "Subtarefa",
+     "subtask": true,
+     "hierarchyLevel": -1
+    },
+    "parent": {
+     "id": "21957",
+     "key": "SG-1422",
+     "fields": {
+      "summary": "[BUG][PAINEL] Corrigir regressão de 331 projeções causada pelo backfill SG-817",
+      "status": {
+       "description": "",
+       "name": "TO DO",
+       "id": "10062",
+       "statusCategory": {
+        "id": 2,
+        "key": "new",
+        "colorName": "blue-gray",
+        "name": "To Do"
+       }
+      },
+      "priority": {
+       "name": "Medium",
+       "id": "3"
+      },
+      "issuetype": {
+       "id": "10055",
+       "description": "Problemas ou erros",
+       "name": "Bug",
+       "subtask": false,
+       "hierarchyLevel": 0
+      }
+     }
+    },
+    "components": [],
+    "project": {
+     "id": "10007",
+     "key": "SG",
+     "name": "Squad Tech",
+     "projectTypeKey": "software",
+     "simplified": true
+    },
+    "issuelinks": [
+     {
+      "id": "10841",
+      "type": {
+       "id": "10000",
+       "name": "Blocks",
+       "inward": "is blocked by",
+       "outward": "blocks"
+      },
+      "inwardIssue": {
+       "id": "21969",
+       "key": "SG-1434",
+       "fields": {
+        "summary": "[SG-1422][BACKFILL] Reconciliar projeções regressivas da Cora",
+        "status": {
+         "description": "",
+         "name": "TO DO",
+         "id": "10062",
+         "statusCategory": {
+          "id": 2,
+          "key": "new",
+          "colorName": "blue-gray",
+          "name": "To Do"
+         }
+        },
+        "priority": {
+         "name": "Medium",
+         "id": "3"
+        },
+        "issuetype": {
+         "id": "10024",
+         "description": "As subtarefas monitoram pequenas partes do trabalho que fazem parte de uma tarefa maior.",
+         "name": "Subtarefa",
+         "subtask": true,
+         "hierarchyLevel": -1
+        }
+       }
+      }
+     }
+    ],
+    "assignee": {
+     "displayName": "Pessoa 3",
+     "accountId": "acct-3"
+    },
+    "priority": {
+     "name": "Medium",
+     "id": "3"
+    },
+    "updated": "2026-09-06T12:17:45.827-0300",
+    "status": {
+     "description": "",
+     "name": "TO DO",
+     "id": "10062",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "labels": []
+   }
+  },
+  {
+   "id": "21969",
+   "key": "SG-1434",
+   "fields": {
+    "summary": "Trabalho de exemplo 4",
+    "issuetype": {
+     "id": "10024",
+     "description": "As subtarefas monitoram pequenas partes do trabalho que fazem parte de uma tarefa maior.",
+     "name": "Subtarefa",
+     "subtask": true,
+     "hierarchyLevel": -1
+    },
+    "parent": {
+     "id": "21957",
+     "key": "SG-1422",
+     "fields": {
+      "summary": "[BUG][PAINEL] Corrigir regressão de 331 projeções causada pelo backfill SG-817",
+      "status": {
+       "description": "",
+       "name": "TO DO",
+       "id": "10062",
+       "statusCategory": {
+        "id": 2,
+        "key": "new",
+        "colorName": "blue-gray",
+        "name": "To Do"
+       }
+      },
+      "priority": {
+       "name": "Medium",
+       "id": "3"
+      },
+      "issuetype": {
+       "id": "10055",
+       "description": "Problemas ou erros",
+       "name": "Bug",
+       "subtask": false,
+       "hierarchyLevel": 0
+      }
+     }
+    },
+    "components": [],
+    "project": {
+     "id": "10007",
+     "key": "SG",
+     "name": "Squad Tech",
+     "projectTypeKey": "software",
+     "simplified": true
+    },
+    "issuelinks": [
+     {
+      "id": "10841",
+      "type": {
+       "id": "10000",
+       "name": "Blocks",
+       "inward": "is blocked by",
+       "outward": "blocks"
+      },
+      "outwardIssue": {
+       "id": "21968",
+       "key": "SG-1433",
+       "fields": {
+        "summary": "[SG-1422][BAELISH] Corrigir precedência da projeção de status CAM",
+        "status": {
+         "description": "",
+         "name": "TO DO",
+         "id": "10062",
+         "statusCategory": {
+          "id": 2,
+          "key": "new",
+          "colorName": "blue-gray",
+          "name": "To Do"
+         }
+        },
+        "priority": {
+         "name": "Medium",
+         "id": "3"
+        },
+        "issuetype": {
+         "id": "10024",
+         "description": "As subtarefas monitoram pequenas partes do trabalho que fazem parte de uma tarefa maior.",
+         "name": "Subtarefa",
+         "subtask": true,
+         "hierarchyLevel": -1
+        }
+       }
+      }
+     }
+    ],
+    "assignee": {
+     "displayName": "Pessoa 4",
+     "accountId": "acct-4"
+    },
+    "priority": {
+     "name": "Medium",
+     "id": "3"
+    },
+    "updated": "2026-09-06T12:17:45.795-0300",
+    "status": {
+     "description": "",
+     "name": "TO DO",
+     "id": "10062",
+     "statusCategory": {
+      "id": 2,
+      "key": "new",
+      "colorName": "blue-gray",
+      "name": "To Do"
+     }
+    },
+    "labels": []
+   }
+  },
+  {
+   "id": "21700",
+   "key": "SG-1202",
+   "fields": {
+    "summary": "Trabalho de exemplo 5",
+    "issuetype": {
+     "id": "10024",
+     "description": "As subtarefas monitoram pequenas partes do trabalho que fazem parte de uma tarefa maior.",
+     "name": "Subtarefa",
+     "subtask": true,
+     "hierarchyLevel": -1
+    },
+    "parent": {
+     "id": "21395",
+     "key": "SG-957",
+     "fields": {
+      "summary": "[🧹FAXINA SC] [GCP][Scam Checker] Separar acessos prod/staging e corrigir conexão Cloud SQL no BigQuery",
+      "status": {
+       "description": "",
+       "name": "REVIEWING",
+       "id": "10095",
+       "statusCategory": {
+        "id": 4,
+        "key": "indeterminate",
+        "colorName": "yellow",
+        "name": "In Progress"
+       }
+      },
+      "priority": {
+       "name": "Highest",
+       "id": "1"
+      },
+      "issuetype": {
+       "id": "10022",
+       "description": "Tasks track small, distinct pieces of work.",
+       "name": "Task",
+       "subtask": false,
+       "hierarchyLevel": 0
+      }
+     }
+    },
+    "components": [],
+    "project": {
+     "id": "10007",
+     "key": "SG",
+     "name": "Squad Tech",
+     "projectTypeKey": "software",
+     "simplified": true
+    },
+    "issuelinks": [
+     {
+      "id": "10707",
+      "type": {
+       "id": "10003",
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "inwardIssue": {
+       "id": "21620",
+       "key": "SG-1122",
+       "fields": {
+        "summary": "[🚨STONE][RA] Provisionar e homologar RA Worker em produção",
+        "status": {
+         "description": "",
+         "name": "CODING",
+         "id": "10063",
+         "statusCategory": {
+          "id": 4,
+          "key": "indeterminate",
+          "colorName": "yellow",
+          "name": "In Progress"
+         }
+        },
+        "priority": {
+         "name": "Highest",
+         "id": "1"
+        },
+        "issuetype": {
+         "id": "10022",
+         "description": "Tasks track small, distinct pieces of work.",
+         "name": "Task",
+         "subtask": false,
+         "hierarchyLevel": 0
+        }
+       }
+      }
+     }
+    ],
+    "assignee": {
+     "displayName": "Pessoa 5",
+     "accountId": "acct-5"
+    },
+    "priority": {
+     "name": "High",
+     "id": "2"
+    },
+    "updated": "2026-09-06T12:27:12.846-0300",
+    "status": {
+     "description": "",
+     "name": "CODING",
+     "id": "10063",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "labels": [
+     "rotulo-5"
+    ]
+   }
+  }
+ ],
+ "nextPageToken": "cursor-de-teste",
+ "isLast": false
+}

@@ -19,7 +19,8 @@ from typing import Any
 import yaml
 
 from ...ports import AdapterErro
-from ...ports.tasks import Comment, ExternalTask, TaskProvider, TaskRef
+from ...ports.tasks import (BLOQUEIA, RELACIONADO, Comment, ExternalTask,
+                            SituacaoExterna, TaskProvider, TaskRef)
 
 
 class FilesystemTasks(TaskProvider):
@@ -48,16 +49,44 @@ class FilesystemTasks(TaskProvider):
             raise AdapterErro(f"{caminho.name} nao contem um mapeamento")
         return dados
 
+    #: Vocabulario deste formato -> vocabulario do motor. Quem escreve o YAML
+    #: escolhe o texto; o mapa e o contrato. Status fora do mapa vira
+    #: DESCONHECIDA e sobe como anomalia -- nunca e coagido para o vizinho.
+    SITUACOES: dict[str, SituacaoExterna] = {
+        "TO DO": SituacaoExterna.NAO_INICIADA,
+        "TODO": SituacaoExterna.NAO_INICIADA,
+        "BACKLOG": SituacaoExterna.NAO_INICIADA,
+        "ANALISE": SituacaoExterna.EM_ANALISE,
+        "PLANNING": SituacaoExterna.EM_ANALISE,
+        "DOING": SituacaoExterna.EM_EXECUCAO,
+        "CODING": SituacaoExterna.EM_EXECUCAO,
+        "IN PROGRESS": SituacaoExterna.EM_EXECUCAO,
+        "REVIEW": SituacaoExterna.EM_REVISAO,
+        "REVIEWING": SituacaoExterna.EM_REVISAO,
+        "QA": SituacaoExterna.EM_VALIDACAO,
+        "DONE": SituacaoExterna.CONCLUIDA,
+        "CANCELLED": SituacaoExterna.CANCELADA,
+        "CANCELADA": SituacaoExterna.CANCELADA,
+    }
+
     def _monta(self, caminho: Path, dados: dict[str, Any]) -> ExternalTask:
+        # `depende_de` e, por definicao, bloqueio -- e o unico tipo de vinculo
+        # que este formato exprime. `relacionado` fica em `relacionadas`, que
+        # nao cria ordem de execucao.
         vinculos = tuple(
-            TaskRef(key=str(v["key"]), tipo=str(v.get("tipo", "blocks")))
-            if isinstance(v, dict) else TaskRef(key=str(v))
+            TaskRef(key=str(v["key"]) if isinstance(v, dict) else str(v),
+                    tipo=str(v.get("tipo", BLOQUEIA)) if isinstance(v, dict) else BLOQUEIA)
             for v in (dados.get("depende_de") or [])
+        ) + tuple(
+            TaskRef(key=str(v), tipo=RELACIONADO)
+            for v in (dados.get("relacionadas") or [])
         )
+        bruto = str(dados.get("estado", "TO DO"))
         return ExternalTask(
             key=str(dados.get("key") or caminho.stem),
             titulo=str(dados.get("titulo") or dados.get("title") or caminho.stem),
-            estado_externo=str(dados.get("estado", "TO DO")),
+            situacao=self.SITUACOES.get(bruto.strip().upper(), SituacaoExterna.DESCONHECIDA),
+            estado_externo=bruto,
             descricao=str(dados.get("descricao") or dados.get("description") or ""),
             url=dados.get("url"),
             prioridade=int(dados.get("prioridade", 100)),
@@ -65,6 +94,7 @@ class FilesystemTasks(TaskProvider):
             responsavel=dados.get("responsavel"),
             vinculos=vinculos,
             recursos=tuple(str(r) for r in (dados.get("recursos") or [])),
+            rotulos=tuple(str(r) for r in (dados.get("labels") or [])),
             dados={"arquivo": str(caminho)})
 
     def list_tasks(self, filtro: dict[str, Any] | None = None) -> list[ExternalTask]:

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from ..adapters import registry
 from ..core import ids
-from ..core.model import Project, Workspace
+from ..core.model import Event, Project, Workspace
 from ..core.policy import PolicyEngine
 from ..core.risk import RiskEngine
 from ..engine.gate import Gate
@@ -72,11 +72,33 @@ def monta(cfg: Config) -> Motor:
     if not projetos:
         store.salva_project(Project(id=project_id, workspace_id=ws.id, nome="padrao"))
 
+    # Segredos sao escopados ao workspace ANTES de qualquer adapter existir:
+    # nenhum adapter recebe um resolvedor que alcance outro cliente.
+    segredos = registry.cria(Capability.SECRETS, "escopado",
+                             {"permitidas": cfg.segredos, "workspace": ws.nome})
+
+    # Observador: toda chamada a provedor externo vira evento, com tenancy.
+    # O adapter nao conhece o Store -- ele avisa, e quem escuta e o motor.
+    def observa(chamada) -> None:
+        store.anota(Event(
+            id=ids.novo(ids.EVENT), workspace_id=ws.id, tipo="chamada_provedor",
+            ator=cfg.providers["tasks"].nome,
+            resumo=(f"{chamada.operacao} {chamada.caminho} "
+                    f"{'ok' if chamada.sucesso else 'FALHOU'} {chamada.duracao_ms}ms"),
+            dados={"organizacao": cfg.organizacao, "cliente": cfg.cliente,
+                   "provedor": cfg.providers["tasks"].nome,
+                   "operacao": chamada.operacao, "caminho": chamada.caminho,
+                   "duracao_ms": chamada.duracao_ms, "sucesso": chamada.sucesso,
+                   "status": chamada.status, "tentativas": chamada.tentativas,
+                   "limite_de_taxa": chamada.limitado,
+                   "request_id": chamada.request_id, "erro": chamada.erro}))
+
     def cria(cap: Capability, chave: str, extras: dict | None = None):
         conf = cfg.providers[chave]
         return registry.cria(cap, conf.nome, {**conf.opcoes, **(extras or {})})
 
-    tasks: TaskProvider = cria(Capability.TASKS, "tasks")
+    tasks: TaskProvider = cria(Capability.TASKS, "tasks",
+                               {"segredos": segredos, "observador": observa})
     areas: WorkspaceProvider = cria(Capability.WORKSPACE, "workspace_provider",
                                     {"raiz": str(cfg.areas)})
     runner: AgentRunner = cria(Capability.RUNNER, "runner")
@@ -126,9 +148,15 @@ def diagnostico(cfg: Config) -> list[tuple[str, bool, str]]:
         conf = cfg.providers[chave]
 
         def prova(cap=cap, conf=conf, chave=chave) -> str:
-            extras = {"raiz": str(cfg.areas)} if cap is Capability.WORKSPACE else {}
-            if cap is Capability.NOTIFICATION:
+            extras: dict = {}
+            if cap is Capability.WORKSPACE:
+                extras = {"raiz": str(cfg.areas)}
+            elif cap is Capability.NOTIFICATION:
                 extras = {"jornal": str(cfg.jornal)}
+            elif cap is Capability.TASKS:
+                extras = {"segredos": registry.cria(
+                    Capability.SECRETS, "escopado",
+                    {"permitidas": cfg.segredos, "workspace": cfg.workspace})}
             porta = registry.cria(cap, conf.nome, {**conf.opcoes, **extras})
             porta.verifica()
             return conf.nome

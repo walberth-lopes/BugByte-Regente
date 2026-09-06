@@ -134,3 +134,45 @@ def test_registro_e_o_unico_a_importar_adapters():
     assert culpados == ["adapters/registry.py"] or culpados == ["app/container.py"] or set(culpados) <= {
         "app/container.py", "cli.py"}, (
         f"quem importa adapters fora do registro: {culpados}")
+
+
+def test_trocar_de_provedor_so_toca_em_adapter_e_configuracao():
+    """A revisao arquitetural do Marco 3, escrita como teste.
+
+    Pergunta: se amanha o provedor de tasks for outro completamente diferente,
+    o que precisa mudar? Resposta desejada -- e verificada aqui:
+
+        core        NENHUMA mudanca
+        ports       NENHUMA mudanca
+        engine      NENHUMA mudanca
+        adapters    implementacao nova
+        config      provedor novo declarado
+
+    O teste prova as tres primeiras linhas. As duas ultimas sao o trabalho.
+    """
+    # 1. Ninguem fora de adapters/ decide QUAL implementacao usar. As duas
+    #    excecoes sao a raiz de composicao e a superficie que a exibe.
+    escolhem = set()
+    for arq in RAIZ.rglob("*.py"):
+        rel = arq.relative_to(RAIZ).as_posix()
+        if rel.startswith("adapters/"):
+            continue
+        if any("adapters" in nome for nome in _imports(arq)):
+            escolhem.add(rel)
+    assert escolhem == {"app/container.py", "cli.py"}, (
+        f"quem mais escolhe implementacao: {escolhem - {'app/container.py', 'cli.py'}}")
+
+    # 2. O motor fala com a PORTA, e a porta nao conhece fornecedor.
+    porta = (RAIZ / "ports" / "tasks.py").read_text(encoding="utf-8")
+    prosa = _linhas_de_prosa(RAIZ / "ports" / "tasks.py")
+    for n, linha in enumerate(porta.splitlines(), 1):
+        if n in prosa:
+            continue
+        assert not re.search("|".join(FORNECEDORES), linha, re.IGNORECASE), (
+            f"ports/tasks.py:{n} conhece um fornecedor: {linha.strip()}")
+
+    # 3. Cada capacidade ja tem mais de uma implementacao possivel -- e uma
+    #    abstracao com um unico implementador nunca foi testada de verdade.
+    import regente.adapters.registry as reg
+    assert len(reg.disponiveis()["tasks"]) >= 2, (
+        "TaskProvider com um adapter so nao prova nada")

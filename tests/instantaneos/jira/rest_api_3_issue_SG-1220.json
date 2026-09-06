@@ -1,0 +1,75 @@
+{
+ "id": "21718",
+ "key": "SG-1220",
+ "fields": {
+  "summary": "Trabalho de exemplo 1",
+  "issuetype": {
+   "id": "10024",
+   "description": "As subtarefas monitoram pequenas partes do trabalho que fazem parte de uma tarefa maior.",
+   "name": "Subtarefa",
+   "subtask": true,
+   "hierarchyLevel": -1
+  },
+  "parent": {
+   "id": "21686",
+   "key": "SG-1188",
+   "fields": {
+    "summary": "[🧹FAXINA SC] [JOB][SCAM CHECKER] Isolar sincronizações PostgreSQL↔BigQuery fora dos Services",
+    "status": {
+     "description": "",
+     "name": "PLANNING",
+     "id": "10194",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "priority": {
+     "name": "High",
+     "id": "2"
+    },
+    "issuetype": {
+     "id": "10022",
+     "description": "Tasks track small, distinct pieces of work.",
+     "name": "Task",
+     "subtask": false,
+     "hierarchyLevel": 0
+    }
+   }
+  },
+  "components": [],
+  "project": {
+   "id": "10007",
+   "key": "SG",
+   "name": "Squad Tech",
+   "projectTypeKey": "software",
+   "simplified": true
+  },
+  "issuelinks": [],
+  "assignee": {
+   "displayName": "Pessoa 1",
+   "accountId": "acct-1"
+  },
+  "priority": {
+   "name": "High",
+   "id": "2"
+  },
+  "updated": "2026-09-06T12:42:35.489-0300",
+  "status": {
+   "description": "",
+   "name": "PLANNING",
+   "id": "10194",
+   "statusCategory": {
+    "id": 4,
+    "key": "indeterminate",
+    "colorName": "yellow",
+    "name": "In Progress"
+   }
+  },
+  "labels": [
+   "rotulo-1"
+  ]
+ }
+}

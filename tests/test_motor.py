@@ -403,3 +403,90 @@ def test_area_de_trabalho_e_da_task_e_sobrevive_a_retomada(bancada):
     assert len(runs) == 2
     assert runs[1].workspace_path == str(primeira), "a retomada abriu area nova"
     assert (Path(runs[1].workspace_path) / "wip.txt").is_file(), "o WIP foi jogado fora"
+
+
+# ---- relevancia: o que a ORIGEM diz sobre o trabalho ---------------------
+# Os dois testes abaixo travam defeitos encontrados rodando contra um board
+# real. Nenhum dado inventado os teria revelado: eles so aparecem quando o
+# provedor descreve trabalho que ja tem gente nele.
+
+def test_nao_despacha_trabalho_que_ja_tem_alguem(bancada):
+    """Um agente por cima de uma pessoa e o pior desfecho possivel.
+
+    Medido contra o board real: duas issues em CODING foram despachadas no
+    primeiro tick antes desta guarda existir.
+    """
+    escreve_task(bancada.tasks, "A-1", estado="TO DO", recursos=["repo:a"])
+    escreve_task(bancada.tasks, "A-2", estado="CODING", recursos=["repo:b"])
+    escreve_task(bancada.tasks, "A-3", estado="REVIEWING", recursos=["repo:c"])
+    orq, store = bancada()
+    orq.tick()
+    rel = orq.tick()
+
+    assert rel.despachadas == ("A-1",)
+    porchave = {t.chave: t for t in store.tasks("wks_teste")}
+    assert porchave["A-2"].estado is TaskState.BLOCKED
+    assert porchave["A-3"].estado is TaskState.BLOCKED
+    assert porchave["A-2"].dados["bloqueada_por"] == "origem"
+
+
+def test_situacao_desconhecida_nao_e_despachada(bancada):
+    """Nao saber se alguem esta na task custa um adiamento, nunca um atropelo."""
+    escreve_task(bancada.tasks, "A-9", estado="AGUARDANDO JURIDICO", recursos=["repo:x"])
+    orq, store = bancada()
+    orq.tick()
+    rel = orq.tick()
+    assert not rel.despachadas
+    assert store.tasks("wks_teste")[0].estado is TaskState.BLOCKED
+    assert rel.anomalias and "nao mapeado" in rel.anomalias[0]
+
+
+def test_mudanca_na_origem_libera_o_trabalho(bancada):
+    """A pessoa devolveu a task ao board; o motor precisa notar sozinho."""
+    escreve_task(bancada.tasks, "A-1", estado="REVIEWING", recursos=["repo:a"])
+    orq, store = bancada()
+    orq.tick(); orq.tick()
+    assert store.tasks("wks_teste")[0].estado is TaskState.BLOCKED
+
+    escreve_task(bancada.tasks, "A-1", estado="TO DO", recursos=["repo:a"])
+    rel = orq.tick()
+    assert rel.mudancas and rel.mudancas[0][0] == "A-1"
+    assert rel.liberadas == ("A-1",)
+    assert store.tasks("wks_teste")[0].estado is TaskState.TESTING
+
+
+def test_bloqueio_por_falha_nao_e_desfeito_por_status_externo(bancada):
+    """So quem foi bloqueado PELA ORIGEM volta por mudanca da origem."""
+    escreve_task(bancada.tasks, "A-1", estado="TO DO", recursos=["repo:a"])
+    orq, store = bancada()
+    orq.tick(); orq.tick()
+    task = store.tasks("wks_teste")[0]
+    store.transiciona(task.id, TaskState.BLOCKED, ator="humano", motivo="parei na mao")
+
+    orq.tick()
+    assert store.task(task.id).estado is TaskState.BLOCKED, (
+        "bloqueio humano nao pode ser desfeito por status de board")
+
+
+def test_trabalho_encerrado_na_origem_nao_entra(bancada):
+    escreve_task(bancada.tasks, "A-1", estado="TO DO", recursos=["repo:a"])
+    escreve_task(bancada.tasks, "A-2", estado="DONE")
+    orq, store = bancada()
+    rel = orq.tick()
+    assert rel.descobertas == 1
+    assert {t.chave for t in store.tasks("wks_teste")} == {"A-1"}
+
+
+def test_hierarquia_nao_vira_dependencia(bancada):
+    """95 de 100 issues do board real tinham mae. Se hierarquia bloqueasse,
+    o motor nao despacharia nada."""
+    escreve_task(bancada.tasks, "MAE-1", estado="TO DO", recursos=["repo:m"])
+    escreve_task(bancada.tasks, "F-1", estado="TO DO", recursos=["repo:a"],
+                 relacionadas=["MAE-1"])
+    escreve_task(bancada.tasks, "F-2", estado="TO DO", recursos=["repo:b"],
+                 relacionadas=["MAE-1"])
+    orq, store = bancada(limites=Limites(max_workers=3))
+    orq.tick()
+    rel = orq.tick()
+    assert set(rel.despachadas) == {"MAE-1", "F-1", "F-2"}
+    assert not store.dependencias("wks_teste"), "relacionamento virou aresta"

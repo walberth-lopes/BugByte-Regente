@@ -64,6 +64,10 @@ class Config:
     #: do dono: curto demais rouba trabalho vivo, longo demais deixa a task
     #: parada depois de um crash.
     lease_segundos: int = 900
+    #: Referencias de segredo que ESTE workspace pode resolver. E a lista
+    #: que o SecretProvider usa como escopo -- o que nao esta aqui, este
+    #: workspace nao alcanca, nem por engano de configuracao.
+    segredos: tuple[str, ...] = ()
     fatores_de_risco: tuple[dict[str, Any], ...] = ()
     modelos: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: Sombra: o motor decide e registra, mas nao executa escrita externa.
@@ -142,6 +146,7 @@ def carrega(caminho: str | Path) -> Config:
             max_tentativas=int(orc.get("max_tentativas", 3))),
         policies=caminho_policies,
         lease_segundos=int(bruto.get('lease_segundos', 900)),
+        segredos=tuple(str(x) for x in (bruto.get('segredos') or ())),
         fatores_de_risco=tuple(bruto.get("fatores_de_risco") or ()),
         modelos=dict(bruto.get("modelos") or {}),
         sombra=bool(bruto.get("sombra", True)),

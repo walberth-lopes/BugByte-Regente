@@ -1,0 +1,432 @@
+{
+ "issues": [
+  {
+   "id": "21927",
+   "key": "SG-1392",
+   "fields": {
+    "summary": "Trabalho de exemplo 6",
+    "issuetype": {
+     "id": "10024",
+     "description": "As subtarefas monitoram pequenas partes do trabalho que fazem parte de uma tarefa maior.",
+     "name": "Subtarefa",
+     "subtask": true,
+     "hierarchyLevel": -1
+    },
+    "parent": {
+     "id": "21395",
+     "key": "SG-957",
+     "fields": {
+      "summary": "[🧹FAXINA SC] [GCP][Scam Checker] Separar acessos prod/staging e corrigir conexão Cloud SQL no BigQuery",
+      "status": {
+       "description": "",
+       "name": "REVIEWING",
+       "id": "10095",
+       "statusCategory": {
+        "id": 4,
+        "key": "indeterminate",
+        "colorName": "yellow",
+        "name": "In Progress"
+       }
+      },
+      "priority": {
+       "name": "Highest",
+       "id": "1"
+      },
+      "issuetype": {
+       "id": "10022",
+       "description": "Tasks track small, distinct pieces of work.",
+       "name": "Task",
+       "subtask": false,
+       "hierarchyLevel": 0
+      }
+     }
+    },
+    "components": [],
+    "project": {
+     "id": "10007",
+     "key": "SG",
+     "name": "Squad Tech",
+     "projectTypeKey": "software",
+     "simplified": true
+    },
+    "issuelinks": [],
+    "assignee": {
+     "displayName": "Pessoa 6",
+     "accountId": "acct-6"
+    },
+    "priority": {
+     "name": "Medium",
+     "id": "3"
+    },
+    "updated": "2026-09-06T12:26:11.752-0300",
+    "status": {
+     "description": "",
+     "name": "REVIEWING",
+     "id": "10095",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "labels": []
+   }
+  },
+  {
+   "id": "21702",
+   "key": "SG-1204",
+   "fields": {
+    "summary": "Trabalho de exemplo 7",
+    "issuetype": {
+     "id": "10024",
+     "description": "As subtarefas monitoram pequenas partes do trabalho que fazem parte de uma tarefa maior.",
+     "name": "Subtarefa",
+     "subtask": true,
+     "hierarchyLevel": -1
+    },
+    "parent": {
+     "id": "21593",
+     "key": "SG-1095",
+     "fields": {
+      "summary": "[🧹FAXINA SC] [REPO][scamchecker-crawlers-worker] Extrair runtime e migrar schedulers dos crawlers",
+      "status": {
+       "description": "",
+       "name": "TO DO",
+       "id": "10062",
+       "statusCategory": {
+        "id": 2,
+        "key": "new",
+        "colorName": "blue-gray",
+        "name": "To Do"
+       }
+      },
+      "priority": {
+       "name": "High",
+       "id": "2"
+      },
+      "issuetype": {
+       "id": "10022",
+       "description": "Tasks track small, distinct pieces of work.",
+       "name": "Task",
+       "subtask": false,
+       "hierarchyLevel": 0
+      }
+     }
+    },
+    "components": [],
+    "project": {
+     "id": "10007",
+     "key": "SG",
+     "name": "Squad Tech",
+     "projectTypeKey": "software",
+     "simplified": true
+    },
+    "issuelinks": [
+     {
+      "id": "10833",
+      "type": {
+       "id": "10003",
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "outwardIssue": {
+       "id": "21965",
+       "key": "SG-1430",
+       "fields": {
+        "summary": "[🧹FAXINA SC][BUG][ALERTAS] Dois ramos do transform_bacen_pix_keys despejam conteúdo do arquivo no detail que vai ao #scamchecker-alerts",
+        "status": {
+         "description": "",
+         "name": "REVIEWING",
+         "id": "10095",
+         "statusCategory": {
+          "id": 4,
+          "key": "indeterminate",
+          "colorName": "yellow",
+          "name": "In Progress"
+         }
+        },
+        "priority": {
+         "name": "Medium",
+         "id": "3"
+        },
+        "issuetype": {
+         "id": "10055",
+         "description": "Problemas ou erros",
+         "name": "Bug",
+         "subtask": false,
+         "hierarchyLevel": 0
+        }
+       }
+      }
+     }
+    ],
+    "assignee": {
+     "displayName": "Pessoa 7",
+     "accountId": "acct-7"
+    },
+    "priority": {
+     "name": "High",
+     "id": "2"
+    },
+    "updated": "2026-09-06T12:26:43.864-0300",
+    "status": {
+     "description": "",
+     "name": "CODING",
+     "id": "10063",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "labels": [
+     "rotulo-7"
+    ]
+   }
+  },
+  {
+   "id": "21946",
+   "key": "SG-1411",
+   "fields": {
+    "summary": "Trabalho de exemplo 8",
+    "issuetype": {
+     "id": "10022",
+     "description": "Tasks track small, distinct pieces of work.",
+     "name": "Task",
+     "subtask": false,
+     "hierarchyLevel": 0
+    },
+    "parent": {
+     "id": "21681",
+     "key": "SG-1183",
+     "fields": {
+      "summary": "Faxina Scam Checker",
+      "status": {
+       "description": "",
+       "name": "TO DO",
+       "id": "10062",
+       "statusCategory": {
+        "id": 2,
+        "key": "new",
+        "colorName": "blue-gray",
+        "name": "To Do"
+       }
+      },
+      "priority": {
+       "name": "High",
+       "id": "2"
+      },
+      "issuetype": {
+       "id": "10023",
+       "description": "Os epics monitoram coleções de tarefas, histórias e bugs relacionados.",
+       "name": "Epic",
+       "subtask": false,
+       "hierarchyLevel": 1
+      }
+     }
+    },
+    "components": [],
+    "project": {
+     "id": "10007",
+     "key": "SG",
+     "name": "Squad Tech",
+     "projectTypeKey": "software",
+     "simplified": true
+    },
+    "issuelinks": [
+     {
+      "id": "10802",
+      "type": {
+       "id": "10003",
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "inwardIssue": {
+       "id": "21683",
+       "key": "SG-1185",
+       "fields": {
+        "summary": "[🧹FAXINA SC] [REPO][scamchecker-enrichment-service] Consolidar enrichment realtime/background e padronizar People/Companies",
+        "status": {
+         "description": "",
+         "name": "TO DO",
+         "id": "10062",
+         "statusCategory": {
+          "id": 2,
+          "key": "new",
+          "colorName": "blue-gray",
+          "name": "To Do"
+         }
+        },
+        "priority": {
+         "name": "Highest",
+         "id": "1"
+        },
+        "issuetype": {
+         "id": "10022",
+         "description": "Tasks track small, distinct pieces of work.",
+         "name": "Task",
+         "subtask": false,
+         "hierarchyLevel": 0
+        }
+       }
+      }
+     },
+     {
+      "id": "10803",
+      "type": {
+       "id": "10003",
+       "name": "Relates",
+       "inward": "relates to",
+       "outward": "relates to"
+      },
+      "inwardIssue": {
+       "id": "20816",
+       "key": "SG-511",
+       "fields": {
+        "summary": "[Enriched Companies] Implementar Risco Jurídico (+ cold_start)",
+        "status": {
+         "description": "",
+         "name": "Done",
+         "id": "10064",
+         "statusCategory": {
+          "id": 3,
+          "key": "done",
+          "colorName": "green",
+          "name": "Done"
+         }
+        },
+        "priority": {
+         "name": "Medium",
+         "id": "3"
+        },
+        "issuetype": {
+         "id": "10022",
+         "description": "Tasks track small, distinct pieces of work.",
+         "name": "Task",
+         "subtask": false,
+         "hierarchyLevel": 0
+        }
+       }
+      }
+     }
+    ],
+    "assignee": {
+     "displayName": "Pessoa 8",
+     "accountId": "acct-8"
+    },
+    "priority": {
+     "name": "Medium",
+     "id": "3"
+    },
+    "updated": "2026-09-06T12:26:13.392-0300",
+    "status": {
+     "description": "",
+     "name": "REVIEWING",
+     "id": "10095",
+     "statusCategory": {
+      "id": 4,
+      "key": "indeterminate",
+      "colorName": "yellow",
+      "name": "In Progress"
+     }
+    },
+    "labels": [
+     "rotulo-8"
+    ]
+   }
+  },
+  {
+   "id": "90001",
+   "key": "SG-9001",
+   "fields": {
+    "summary": "Status que ninguem mapeou",
+    "status": {
+     "name": "AGUARDANDO JURIDICO",
+     "statusCategory": {
+      "key": "indeterminate"
+     }
+    },
+    "issuetype": {
+     "name": "Task",
+     "subtask": false
+    },
+    "priority": {
+     "name": "Medium"
+    },
+    "labels": [],
+    "project": {
+     "key": "SG"
+    },
+    "issuelinks": []
+   }
+  },
+  {
+   "id": "90002",
+   "key": "SG-9002",
+   "fields": {
+    "summary": "",
+    "status": {
+     "name": "TO DO",
+     "statusCategory": {
+      "key": "new"
+     }
+    },
+    "issuetype": {
+     "name": "Task",
+     "subtask": false
+    },
+    "project": {
+     "key": "SG"
+    }
+   }
+  },
+  {
+   "id": "90003",
+   "key": "SG-9003",
+   "fields": {
+    "summary": "Prioridade que o mapa nao conhece",
+    "status": {
+     "name": "TO DO",
+     "statusCategory": {
+      "key": "new"
+     }
+    },
+    "priority": {
+     "name": "Urgentissimo"
+    },
+    "issuetype": {
+     "name": "Task",
+     "subtask": false
+    },
+    "project": {
+     "key": "SG"
+    },
+    "issuelinks": [],
+    "description": {
+     "type": "doc",
+     "version": 1,
+     "content": [
+      {
+       "type": "paragraph",
+       "content": [
+        {
+         "type": "text",
+         "text": "Descricao em ADF, "
+        },
+        {
+         "type": "text",
+         "text": "com dois pedacos."
+        }
+       ]
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "isLast": true
+}

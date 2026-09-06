@@ -30,7 +30,7 @@ from ..core.scheduling import Candidata, Limites, Plano, planeja
 from ..core.states import TaskState
 from ..ports import AdapterErro
 from ..ports.support import NotificationProvider
-from ..ports.tasks import ExternalTask, TaskProvider
+from ..ports.tasks import ExternalTask, SituacaoExterna, TaskProvider
 from ..ports.workspace import AgentRunner, RunRequest, WorkspaceProvider
 from ..ports.store import Store
 from . import escalation, supervisor
@@ -62,6 +62,12 @@ class Relatorio:
     ciclos: tuple[str, ...] = ()
     baseline: bool = False
     erros: tuple[str, ...] = ()
+    #: O que veio torto da origem. Reportado, nunca corrigido em silencio.
+    anomalias: tuple[str, ...] = ()
+    #: Tasks que mudaram de situacao na origem desde a ultima passada.
+    mudancas: tuple[tuple[str, str, str], ...] = ()
+    #: Estavam bloqueadas pela origem e voltaram a fila.
+    liberadas: tuple[str, ...] = ()
 
     def resumo(self) -> str:
         if self.baseline:
@@ -75,6 +81,10 @@ class Relatorio:
             partes.append(f"{len(self.despachadas)} despachada(s)")
         if self.concluidas:
             partes.append(f"{len(self.concluidas)} concluida(s)")
+        if self.mudancas:
+            partes.append(f"{len(self.mudancas)} mudaram na origem")
+        if self.liberadas:
+            partes.append(f"{len(self.liberadas)} liberada(s)")
         if self.escalonadas:
             partes.append(f"{len(self.escalonadas)} precisam de voce")
         if self.erros:
@@ -159,23 +169,62 @@ class Orchestrator:
 
         chaves: dict[str, str] = {}   # chave externa -> task_id
         for e in externas:
+            if e.situacao.encerrada:
+                # Trabalho terminado na origem nao vira trabalho aqui.
+                continue
             task = self.store.task_por_chave(self.workspace.id, self.tasks_provider.nome, e.key)
             if task is None:
                 task = self._nasce(e)
                 rel.descobertas += 1
-                self._anota("descoberta", task_id=task.id, resumo=f"{e.key}: {e.titulo}"[:200])
+                self._anota("descoberta", task_id=task.id,
+                            resumo=f"{e.key}: {e.titulo}"[:200],
+                            situacao=e.situacao.value, anomalias=list(e.anomalias))
+            else:
+                self._atualiza(task, e, rel)
             chaves[e.key] = task.id
+            if e.anomalias:
+                rel.anomalias += tuple(f"{e.key}: {a}" for a in e.anomalias)
 
         # Vinculos so podem ser ligados depois que todas as tasks existem: o
         # bloqueador pode aparecer depois do bloqueado na mesma lista.
+        #
+        # **So vinculo BLOQUEANTE vira aresta.** Hierarquia e relacionamento sao
+        # informacao, nao ordem de execucao: uma subtarefa nao espera a mae
+        # terminar, ela e parte do que a mae e. Tratar os tres como iguais trava
+        # o board inteiro -- e num board real hierarquia e relacionamento sao
+        # muito mais comuns que bloqueio de verdade.
         for e in externas:
             for v in e.vinculos:
+                if not v.bloqueante:
+                    continue
                 alvo = chaves.get(v.key)
                 if alvo and alvo != chaves[e.key]:
                     self.store.liga_dependencia(Dependency(
                         task_id=chaves[e.key], depende_de=alvo, tipo=v.tipo,
                         motivo=f"declarado por {self.tasks_provider.nome}"))
         return not ja_tinha
+
+    def _atualiza(self, task: Task, e: ExternalTask, rel: Relatorio) -> None:
+        """Rele o que mudou na origem. O motor NAO herda estado dela.
+
+        A origem manda no que e dela -- titulo, prioridade, quem esta na task.
+        O estado do motor e do motor: se a pessoa moveu a issue no board, isso
+        muda a *relevancia* do trabalho, nao a etapa em que o worker parou.
+        """
+        antes = task.dados.get("situacao_externa")
+        agora_situacao = e.situacao.value
+        task.titulo = e.titulo
+        task.prioridade = e.prioridade
+        task.dados.update({"situacao_externa": agora_situacao,
+                           "estado_externo": e.estado_externo,
+                           "rotulos": list(e.rotulos)})
+        task.atualizada_em = agora()
+        self.store.salva_task(task)
+        if antes and antes != agora_situacao:
+            rel.mudancas += ((task.chave, antes, agora_situacao),)
+            self._anota("mudou_na_origem", task_id=task.id,
+                        resumo=f"{antes} -> {agora_situacao} ({e.estado_externo})",
+                        de=antes, para=agora_situacao)
 
     def _nasce(self, e: ExternalTask) -> Task:
         t = Task(
@@ -184,7 +233,10 @@ class Orchestrator:
             estado=TaskState.DISCOVERED,
             externo=ExternalRef(provider=self.tasks_provider.nome, key=e.key, url=e.url),
             descricao=e.descricao, prioridade=e.prioridade,
-            recursos=tuple(e.recursos), dados=dict(e.dados))
+            recursos=tuple(e.recursos),
+            dados={**dict(e.dados), "situacao_externa": e.situacao.value,
+                   "estado_externo": e.estado_externo,
+                   "rotulos": list(e.rotulos)})
         self.store.salva_task(t)
         return t
 
@@ -197,6 +249,19 @@ class Orchestrator:
         ponto -- ele enriquece `recursos` e `dependencias`, e o resto do motor nao
         muda.
         """
+        # Trabalho que a origem diz estar bloqueado por terceiros pode voltar a
+        # fila quando a origem mudar de ideia. Este e o unico caminho de volta:
+        # task bloqueada por FALHA nao e desbloqueada por status externo.
+        for t in self.store.tasks(self.workspace.id, [TaskState.BLOCKED]):
+            if t.dados.get("bloqueada_por") != "origem":
+                continue
+            if self._situacao(t).disponivel:
+                t.dados.pop("bloqueada_por", None)
+                self.store.salva_task(t)
+                self.store.transiciona(t.id, TaskState.READY, ator="planner",
+                                       motivo="a origem liberou o trabalho")
+                rel.liberadas += (t.chave,)
+
         for t in self.store.tasks(self.workspace.id, [TaskState.DISCOVERED]):
             self.store.transiciona(t.id, TaskState.ANALYZING, ator="planner",
                                    motivo="analise inicial")
@@ -213,6 +278,23 @@ class Orchestrator:
                 # para o lado de nao paralelizar e barato; errar para o outro
                 # produz dois workers no mesmo arquivo.
                 t.recursos = (f"project:{t.project_id}",)
+            # **A origem decide se o trabalho esta disponivel.**
+            #
+            # Sem esta guarda o motor despacha um worker sobre uma task que ja
+            # tem gente nela -- medido contra o board real: duas issues em CODING
+            # foram despachadas no primeiro tick. Um agente por cima de uma
+            # pessoa e o pior defeito que este marco poderia deixar passar, e
+            # nenhum teste com dado inventado o teria encontrado.
+            situacao = self._situacao(t)
+            if not situacao.disponivel:
+                t.dados["bloqueada_por"] = "origem"
+                self.store.salva_task(t)
+                self.store.transiciona(
+                    t.id, TaskState.BLOCKED, ator="planner",
+                    motivo=f"a origem diz {t.dados.get('estado_externo') or situacao.value}")
+                rel.analisadas += 1
+                continue
+
             self.store.salva_task(t)
             self.store.transiciona(t.id, TaskState.READY, ator="planner",
                                    motivo=f"risco {avaliacao.nivel.name}",
@@ -434,6 +516,19 @@ class Orchestrator:
         self.store.anota(Event(
             id=ids.novo(ids.EVENT), workspace_id=self.workspace.id, tipo=tipo,
             task_id=task_id, run_id=run_id, resumo=resumo, dados=dados))
+
+    def _situacao(self, t: Task) -> SituacaoExterna:
+        """A situacao na origem, reconstruida do que foi persistido.
+
+        Provedor sem nocao de situacao devolve DESCONHECIDA -- que NAO e
+        disponivel. Conservador de proposito: nao saber se alguem esta na task
+        precisa custar um adiamento, nunca um atropelo.
+        """
+        bruto = t.dados.get("situacao_externa")
+        try:
+            return SituacaoExterna(bruto)
+        except ValueError:
+            return SituacaoExterna.DESCONHECIDA
 
     def escopo(self, agente: str = "engine", task_id: str | None = None,
                run_id: str | None = None, project: str = "*") -> Escopo:

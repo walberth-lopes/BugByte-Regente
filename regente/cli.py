@@ -15,7 +15,7 @@ from pathlib import Path
 from .app import container
 from .app.config import Config, carrega
 from .core.states import TaskState
-from .engine import escalation
+from .engine import escalation, sombra
 
 PADRAO = "regente.yaml"
 
@@ -223,6 +223,26 @@ def cmd_plan(args) -> int:
         motor.fecha()
 
 
+def cmd_sombra(args) -> int:
+    """Descobre e planeja contra o provedor real, sem mutar nada."""
+    cfg = _config(args)
+    motor = container.monta(cfg)
+    try:
+        r = sombra.executa(
+            provedor=motor.orchestrator.tasks_provider,
+            limites=cfg.limites,
+            filtro={"apenas_minhas": True} if args.minhas else None,
+            eu=args.eu)
+        print(sombra.texto(r))
+        if args.saida:
+            Path(args.saida).write_text(sombra.texto(r), encoding="utf-8")
+            print()
+            print(f"  gravado em {args.saida}")
+        return 0 if not r.erros_do_provedor else 2
+    finally:
+        motor.fecha()
+
+
 def cmd_rules(args) -> int:
     cfg = _config(args)
     from .app.config import carrega_policies
@@ -284,6 +304,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-n", type=int, default=40)
     p.add_argument("--task", help="filtra por chave de task")
     p.set_defaults(fn=cmd_log)
+
+    p = sub.add_parser("sombra", help="ve o trabalho real sem tocar em nada")
+    p.add_argument("--minhas", action="store_true", help="so o que esta comigo")
+    p.add_argument("--eu", help="nome do responsavel a contar como 'minhas'")
+    p.add_argument("--saida", help="grava o relatorio neste arquivo")
+    p.set_defaults(fn=cmd_sombra)
 
     p = sub.add_parser("rules", help="regras, limites e adapters em vigor")
     p.set_defaults(fn=cmd_rules)

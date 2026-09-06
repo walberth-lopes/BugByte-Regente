@@ -9,10 +9,28 @@ Não é um chatbot que sabe programar.
 
 ## Estado
 
-Marco 1 pronto e provado: descoberta, grafo de dependências, scheduler paralelo,
-workers isolados, estado persistente, detecção de falha, escalonamento humano e
-retomada após `kill -9`. Ver [ROADMAP.md](ROADMAP.md) e
-[ARCHITECTURE.md](ARCHITECTURE.md).
+**Marco 1** — descoberta, grafo de dependências, scheduler paralelo, workers
+isolados, estado persistente, detecção de falha, escalonamento humano e retomada
+após `kill -9`.
+
+**Marco 3** — primeiro provedor real, em sombra: o motor lê um board de verdade,
+normaliza, monta o grafo e planeja, **sem autoridade para mutar nada**. Dois
+provedores completamente diferentes passam pelo mesmo contrato.
+
+Ver [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md) e
+[MAPEAMENTO.md](MAPEAMENTO.md).
+
+## Sombra: ver sem tocar
+
+```bash
+regente sombra
+```
+
+Descobre, normaliza, monta o grafo e mostra o que o motor faria — sem escrever
+uma linha em lugar nenhum. A garantia não é disciplina: o transporte de leitura
+**não tem verbo de escrita**. Ligar escrita exige adicionar um método, o que
+aparece num diff e passa por revisão — não um `if` que alguém desliga sem
+querer.
 
 ## Instalar
 
@@ -40,6 +58,7 @@ regente status    # o que está acontecendo, o que precisa de você
 | `needs-me` | a fila de decisões humanas, com briefing |
 | `decide` | registra sua decisão num item da fila |
 | `log` | a trilha: toda transição, com ator e motivo |
+| `sombra` | vê o trabalho real e o que o motor faria, sem tocar em nada |
 | `rules` | regras, limites e adapters em vigor |
 
 ## O primeiro tick é baseline
