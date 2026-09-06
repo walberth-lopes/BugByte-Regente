@@ -135,7 +135,8 @@ def _scoped_secrets(o: dict[str, Any]) -> Port:
 
 def _workspace_clone(o: dict[str, Any]) -> Port:
     from .workspace.local import GitClone
-    return GitClone(root=o["root"], sources=o.get("sources", {}))
+    return GitClone(root=o["root"], sources=o.get("sources", {}),
+                    remotes=o.get("remotes", {}))
 
 
 def _notify_console(o: dict[str, Any]) -> Port:

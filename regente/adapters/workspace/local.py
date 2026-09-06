@@ -157,7 +157,16 @@ class GitClone(WorkspaceProvider):
     """
 
     root: Path
+    #: repo key -> where to clone FROM. May be a fast local path.
     sources: dict[str, str] = field(default_factory=dict)
+    #: repo key -> where a push may go. The real remote, and nothing else.
+    #:
+    #: Separate from `sources` on purpose. Cloning from a local path is a speed
+    #: decision; pushing to it is a mutation of somebody's checkout. Conflating
+    #: the two is what made the dangerous configuration the default one: git
+    #: sets `origin` to whatever it cloned from, so an area cloned locally comes
+    #: pre-aimed at the source.
+    remotes: dict[str, str] = field(default_factory=dict)
     name: str = "clone"
     timeout: int = 600
 
@@ -205,9 +214,43 @@ class GitClone(WorkspaceProvider):
         # name: the agent must not be able to land on the integration branch by
         # accident, and a branch that already exists must fail loudly.
         self._git("checkout", "-q", "-b", work_branch, cwd=destination)
+        self._aim_remote(destination, repo)
         head = self._git("rev-parse", "HEAD", cwd=destination).strip()
         return WorkArea(id=key, path=str(destination), branch=work_branch, repo=repo,
-                        data={"source": source, "base": base or "", "head_at_clone": head})
+                        data={"source": source, "base": base or "", "head_at_clone": head,
+                              "push_target": self.push_target_of(destination) or ""})
+
+    def _aim_remote(self, destination: Path, repo: str | None) -> None:
+        """Point `origin` at the real remote, or remove it entirely.
+
+        There is no third option on purpose. Leaving `origin` on the local source
+        would make the safest-looking configuration the one that writes into
+        somebody's checkout, and leaving a half-configured remote would fail at
+        push time -- after the work, when failing is most expensive.
+
+        Absence of configuration must make a push IMPOSSIBLE, never accidentally
+        local. That is why the fallback deletes the remote rather than keeping it.
+        """
+        remote = self.remotes.get(repo or "")
+        if remote:
+            self._git("remote", "set-url", "origin", remote, cwd=destination)
+            self._git("remote", "set-url", "--push", "origin", remote, cwd=destination)
+            return
+        try:
+            self._git("remote", "remove", "origin", cwd=destination)
+        except AdapterError:
+            pass   # no remote to remove is the state we wanted anyway
+
+    def push_target_of(self, path: Path | str) -> str | None:
+        """Where a push from this area would actually go. `None` when nowhere."""
+        try:
+            return self._git("remote", "get-url", "--push", "origin",
+                             cwd=Path(path)).strip() or None
+        except AdapterError:
+            return None
+
+    def push_target(self, area: WorkArea) -> str | None:
+        return self.push_target_of(area.path)
 
     def discard(self, area: WorkArea) -> None:
         shutil.rmtree(area.path, ignore_errors=True)

@@ -72,6 +72,15 @@ class WorkspaceProvider(Port):
         """Current commit of the area. Used to prove what a run produced."""
         raise NotImplementedError
 
+    def push_target(self, area: WorkArea) -> str | None:
+        """Where a push from this area would go. `None` means nowhere.
+
+        The engine must be able to ASK before it writes. A provider that cannot
+        answer this cannot be trusted with a push, and `None` is a safe answer:
+        it says a push is impossible, not that it is unconstrained.
+        """
+        return None
+
     def is_dirty(self, area: WorkArea) -> bool:
         """Are there uncommitted changes? Distinguishes 'nothing to commit' from
         'the commit silently did nothing'."""
