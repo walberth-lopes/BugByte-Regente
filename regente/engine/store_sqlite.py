@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Store em SQLite. Unico modulo do motor que fala SQL.
+"""SQLite Store. The only module in the engine that speaks SQL.
 
-Escolhas que nao sao detalhe:
+Choices that are not incidental:
 
-- **WAL + `BEGIN IMMEDIATE`.** Um tick pode rodar enquanto a UI le. WAL permite
-  isso; `IMMEDIATE` na escrita garante que duas transicoes concorrentes da mesma
-  task nao se sobreponham -- e a transicao e onde um despacho duplicado nasce.
-- **Datas em texto ISO-8601 UTC.** SQLite nao tem kind de data. Guardar epoch
-  economiza nada e torna o banco ilegivel num momento em que ler o banco a mao e
-  exatamente o que se precisa fazer.
-- **`estado` guardado como texto do Enum.** Migrar um Enum e trivial; migrar um
-  inteiro cujo significado mudou e um day perdido.
-- **Evento nunca e apagado nem editado.** Estado e projecao; evento e o que
-  aconteceu. `recupera()` reconstroi a partir dos dois.
+- **WAL + `BEGIN IMMEDIATE`.** A tick may run while the UI reads. WAL allows
+  that; `IMMEDIATE` on writes guarantees that two concurrent transitions of the
+  same task do not overlap -- and the transition is where a duplicate dispatch is
+  born.
+- **Dates as ISO-8601 UTC text.** SQLite has no date type. Storing an epoch saves
+  nothing and makes the database unreadable at exactly the moment when reading it
+  by hand is what you need to do.
+- **`state` stored as the Enum's text.** Migrating an Enum is trivial; migrating
+  an integer whose meaning changed is a lost day.
+- **An event is never deleted or edited.** State is a projection; the event is
+  what happened. Recovery (`Orchestrator._recover`) rebuilds from the two.
 """
 
 from __future__ import annotations
@@ -134,18 +135,18 @@ SCHEMA_VERSION = "4"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
-    """Lease deixa de ser global por key e passa a ser (workspace, resource).
+    """A lease stops being global per key and becomes (workspace, resource).
 
-    A tabela e recriada em vez de alterada: `ALTER TABLE` do SQLite nao muda
-    key primaria, e um lease e state EFEMERO por definicao -- ele expira
-    sozinho. O pior caso desta migracao e um worker vivo perder a trava, e esse
-    caso ja tem tratamento: o lease vence, a recuperacao devolve a task a fila e
-    o proximo tick retoma. Preservar linhas aqui daria trabalho para salvar dado
-    que o motor foi desenhado para descartar.
+    The table is recreated rather than altered: SQLite's `ALTER TABLE` does not
+    change a primary key, and a lease is EPHEMERAL state by definition -- it
+    expires on its own. The worst case of this migration is a live worker losing
+    its lock, and that case is already handled: the lease expires, recovery
+    returns the task to the queue and the next tick resumes. Preserving rows here
+    would be work spent saving data the engine was designed to discard.
     """
-    # `execute`, nunca `executescript`: este ultimo faz COMMIT implicito e
-    # mataria a transacao da migracao no meio, deixando o banco entre duas
-    # versoes -- o unico state que a escada existe para impedir.
+    # `execute`, never `executescript`: the latter does an implicit COMMIT and
+    # would kill the migration's transaction halfway through, leaving the
+    # database between two versions -- the one state the ladder exists to prevent.
     c.execute("DROP TABLE IF EXISTS leases")
     c.execute("""CREATE TABLE leases (
                    workspace_id TEXT NOT NULL, resource TEXT NOT NULL,
@@ -154,11 +155,11 @@ def _v1_to_v2(c: sqlite3.Connection) -> None:
                    PRIMARY KEY (workspace_id, resource))""")
 
 
-#: Escada de migracao: versao de source_state -> como chegar na proxima.
+#: Migration ladder: source_state version -> how to reach the next one.
 #:
-#: Existe porque a alternativa e pedir ao owner que apague o banco -- e o banco e
-#: exatamente onde vive o state que o motor promete nao perder. Um bump de
-#: esquema sem migracao transforma a promessa em pegadinha.
+#: It exists because the alternative is asking the owner to delete the database
+#: -- and the database is exactly where the state the engine promises not to lose
+#: lives. A schema bump without a migration turns that promise into a trap.
 def _v2_to_v3(c: sqlite3.Connection) -> None:
     """Column and table names go to en-US, project-wide.
 
@@ -173,8 +174,8 @@ def _v2_to_v3(c: sqlite3.Connection) -> None:
     def columns(table: str) -> set[str]:
         return {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
 
-    # `meta` primeiro: e nele que a propria versao do esquema esta guardada, e
-    # o resto da migracao precisa consegui-la ler.
+    # `meta` first: it is where the schema version itself is stored, and the
+    # rest of the migration needs to be able to read it.
     if has_table("meta") and "chave" in columns("meta"):
         c.execute('ALTER TABLE meta RENAME COLUMN "chave" TO "key"')
     if has_table("meta") and "valor" in columns("meta"):
@@ -456,10 +457,10 @@ class SqliteStore(Store):
 
     def transition(self, task_id: str, destination: TaskState, actor: str,
                     reason: str = "", data: dict | None = None) -> Task:
-        """Le, valida, grava e anota -- numa transacao so.
+        """Reads, validates, writes and records -- all in one transaction.
 
-        Ler dentro da transacao (e nao antes) e o que impede dois ticks
-        concorrentes de partirem do mesmo state e ambos despacharem.
+        Reading inside the transaction (and not before) is what stops two
+        concurrent ticks from starting off the same state and both dispatching.
         """
         with self._tx() as c:
             r = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
@@ -644,7 +645,7 @@ class SqliteStore(Store):
 
     def acquire_lease(self, resource: str, owner: str, workspace_id: str,
                       segundos: int) -> Lease | None:
-        """Concede se livre, vencido, ou ja do mesmo owner (renovacao)."""
+        """Grants if free, expired, or already held by the same owner (renewal)."""
         ts = now()
         expira = ts + timedelta(seconds=segundos)
         with self._tx() as c:
@@ -673,8 +674,8 @@ class SqliteStore(Store):
                                 (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
                                  workspace_id, resource, owner))
             else:
-                # Sem workspace, o owner do lease e o filtro. `dono` e um id de run,
-                # que ja e unico -- entao isto continua seguro, so menos explicito.
+                # With no workspace, the lease's owner is the filter. `owner` is a
+                # run id, already unique -- so this stays safe, just less explicit.
                 cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
                                    WHERE resource=? AND owner=?""",
                                 (_iso(ts + timedelta(seconds=segundos)), _iso(ts),

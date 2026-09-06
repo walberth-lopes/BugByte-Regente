@@ -129,7 +129,7 @@ def test_every_evidence_is_auditable():
         task("K-1", labels=["backend"]), REPOS,
         branches={"acme/api": [Branch(name="feat/K-1-x")]})
     fontes = {e.source for e in a.candidates[0].evidence}
-    assert fontes == {"mapa:rotulo", "branch"}
+    assert fontes == {"map:label", "branch"}
     assert all(e.detail for e in a.candidates[0].evidence)
 
 
@@ -242,6 +242,6 @@ def test_report_tells_where_the_chain_stopped():
 def test_text_of_report_mostra_evidence():
     r = build([task("K-1")], resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))
     t = chain.render(r)
-    assert "CANDIDATOS A EXECUCAO (1)" in t
+    assert "EXECUTION CANDIDATES (1)" in t
     assert "acme/api" in t
-    assert "Mutacoes                   0" in t
+    assert "Mutations                  0" in t

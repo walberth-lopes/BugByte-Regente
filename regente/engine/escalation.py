@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
-"""A fila NEEDS ME.
+"""The NEEDS ME queue.
 
-O criterio de entrada e estreito de proposito. Um item so aparece aqui quando a
-resposta **nao existe dentro do sistema**:
+The entry criterion is deliberately narrow. An item only appears here when the
+answer **does not exist inside the system**:
 
-- a policy exige autoridade humana (merge em producao, por exemplo);
-- o contrato do trabalho e ambiguo e nenhuma leitura extra resolve;
-- a escada de recuperacao acabou;
-- o backlog se autobloqueia (ciclo de dependencias).
+- the policy requires human authority (a merge into production, for example);
+- the work contract is ambiguous and no extra reading resolves it;
+- the recovery ladder ran out;
+- the backlog blocks itself (a dependency cycle).
 
-Nao entram aqui: risco alto (isso compra segunda passada, nao espera), teste
-vermelho (isso e trabalho), error transitorio (isso e retentativa). Encher esta
-fila com o que o motor poderia resolver e o unico jeito garantido de fazer o dono
-parar de le-la.
+These do not belong here: high risk (that buys a second pass, not waiting), a red
+test (that is work), a transient error (that is a retry). Filling this queue with
+what the engine could resolve itself is the one guaranteed way to make the owner
+stop reading it.
 
-O card carrega decisao, nao diagnostico. Log fica no evento, sob demanda.
+The card carries a decision, not a diagnosis. Logs stay in the event, on demand.
 """
 
 from __future__ import annotations
@@ -25,18 +25,20 @@ from ..core import ids
 from ..core.model import Approval, Option, Task
 from ..core.risk import RiskLevel
 
-#: Opcoes padrao. Toda escalonada oferece pelo menos: seguir a recomendacao,
-#: mandar investigar mais, ou parar. "Parar" precisa estar sempre disponivel --
-#: sem ela, a unica saida do dono seria mexer no banco.
-FOLLOW = Option("seguir", "Aprovar a recomendacao", "o motor executa o caminho recomendado")
-INVESTIGATE = Option("investigar", "Pedir mais investigacao", "devolve a task para analise")
-BLOCK = Option("bloquear", "Bloquear a task", "sai da fila de trabalho ate alguem destravar")
-CANCEL = Option("cancelar", "Cancelar a task", "encerra o trabalho")
+#: Default options. Every escalation offers at least: follow the recommendation,
+#: ask for more investigation, or stop. "Stop" has to be available always --
+#: without it, the owner's only way out would be to edit the database by hand.
+#:
+#: The ids stay as they are: they are persisted as the approval's choice.
+FOLLOW = Option("seguir", "Approve the recommendation", "the engine runs the recommended path")
+INVESTIGATE = Option("investigar", "Ask for more investigation", "sends the task back to analysis")
+BLOCK = Option("bloquear", "Block the task", "leaves the work queue until somebody unblocks it")
+CANCEL = Option("cancelar", "Cancel the task", "closes the work out")
 
 
 @dataclass(frozen=True, slots=True)
 class Briefing:
-    """A projecao do Approval para a superficie. Sem vocabulario interno."""
+    """The Approval's projection to the surface. No internal vocabulary."""
     id: str
     key: str
     title: str
@@ -58,14 +60,14 @@ def build(
     risk: RiskLevel = RiskLevel.MEDIUM,
     run_id: str | None = None,
 ) -> Approval:
-    """Cria o item da fila. `por_que_importa` e obrigatorio e nao pode ser vazio.
+    """Creates the queue item. `why_it_matters` is mandatory and cannot be empty.
 
-    Um card que descreve o que aconteceu sem dizer por que importa devolve ao
-    dono o trabalho de descobrir se aquilo merece atencao -- que e exatamente o
-    trabalho que a fila deveria ter poupado.
+    A card describing what happened without saying why it matters hands the owner
+    the job of working out whether it deserves attention -- which is exactly the
+    job the queue was supposed to have spared them.
     """
     if not why_it_matters.strip():
-        raise ValueError("escalonada sem 'por que importa' nao entra na fila")
+        raise ValueError("an escalation without 'why it matters' does not enter the queue")
     return Approval(
         id=ids.new_id(ids.APPROVAL),
         workspace_id=task.workspace_id,
@@ -95,16 +97,16 @@ def briefing(a: Approval, task: Task) -> Briefing:
 
 
 def render(b: Briefing) -> str:
-    """Render de terminal. Mesmo conteudo que a UI mostra."""
+    """Terminal rendering. The same content the UI shows."""
     lines = [
         f"{b.key}  [{b.risk}]",
         f"  {b.title}",
         "",
-        f"  O QUE ACONTECEU   {b.what_happened}",
-        f"  POR QUE IMPORTA   {b.why_it_matters}",
+        f"  WHAT HAPPENED     {b.what_happened}",
+        f"  WHY IT MATTERS    {b.why_it_matters}",
     ]
     if b.what_was_tried:
-        lines.append("  O QUE JA TENTEI   " + b.what_was_tried[0])
+        lines.append("  WHAT I TRIED      " + b.what_was_tried[0])
         lines += ["                    " + t for t in b.what_was_tried[1:]]
     lines.append("")
     for o in b.options:

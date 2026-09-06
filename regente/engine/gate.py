@@ -1,21 +1,22 @@
 # -*- coding: utf-8 -*-
-"""O portao. Toda acao de agente sobre o mundo passa por aqui.
+"""The gate. Every agent action upon the world passes through here.
 
-    Agent -> ToolRequest -> [risco] -> [policy] -> ALLOW/DENY/HUMAN_APPROVAL -> Tool
+    Agent -> ToolRequest -> [risk] -> [policy] -> ALLOW/DENY/HUMAN_APPROVAL -> Tool
 
-Tres propriedades que fazem disto um portao e nao uma funcao de conveniencia:
+Three properties that make this a gate and not a convenience function:
 
-1. **Nao existe caminho alternativo.** Nenhum agente recebe adapter de escrita
-   direto; ele recebe este objeto. Um agente convencido por um comentario de PR
-   ainda esbarra na policy, que nao le texto do agente.
+1. **There is no alternative path.** No agent receives a write adapter directly;
+   it receives this object. An agent talked round by a PR comment still hits the
+   policy, which reads no text from the agent.
 
-2. **Ele refaz o julgamento do zero.** O portao nao aceita risco, justificativa
-   nem veredito calculado por quem chama. Recebe fatos da acao e reavalia. Aceitar
-   um risco pre-calculado seria deixar o modelo escolher o proprio limite.
+2. **It redoes the judgement from scratch.** The gate accepts no risk, no
+   justification and no verdict computed by the caller. It takes the facts of the
+   action and re-evaluates. Accepting a pre-computed risk would be letting the
+   model choose its own limit.
 
-3. **Registra o que negou.** A negativa e o registro mais valioso do motor: e ela
-   que prova, semanas depois, que o portao estava vivo -- e e ela que mostra qual
-   regra afrouxar quando ele apertou demais.
+3. **It records what it denied.** The refusal is the most valuable record the
+   engine produces: it is what proves, weeks later, that the gate was alive --
+   and what shows which rule to loosen when it clamped down too hard.
 """
 
 from __future__ import annotations
@@ -34,7 +35,7 @@ from ..ports.store import Store
 
 @dataclass(frozen=True, slots=True)
 class Scope:
-    """Quem esta agindo e sob qual tenancy. Montado pelo motor, nunca pelo agente."""
+    """Who is acting and under which tenancy. Assembled by the engine, never by the agent."""
     workspace_id: str
     organization: str = "*"
     client: str = "*"
@@ -57,13 +58,13 @@ class Gate:
     store: Store
     policy: PolicyEngine
     risk: RiskEngine
-    #: Quando um HUMAN_APPROVAL aparece, quem transforma isso em item da fila.
-    #: Injetado para que o portao nao conheca a fila -- ele so sabe barrar.
+    #: When a HUMAN_APPROVAL appears, whoever turns it into a queue item.
+    #: Injected so the gate does not know the queue -- it only knows how to block.
     ao_precisar_humano: Callable[[Scope, Action, Verdicts], None] | None = None
     _fatos_extra: dict[str, Any] = field(default_factory=dict)
 
     def assess(self, escopo: Scope, action: Action, fatos: dict[str, Any] | None = None) -> Verdicts:
-        """Julga sem executar. Usado por quem quer saber antes de tentar."""
+        """Judges without executing. Used by anyone who wants to know before trying."""
         contexto_risco = {
             "action": action.kind,
             "environment": action.environment,
@@ -84,21 +85,21 @@ class Gate:
 
     def execute(self, escopo: Scope, action: Action, operation: Callable[[], Any],
                 fatos: dict[str, Any] | None = None) -> Any:
-        """Julga e, se permitido, executa. Toda passagem vira ActionRecord.
+        """Judges and, if allowed, executes. Every passage becomes an ActionRecord.
 
-        `operacao` e um callable sem argumentos justamente para que o portao nao
-        precise conhecer a assinatura de nenhum adapter -- ele autoriza a *acao*
-        declarada, nao a funcao.
+        `operation` is a callable with no arguments precisely so the gate does not
+        need to know any adapter's signature -- it authorises the declared
+        *action*, not the function.
         """
         v = self.assess(escopo, action, fatos)
         inicio = time.monotonic()
 
         if v.decision.effect == Effect.DENY:
-            self._register_call(escopo, action, v, "negado", 0)
+            self._register_call(escopo, action, v, "denied", 0)
             raise PolicyDenied(v.decision.reason, v.decision.rule)
 
         if v.decision.effect == Effect.HUMAN_APPROVAL:
-            self._register_call(escopo, action, v, "aguardando humano", 0)
+            self._register_call(escopo, action, v, "awaiting human", 0)
             if self.ao_precisar_humano:
                 self.ao_precisar_humano(escopo, action, v)
             raise HumanApprovalRequired(v.decision.reason, v.decision.rule)

@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Sombra: descobrir, normalizar e planejar -- sem mutar nada, em lugar nenhum.
+"""Shadow: discover, normalise and plan -- mutating nothing, nowhere.
 
-O relatorio responde a uma pergunta so: **o motor enxerga o trabalho real?**
+The report answers a single question: **does the engine see the real work?**
 
-Ele nao usa o Store nem a maquina de estados. Isso e deliberado: uma execucao de
-sombra precisa ser repetivel e descartavel, e gravar estado a transformaria numa
-execucao de verdade pela metade. O que ela compartilha com o motor de verdade e
-o que importa provar -- o grafo e o scheduler sao os MESMOS objetos.
+It uses neither the Store nor the state machine. That is deliberate: a shadow run
+has to be repeatable and disposable, and writing state would turn it into a
+half-real run. What it does share with the real engine is what matters to prove
+-- the graph and the scheduler are the SAME objects.
 
-`mutacoes` no relatorio e sempre zero, e nao por confianca: o adapter de sombra
-nao tem caminho de escrita. O campo existe para que o numero apareca ao lado dos
-demais, onde alguem notaria se um dia deixasse de ser zero.
+`mutations` in the report is always zero, and not out of trust: the shadow
+adapter has no write path. The field exists so the number appears next to the
+others, where somebody would notice if it ever stopped being zero.
 """
 
 from __future__ import annotations
@@ -36,8 +36,9 @@ class ShadowReport:
     by_external_status: Counter = field(default_factory=Counter)
     dependencies: int = 0
     non_blocking_links: int = 0
-    #: Dependencia declarada para uma task que a consulta nao trouxe. Nao e error
-    #: do motor: e o recorte do JQL menor que o grafo real, e precisa aparecer.
+    #: A dependency declared on a task the query did not bring back. Not an
+    #: engine error: it is the JQL slice being smaller than the real graph, and it
+    #: has to be visible.
     dependencies_out_of_scope: int = 0
     ready: int = 0
     blocked: int = 0
@@ -45,9 +46,9 @@ class ShadowReport:
     parallel_groups: int = 0
     largest_group: int = 0
     in_cycle: tuple[str, ...] = ()
-    #: Por que cada task ficou fora do despacho. Sem isto, "Ready 4" parece
-    #: escassez de trabalho quando pode ser apenas o teto de workers -- duas
-    #: situacoes que exigem acoes opostas do dono.
+    #: Why each task stayed out of the dispatch. Without this, "Ready 4" looks
+    #: like a shortage of work when it may just be the worker cap -- two
+    #: situations that demand opposite actions from the owner.
     deferral_reasons: Counter = field(default_factory=Counter)
     anomalies: tuple[str, ...] = ()
     calls: int = 0
@@ -69,17 +70,18 @@ def execute(
         external_items: list[ExternalTask] = provider.list_tasks(filtro)
     except AdapterError as e:
         r.provider_errors += 1
-        r.anomalies += (f"provedor falhou: {e}",)
+        r.anomalies += (f"provider failed: {e}",)
         return r
 
     r.discovered = len(external_items)
 
-    # Relevante = trabalho que ainda existe. Encerrado sai da conta, e sair da
-    # conta e diferente de sumir: o numero de ignoradas fica no relatorio.
+    # Relevant = work that still exists. Finished work leaves the count, and
+    # leaving the count differs from vanishing: the ignored figure stays in the
+    # report.
     alive: list[ExternalTask] = []
     for t in external_items:
         r.by_status[t.status.value] += 1
-        r.by_external_status[t.external_status or "(sem status)"] += 1
+        r.by_external_status[t.external_status or "(no status)"] += 1
         if t.status.finished:
             r.ignored += 1
             continue
@@ -91,7 +93,7 @@ def execute(
             r.mine += 1
     r.relevant = len(alive)
 
-    # Grafo com a MESMA regra do motor: so vinculo bloqueante vira aresta.
+    # Graph with the SAME rule as the engine: only a blocking link becomes an edge.
     known = {t.key for t in alive}
     grafo = DependencyGraph()
     for t in alive:
@@ -107,8 +109,8 @@ def execute(
             grafo.link(t.key, v.key)
             r.dependencies += 1
 
-    # Quem ja tem alguem trabalhando nela nao e candidata, mas continua no
-    # grafo: ela e o bloqueio de outra pessoa, e some-la seria mentir.
+    # A task somebody is already working on is not a candidate, but stays in the
+    # graph: it is somebody else's blocker, and dropping it would be a lie.
     available = [t for t in alive if t.status.available]
     r.in_progress = sum(1 for t in alive if t.status.in_progress)
 
@@ -117,8 +119,8 @@ def execute(
                   resources=frozenset(t.resources), key=t.key)
         for t in available
     ]
-    # Nada concluido: a sombra nao tem historico. O plano mostra o que o motor
-    # faria no PRIMEIRO tick contra este board.
+    # Nothing completed: the shadow has no history. The plan shows what the
+    # engine would do on the FIRST tick against this board.
     plan = plan(candidates, grafo, completed=set(), running_now={},
                     limits=limits, nomes={t.key: t.key for t in alive})
     r.plan = plan
@@ -147,57 +149,57 @@ def render(r: ShadowReport, limite_anomalias: int = 12) -> str:
         "TASK PROVIDER SHADOW REPORT",
         "",
         linha("Provider", r.provider),
-        linha("Mutations performed", f"{r.mutations}   <- tem de ser 0"),
+        linha("Mutations performed", f"{r.mutations}   <- has to be 0"),
         "",
         linha("Tasks discovered", r.discovered),
         linha("Relevant", r.relevant),
-        linha("Ignored (encerradas)", r.ignored),
+        linha("Ignored (finished)", r.ignored),
         linha("Normalized successfully", r.normalized),
         linha("Normalization errors", r.normalization_errors),
         "",
-        linha("Dependencies (bloqueio)", r.dependencies),
-        linha("Nao-bloqueantes ignorados", r.non_blocking_links),
-        linha("Fora do recorte do JQL", r.dependencies_out_of_scope),
+        linha("Dependencies (blocking)", r.dependencies),
+        linha("Non-blocking ignored", r.non_blocking_links),
+        linha("Outside the JQL slice", r.dependencies_out_of_scope),
         "",
         linha("Ready", r.ready),
         linha("Blocked", r.blocked),
-        linha("Em andamento (terceiros)", r.in_progress),
+        linha("In progress (others)", r.in_progress),
         linha("Parallel groups", r.parallel_groups),
-        linha("Maior grupo paralelo", r.largest_group),
+        linha("Largest parallel group", r.largest_group),
         "",
         linha("Provider calls", r.calls),
         linha("Provider errors", r.provider_errors),
     ]
     if r.mine:
-        output.insert(6, linha("Minhas", r.mine))
+        output.insert(6, linha("Mine", r.mine))
 
-    output += ["", "  POR SITUACAO NORMALIZADA"]
+    output += ["", "  BY NORMALISED STATUS"]
     for k, v in r.by_status.most_common():
         output.append(f"    {k:<16} {v}")
 
-    output += ["", "  POR STATUS DE ORIGEM"]
+    output += ["", "  BY SOURCE STATUS"]
     for k, v in r.by_external_status.most_common(10):
         output.append(f"    {k:<16} {v}")
 
     if r.deferral_reasons:
-        output += ["", "  POR QUE AS OUTRAS NAO SAIRAM"]
+        output += ["", "  WHY THE OTHERS DID NOT GO OUT"]
         for k, v in r.deferral_reasons.most_common():
             output.append(f"    {k:<24} {v}")
 
     if r.plan and r.plan.dispatch:
-        output += ["", f"  DESPACHARIA AGORA ({len(r.plan.dispatch)} em paralelo)"]
+        output += ["", f"  WOULD DISPATCH NOW ({len(r.plan.dispatch)} in parallel)"]
         for t in r.plan.dispatch:
             output.append(f"    {t}")
 
     if r.in_cycle:
-        output += ["", "  EM CICLO (ninguem pode comecar)"]
+        output += ["", "  IN A CYCLE (nobody can start)"]
         output += [f"    {t}" for t in r.in_cycle]
 
     if r.anomalies:
-        output += ["", f"  ANOMALIAS ({len(r.anomalies)})"]
+        output += ["", f"  ANOMALIES ({len(r.anomalies)})"]
         for a in r.anomalies[:limite_anomalias]:
             output.append(f"    {a}")
         if len(r.anomalies) > limite_anomalias:
-            output.append(f"    ... mais {len(r.anomalies) - limite_anomalias}")
+            output.append(f"    ... {len(r.anomalies) - limite_anomalias} more")
 
     return "\n".join(output)
