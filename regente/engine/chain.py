@@ -126,7 +126,7 @@ def build(
         # --- elo 3: da para trabalhar nele? -----------------------------
         if not repo.usable:
             steps.append(Step(t, Stage.REPO_INUTILIZAVEL,
-                                "; ".join(repo.anomalies) or "sem branch base",
+                                "; ".join(repo.anomalies) or "no base branch",
                                 target=target, repo=repo))
             continue
         faltando = [c.value for c in REQUIRED_CAPS if not repo.can(c)]

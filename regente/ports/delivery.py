@@ -32,8 +32,8 @@ class PipelineStatus:
     state: str
     checks: tuple[Check, ...] = ()
     url: str = ""
-    #: True quando o provedor confirmou que NAO existe nenhum check.
-    #: Lista vazia por falha de leitura e AdapterErro, nunca isto.
+    #: True when the provider confirmed that NO check exists.
+    #: An empty list caused by a read failure is an AdapterError, never this.
     sem_checks: bool = False
 
     @property
@@ -50,7 +50,7 @@ class CICDProvider(Port):
 
     @abstractmethod
     def get_status(self, repo: str, reference: str) -> PipelineStatus:
-        """`referencia` e um SHA ou numero de PR, a criterio do adapter."""
+        """`reference` is a SHA or a PR number, at the adapter's discretion."""
 
     def get_logs(self, repo: str, execucao_id: str, limit: int = 200) -> list[str]:
         return []
@@ -79,12 +79,13 @@ class DeploymentProvider(Port):
         raise NotImplementedError
 
     def deploy_production(self, project: str, version: str) -> Deployment:
-        """Separado de staging na port, de proposito.
+        """Separated from staging in the port, on purpose.
 
-        Um unico `deploy(ambiente)` faria a diferenca entre staging e producao
-        virar o valor de uma string vinda do contexto -- exatamente o tipo de
-        campo que um prompt injetado consegue mexer. Sao metodos distintos, com
-        acoes distintas na policy e niveis de autonomia distintos.
+        A single `deploy(environment)` would make the difference between staging
+        and production become the value of a string coming from the context --
+        exactly the kind of field an injected prompt can move. These are
+        distinct methods, with distinct policy actions and distinct autonomy
+        levels.
         """
         raise NotImplementedError
 

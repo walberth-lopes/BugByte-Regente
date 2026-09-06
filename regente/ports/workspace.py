@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""WorkspaceProvider e AgentRunner: onde o worker vive e como ele e executado."""
+"""WorkspaceProvider and AgentRunner: where the worker lives and how it is run."""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ from . import Capability, Port
 
 @dataclass(frozen=True, slots=True)
 class WorkArea:
-    """A area isolada de um worker.
+    """A worker's isolated area.
 
-    Um worker nunca escreve na area de outro. O isolamento e do provedor --
-    worktree, container, VM -- e o motor so precisa do caminho e do identificador
-    para conseguir limpar depois de um crash.
+    A worker never writes into another one's area. The isolation belongs to the
+    provider -- worktree, container, VM -- and the engine only needs the path
+    and the identifier to be able to clean up after a crash.
     """
     id: str
     path: str
@@ -31,20 +31,20 @@ class WorkspaceProvider(Port):
     @abstractmethod
     def prepare(self, key: str, repo: str | None = None,
                 branch: str | None = None, base: str | None = None) -> WorkArea:
-        """`chave` identifica a UNIDADE DE TRABALHO, nao a tentativa.
+        """`key` identifies the UNIT OF WORK, not the attempt.
 
-        Chamar duas vezes com a mesma chave devolve a mesma area, com o que ja
-        estava la. E isso que faz uma retomada apos crash reencontrar os commits
-        WIP em vez de recomecar do zero -- endereca-la pelo run jogaria fora
-        exatamente o trabalho que a recuperacao existe para salvar.
+        Calling it twice with the same key returns the same area, with whatever
+        was already there. That is what lets a resume after a crash find the WIP
+        commits again instead of starting from scratch -- addressing it by run
+        would throw away exactly the work recovery exists to save.
         """
 
     @abstractmethod
     def discard(self, area: WorkArea) -> None:
-        """Solta a area. Precisa ser seguro chamar em area ja perdida.
+        """Releases the area. Must be safe to call on an area already lost.
 
-        Limpeza acontece depois de crash, quando o processo que criou a area nao
-        existe mais -- entao 'ja nao esta la' e success, nao error.
+        Cleanup happens after a crash, when the process that created the area no
+        longer exists -- so 'it is not there any more' is success, not an error.
         """
 
     def list_areas(self) -> list[WorkArea]:
@@ -53,11 +53,11 @@ class WorkspaceProvider(Port):
 
 @dataclass(frozen=True, slots=True)
 class RunRequest:
-    """O que o motor entrega a um worker.
+    """What the engine hands to a worker.
 
-    `contexto` ja vem montado e reduzido: o motor coleta o necessario e nada
-    alem. Despejar o projeto inteiro aqui e o que torna um agente caro, lento e
-    impreciso ao mesmo tempo.
+    `contexto` arrives already assembled and reduced: the engine collects what is
+    needed and nothing more. Dumping the whole project in here is what makes an
+    agent expensive, slow and imprecise all at once.
     """
     run_id: str
     task_id: str
@@ -65,9 +65,9 @@ class RunRequest:
     goal: str
     area: WorkArea
     contexto: dict[str, Any] = field(default_factory=dict)
-    #: Acoes que este worker pode sequer tentar. O Policy Engine ainda decide
-    #: cada chamada; esta lista so evita oferecer ao agente o que ele nunca
-    #: poderia usar.
+    #: Actions this worker may even attempt. The Policy Engine still decides
+    #: each call; this list merely avoids offering the agent what it could never
+    #: use.
     tools: tuple[str, ...] = ()
     limit_iterations: int = 24
     limit_tool_calls: int = 120
@@ -79,25 +79,27 @@ class RunRequest:
 class RunResult:
     ok: bool
     summary: str
-    #: Como o worker terminou: 'concluido', 'timebox', 'sem_progresso',
-    #: 'orcamento', 'error', 'precisa_humano'. O motor decide o proximo passo a
-    #: partir daqui -- por isso e vocabulario fechado, nao texto livre.
+    #: How the worker finished: 'concluido', 'timebox', 'sem_progresso',
+    #: 'orcamento', 'error', 'precisa_humano'. The engine decides the next step
+    #: from this -- which is why it is a closed vocabulary, not free text. The
+    #: values themselves stay as they are: the engine branches on them.
     outcome: str = "concluido"
     artifacts: dict[str, Any] = field(default_factory=dict)
     cost_usd: float = 0.0
     tokens: int = 0
     tool_calls: int = 0
     iterations: int = 0
-    #: Pergunta ao humano, quando `desfecho == 'precisa_humano'`.
+    #: Question for the human, when `outcome == 'precisa_humano'`.
     question: dict[str, Any] | None = None
 
 
 class AgentRunner(Port):
-    """Executa um agente. A implementacao decide o substrato.
+    """Runs an agent. The implementation decides the substrate.
 
-    Esta port e o que impede o motor de virar refem de um harness. Um runner
-    pode ser um harness agentico ja pronto, um laco proprio sobre LLMProvider, ou
-    um script deterministico. O Orchestrator nao muda em nenhum dos casos.
+    This port is what keeps the engine from becoming hostage to one harness. A
+    runner can be an off-the-shelf agentic harness, a loop of its own over
+    LLMProvider, or a deterministic script. The Orchestrator does not change in
+    any of those cases.
     """
     capability = Capability.RUNNER
 

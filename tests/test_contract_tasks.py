@@ -75,7 +75,7 @@ def test_declares_the_that_is(provider):
     port, _ = provider
     d = port.describe()
     assert d["capability"] == "tasks"
-    assert d["adapter"] and d["adapter"] != "desconhecido"
+    assert d["adapter"] and d["adapter"] != "unknown"
 
 
 def test_list_returns_tasks(provider):
@@ -132,7 +132,7 @@ def test_status_desconhecido_not_is_coerced(provider):
     assert desconhecidas, "a fixture precisa conter um status nao mapeado"
     for t in desconhecidas:
         assert t.external_status, "DESCONHECIDA sem o status cru e indiagnosticavel"
-        assert any("nao mapeado" in a for a in t.anomalies)
+        assert any("unmapped status" in a for a in t.anomalies)
 
 
 def test_priority_is_integer_comparable(provider):

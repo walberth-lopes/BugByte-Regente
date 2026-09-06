@@ -438,7 +438,7 @@ def test_status_unknown_not_is_dispatched(bench):
     rel = orq.tick()
     assert not rel.dispatched
     assert store.tasks("wks_teste")[0].state is TaskState.BLOCKED
-    assert rel.anomalies and "nao mapeado" in rel.anomalies[0]
+    assert rel.anomalies and "unmapped status" in rel.anomalies[0]
 
 
 def test_change_in_source_releases_the_work(bench):

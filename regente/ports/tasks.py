@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""TaskProvider: de onde vem o trabalho."""
+"""TaskProvider: where the work comes from."""
 
 from __future__ import annotations
 
@@ -12,16 +12,19 @@ from . import Capability, Port
 
 
 class ExternalStatus(str, Enum):
-    """Onde o trabalho esta, no entender de quem o emitiu.
+    """Where the work stands, as understood by whoever issued it.
 
-    Existe porque `estado_externo` cru e texto livre, e o motor precisa de UMA
-    decisao a partir dele: este trabalho esta disponivel, ja tem alguem nele, ou
-    acabou? Sem isso o Core teria de conhecer os nomes de status de cada
-    fornecedor -- que e exatamente o acoplamento que a port impede.
+    It exists because raw `external_status` is free text, and the engine needs
+    ONE decision out of it: is this work available, is someone already on it, or
+    is it over? Without that the Core would have to know every provider's status
+    names -- which is exactly the coupling the port prevents.
 
-    O vocabulario e o menor que responde a essa pergunta. Nao e traducao do
-    fluxo de nenhuma ferramenta: e a posicao no ciclo de vida, que todo sistema
-    de trabalho tem.
+    The vocabulary is the smallest one that answers that question. It is not a
+    translation of any tool's flow: it is the position in the life cycle, which
+    every work system has.
+
+    The values below stay in Portuguese on purpose: they are provider status
+    strings, matched against captured data and persisted state.
     """
     NOT_STARTED = "NAO_INICIADA"
     IN_ANALYSIS = "EM_ANALISE"
@@ -30,19 +33,19 @@ class ExternalStatus(str, Enum):
     IN_VALIDATION = "EM_VALIDACAO"
     COMPLETED = "CONCLUIDA"
     CANCELLED = "CANCELADA"
-    #: Status que o adapter nao soube mapear. **Nunca** e coagido para o vizinho
-    #: mais conveniente: um status novo no board significa que alguem mudou o
-    #: processo, e o motor precisa dizer isso em vez de adivinhar.
+    #: A status the adapter could not map. **Never** coerced into the most
+    #: convenient neighbour: a new status on the board means somebody changed the
+    #: process, and the engine has to say so instead of guessing.
     UNKNOWN = "DESCONHECIDA"
 
     @property
     def available(self) -> bool:
-        """Trabalho que o motor poderia pegar."""
+        """Work the engine could pick up."""
         return self in (ExternalStatus.NOT_STARTED, ExternalStatus.IN_ANALYSIS)
 
     @property
     def in_progress(self) -> bool:
-        """Alguem (humano ou nao) ja esta nisto."""
+        """Somebody (human or not) is already on this."""
         return self in (ExternalStatus.IN_PROGRESS, ExternalStatus.IN_REVIEW,
                         ExternalStatus.IN_VALIDATION)
 
@@ -51,29 +54,29 @@ class ExternalStatus(str, Enum):
         return self in (ExternalStatus.COMPLETED, ExternalStatus.CANCELLED)
 
 
-#: Tipos de vinculo que o motor entende. Traduzir o nome do fornecedor para um
-#: destes e trabalho do adapter.
+#: Link types the engine understands. Translating the provider's name into one
+#: of these is the adapter's job.
 #:
-#: `bloqueia` e o UNICO que vira aresta de dependencia. `pai` e hierarquia --
-#: uma subtarefa nao espera a mae terminar, ela e parte do que a mae e; e
-#: `relacionado` e contexto, nao ordem. Tratar os tres como iguais trava um
-#: board inteiro, porque hierarquia e relacionamento sao muito mais comuns que
-#: bloqueio real.
+#: `blocks` is the ONLY one that becomes a dependency edge. `parent` is
+#: hierarchy -- a subtask does not wait for its parent to finish, it is part of
+#: what the parent is; and `related` is context, not order. Treating the three
+#: as equal locks up an entire board, because hierarchy and relatedness are far
+#: more common than real blocking.
 BLOCKS = "blocks"
 PARENT = "parent"
 CHILD = "child"
 RELATED = "related"
 DUPLICATES = "duplicates"
 
-#: Os que criam ordem de execucao. Qualquer outro e informacao, nao restricao.
+#: The ones that create execution order. Any other is information, not a constraint.
 BLOCKING_TYPES: frozenset[str] = frozenset({BLOCKS})
 
 
 @dataclass(frozen=True, slots=True)
 class TaskRef:
-    """Um vinculo declarado pelo fornecedor entre duas unidades de trabalho.
+    """A link the provider declares between two units of work.
 
-    `tipo` e vocabulario do motor -- nunca o nome do link no fornecedor.
+    `kind` is the engine's vocabulary -- never the provider's name for the link.
     """
     key: str
     kind: str = RELATED
@@ -85,50 +88,50 @@ class TaskRef:
 
 @dataclass(frozen=True, slots=True)
 class ExternalTask:
-    """Uma task como o fornecedor a descreve. Dado NAO confiavel.
+    """A task as the provider describes it. UNTRUSTED data.
 
-    Titulo, descricao e comentarios sao texto escrito por terceiros. Nenhum
-    prompt do motor pode trata-los como instrucao: tentativa de manipulacao vira
-    achado, nunca ordem.
+    Title, description and comments are text written by third parties. No engine
+    prompt may treat them as instructions: an attempt at manipulation becomes a
+    finding, never an order.
     """
     key: str
     title: str
     status: ExternalStatus = ExternalStatus.UNKNOWN
-    #: O status cru, como o fornecedor o escreveu. Preservado para diagnostico:
-    #: quando `situacao` vem DESCONHECIDA, e este campo que diz o que apareceu.
+    #: The raw status, as the provider wrote it. Preserved for diagnosis: when
+    #: `status` comes back DESCONHECIDA, this field is what says what showed up.
     external_status: str = ""
     description: str = ""
     url: str | None = None
     priority: int = 100
     project: str = ""
     assignee: str | None = None
-    #: Dependencias e hierarquia declaradas no fornecedor.
+    #: Dependencies and hierarchy as declared at the provider.
     links: tuple[TaskRef, ...] = ()
-    #: Chaves de recurso que a task toca em exclusividade. Vazio e comum e
-    #: honesto: um provedor de tasks raramente sabe quais arquivos serao
-    #: tocados. Quem enriquece isso e a analise, nao o adapter.
+    #: Resource keys the task touches exclusively. Empty is common and honest: a
+    #: task provider rarely knows which files will be touched. What enriches this
+    #: is the analysis, not the adapter.
     resources: tuple[str, ...] = ()
     labels: tuple[str, ...] = ()
-    #: True quando o registro veio de uma LISTAGEM, com campos enxutos.
+    #: True when the record came from a LISTING, with trimmed fields.
     #:
-    #: Listar e buscar detalhe sao operacoes de custo muito diferente: um board
-    #: real devolve centenas de KB se cada item trouxer descricao completa. Sem
-    #: este campo, "descricao vazia" e "descricao nao pedida" ficam
-    #: indistinguiveis -- e o motor acusaria o board inteiro de estar mal
-    #: escrito quando o incompleto era o proprio pedido.
+    #: Listing and fetching detail are operations of very different cost: a real
+    #: board returns hundreds of KB if every item carries a full description.
+    #: Without this field, "empty description" and "description not asked for"
+    #: become indistinguishable -- and the engine would accuse the whole board of
+    #: being badly written when what was incomplete was the request itself.
     partial: bool = False
     data: dict[str, Any] = field(default_factory=dict)
 
     @property
     def anomalies(self) -> tuple[str, ...]:
-        """O que veio torto do fornecedor. Reportado, nunca corrigido em silencio."""
+        """What arrived crooked from the provider. Reported, never silently fixed."""
         findings = []
         if self.status is ExternalStatus.UNKNOWN:
-            findings.append(f"status nao mapeado: {self.external_status!r}")
+            findings.append(f"unmapped status: {self.external_status!r}")
         if not self.title.strip():
-            findings.append("sem titulo")
+            findings.append("no title")
         if not self.partial and not self.description.strip():
-            findings.append("sem descricao")
+            findings.append("no description")
         return tuple(findings)
 
 
@@ -145,7 +148,7 @@ class TaskProvider(Port):
 
     @abstractmethod
     def list_tasks(self, filtro: dict[str, Any] | None = None) -> list[ExternalTask]:
-        """Trabalho visivel now. Erro sobe como AdapterErro, nunca lista vazia."""
+        """Work visible now. An error rises as AdapterError, never an empty list."""
 
     @abstractmethod
     def get_task(self, key: str) -> ExternalTask: ...
@@ -153,9 +156,9 @@ class TaskProvider(Port):
     def get_comments(self, key: str) -> list[Comment]:
         return []
 
-    # ---- escrita ---------------------------------------------------------
-    # Separadas de proposito: um adapter de leitura pode existir sem implementar
-    # nenhuma delas, e o Policy Engine continua sendo quem autoriza a chamada.
+    # ---- writing ---------------------------------------------------------
+    # Separated on purpose: a read-only adapter can exist without implementing
+    # any of them, and the Policy Engine is still what authorises the call.
 
     def update_task(self, key: str, campos: dict[str, Any]) -> None:
         raise NotImplementedError

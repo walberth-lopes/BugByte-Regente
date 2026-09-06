@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Store: o estado que sobrevive ao processo.
+"""Store: the state that outlives the process.
 
-O motor nunca depende do contexto de conversa de um agente para saber onde o
-trabalho parou. Tudo o que importa esta aqui, e a consequencia e direta: matar o
-processo no meio de um despacho e uma operacao suportada, nao um acidente.
+The engine never relies on an agent's conversation context to know where the
+work stopped. Everything that matters is here, and the consequence is direct:
+killing the process in the middle of a dispatch is a supported operation, not an
+accident.
 
-`transiciona()` e `adquire_lease()` sao os dois pontos que precisam ser atomicos.
-Sem atomicidade na transicao, dois ticks concorrentes despacham a mesma task; sem
-atomicidade no lease, dois workers escrevem no mesmo repositorio.
+`transition()` and `acquire_lease()` are the two points that have to be atomic.
+Without atomicity in the transition, two concurrent ticks dispatch the same task;
+without atomicity in the lease, two workers write to the same repository.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from . import Capability, Port
 class Store(Port):
     capability = Capability.STORE
 
-    # ---- esquema e tenancy ----------------------------------------------
+    # ---- schema and tenancy ---------------------------------------------
     @abstractmethod
     def migrate(self) -> None: ...
 
@@ -46,7 +47,7 @@ class Store(Port):
     @abstractmethod
     def save_repository(self, r: Repository) -> None: ...
 
-    # ---- trabalho --------------------------------------------------------
+    # ---- work ------------------------------------------------------------
     @abstractmethod
     def save_task(self, t: Task) -> None: ...
 
@@ -62,7 +63,7 @@ class Store(Port):
     @abstractmethod
     def transition(self, task_id: str, destination: TaskState, actor: str,
                     reason: str = "", data: dict | None = None) -> Task:
-        """Valida a transicao, grava e emite evento -- tudo na mesma transacao."""
+        """Validates the transition, writes and emits an event -- all in one transaction."""
 
     @abstractmethod
     def link_dependency(self, d: Dependency) -> None: ...
@@ -70,7 +71,7 @@ class Store(Port):
     @abstractmethod
     def dependencies(self, workspace_id: str) -> list[Dependency]: ...
 
-    # ---- execucao --------------------------------------------------------
+    # ---- execution -------------------------------------------------------
     @abstractmethod
     def save_run(self, r: Run) -> None: ...
 
@@ -83,7 +84,7 @@ class Store(Port):
     @abstractmethod
     def task_runs(self, task_id: str) -> list[Run]: ...
 
-    # ---- trilha ----------------------------------------------------------
+    # ---- trail -----------------------------------------------------------
     @abstractmethod
     def record_event(self, e: Event) -> None: ...
 
@@ -97,7 +98,7 @@ class Store(Port):
     @abstractmethod
     def actions(self, workspace_id: str, limit: int = 100) -> list[ActionRecord]: ...
 
-    # ---- escalonamento ---------------------------------------------------
+    # ---- escalation ------------------------------------------------------
     @abstractmethod
     def open_approval(self, a: Approval) -> None: ...
 
@@ -111,14 +112,14 @@ class Store(Port):
     def decide_approval(self, approval_id: str, choice: str, per: str,
                         note: str = "") -> Approval: ...
 
-    # ---- travas ----------------------------------------------------------
+    # ---- locks -----------------------------------------------------------
     @abstractmethod
     def acquire_lease(self, resource: str, owner: str, workspace_id: str,
                       segundos: int) -> Lease | None:
-        """Devolve None quando ha lease vivo de outro dono. Nunca espera.
+        """Returns None when a live lease belongs to another owner. Never waits.
 
-        A trava e por (workspace, recurso). Recurso homonimo em dois clientes
-        sao dois recursos -- um cliente nunca segura a fila do outro.
+        The lock is per (workspace, resource). A resource of the same name in two
+        clients is two resources -- one client never holds up the other's queue.
         """
 
     @abstractmethod
@@ -132,7 +133,7 @@ class Store(Port):
     @abstractmethod
     def expired_leases(self, workspace_id: str, now: datetime | None = None) -> list[Lease]: ...
 
-    # ---- contadores ------------------------------------------------------
+    # ---- counters --------------------------------------------------------
     @abstractmethod
     def dispatch_count(self, workspace_id: str, dia: str) -> int: ...
 

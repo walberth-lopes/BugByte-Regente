@@ -82,7 +82,7 @@ NETWORK = pytest.mark.skipif(
 def test_declares_the_that_is(provider):
     d = provider.describe()
     assert d["capability"] == "repository"
-    assert d["adapter"] and d["adapter"] != "desconhecido"
+    assert d["adapter"] and d["adapter"] != "unknown"
 
 
 def test_list_returns_repositorios(provider):
