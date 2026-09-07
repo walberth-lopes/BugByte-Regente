@@ -324,8 +324,16 @@ def build(cfg: Config) -> Engine:
     if "repository" in cfg.providers:
         repos = create(Capability.REPOSITORY, "repository",
                      {"credentials": broker("repository"), "observer": observe})
-    areas: WorkspaceProvider = create(Capability.WORKSPACE, "workspace_provider",
-                                    {"root": str(cfg.areas)})
+    # Empurrar ESCREVE no repositorio, entao a credencial e a do repositorio --
+    # a MESMA que abre o pull request. Uma credencial propria de "workspace"
+    # seria uma segunda autoridade para o mesmo alvo, e as duas divergiriam.
+    # Sem `repository_write` configurado nao ha porta, e empurrar e impossivel:
+    # ausencia de configuracao nunca vira permissao.
+    areas: WorkspaceProvider = create(
+        Capability.WORKSPACE, "workspace_provider",
+        {"root": str(cfg.areas),
+         "credentials": (broker("repository_write")
+                         if "repository_write" in cfg.providers else None)})
     runner: AgentRunner = create(Capability.RUNNER, "runner")
     notificador: NotificationProvider | None = None
     if "notification" in cfg.providers:

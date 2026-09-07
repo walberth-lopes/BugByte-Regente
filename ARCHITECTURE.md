@@ -784,6 +784,35 @@ que esquece do allowlist.
 a mesma checagem e nao sao a mesma pergunta -- e a segunda exigiria credencial
 de um comando de saude, que e o caminho mais curto para extrair material.
 
+### O ambiente do `git`, classificado uma variavel por vez
+
+Compor do vazio quebra o `git`: ele precisa de `PATH`, de `HOME`, de proxy.
+Herdar tudo devolve o `credential.helper` global, que autentica em nome do motor
+sem passar por lugar nenhum. A saida nao e escolher entre os dois -- e
+classificar:
+
+```
+SAFE_FIXED        o que o Regente escolhe: config global e do sistema apontadas
+                  para o nada, prompt desligado, askpass vazio
+SAFE_ALLOWLISTED  o que vem do pai, por nome: PATH, HOME, TEMP, proxy
+CREDENTIAL        uma variavel, e o material vem do broker
+FORBIDDEN         autoridade ambiente: SSH_AUTH_SOCK, GIT_SSH_COMMAND, tokens
+```
+
+A quarta linha e a decisao desconfortavel. Um agente ssh autentica sem o Regente
+saber, e mante-lo por conveniencia seria manter o segundo caminho de autoridade
+com outro nome. Entao **um alvo `ssh://` e recusado**, com motivo: nao ha
+mecanismo governado para chave ssh, e usar o agente de alguem e agir com
+autoridade que ninguem concedeu.
+
+O material entra por `http.<url>.extraheader`, escopado a origem do alvo -- sem
+escopo, um redirecionamento entregaria o token a quem respondeu. Nao vai em
+argv, nao altera o remote, nao vira arquivo e nao sobrevive ao processo.
+
+**Codificado nao e protegido.** O cabecalho carrega o token em base64, e limpar
+so o token deixaria passar o base64 que o contem. Os dois entram na lista do
+que precisa sumir antes de virar registro.
+
 ### Uma escrita, e as mesmas barreiras
 
 A tela ganhou exatamente uma acao: **decidir uma escalada**. Ela nao ganhou

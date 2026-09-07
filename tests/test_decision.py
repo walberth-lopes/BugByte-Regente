@@ -553,7 +553,11 @@ def test_the_decide_command_actually_reaches_the_engine(tmp_path, monkeypatch,
     _bench_workspace(tmp_path, monkeypatch)
     code = cli.main(["decide", "apr_naoexiste", "seguir"])
 
-    assert code == 1
+    # O codigo passou de `1` generico para o da RECUSA. O que este teste prova
+    # nao mudou -- o comando alcanca o motor e reporta o veredito dele -- e
+    # agora quem roteiriza distingue "nao existe" de "voce nao pode" sem ler
+    # texto e adivinhar.
+    assert code == cli.EXIT_NOT_FOUND
     saida = capsys.readouterr()
     # Chegou ao Core e foi recusada POR MOTIVO, e nao por AttributeError.
     assert "NOT_FOUND" in saida.err

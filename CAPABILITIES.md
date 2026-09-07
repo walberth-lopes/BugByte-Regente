@@ -17,6 +17,142 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 6 — o caminho operacional fechado
+
+O M16 provou autoridade. O M6.1 provou transporte ate um subprocesso. Faltava o
+subprocesso que importa para entregar: o `git`.
+
+```
+validado -> commit -> push autenticado -> PR -> read back -> CI -> humano
+```
+
+### O levantamento achou duas coisas que ninguem esperava
+
+Registrado em `MILESTONE-6-RECON.md`, antes de qualquer codigo.
+
+**1. `GitClone.push` nunca funcionou.** `_looks_local` era chamada em dois
+lugares e **definida em nenhum**. Executada de verdade:
+
+```
+commit ok: 8bb7cd04401a
+NameError: name '_looks_local' is not defined
+```
+
+A guarda que recusa empurrar para um caminho local era codigo morto que
+derrubava o processo. Passou por cinco marcos porque `test_pipeline.py` entrega
+com `FakeAreas` e `test_push_target.py` nunca chamou `push`: o caminho de
+entrega inteiro foi provado contra um dublê que nao tem essa linha.
+
+**2. O provedor de area PADRAO nao sabia fazer nada disso.**
+`IsolatedDirectory` -- o que a configuracao de exemplo traz -- definia `head`,
+`is_dirty`, `commit` e `push` chamando `self._git`, que nao existe nessa classe.
+Os quatro davam `AttributeError`: nao uma recusa, um defeito com cara de bug do
+motor. E funcionar nem seria o certo -- uma pasta nao e um clone. O que faltava
+ali era uma **recusa nomeada**.
+
+### O ambiente do `git`, classificado
+
+O M6.1 deixou o `git` de fora com um motivo escrito: compor do vazio remove o
+que ele precisa. A resposta nao e herdar de volta -- e classificar.
+
+| categoria | o que | por que |
+|---|---|---|
+| **SAFE_FIXED** | `GIT_CONFIG_GLOBAL/SYSTEM`, `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=`, `GIT_CONFIG_COUNT/KEY_0` | valores que o Regente escolhe |
+| **SAFE_ALLOWLISTED** | `PATH`, `HOME`, `TEMP`, proxy | por nome, do pai |
+| **CREDENTIAL** | `GIT_CONFIG_VALUE_0` | a unica com material, e ele vem do broker |
+| **FORBIDDEN** | `SSH_AUTH_SOCK`, `GIT_SSH_COMMAND`, `GIT_ASKPASS` herdado, `GH_TOKEN`... | **autoridade ambiente** |
+
+Medido antes: esta maquina tem `credential.helper = manager`. Qualquer push do
+motor se autenticaria por ele -- sem identidade, sem concessao, sem capacidade,
+sem revogacao. `GIT_CONFIG_GLOBAL`/`SYSTEM` apontados para um caminho inexistente
+o fecham, sem escrever em disco e sem tocar na configuracao de ninguem.
+
+`SSH_AUTH_SOCK` foi a decisao desconfortavel. O M6.1 o listou como "precisa
+manter para nao quebrar". Mante-lo seria manter um segundo caminho de
+autoridade. **Um alvo `ssh://` e recusado com motivo**: o Regente nao tem
+mecanismo governado para chave ssh, e usar o agente do usuario seria agir com
+autoridade que ninguem concedeu.
+
+### O transporte
+
+```
+broker.material(repo.push) -> http.<url>.extraheader -> GIT_CONFIG_VALUE_0 -> git
+```
+
+Sem argv, sem alterar o remote, sem arquivo, sem configuracao persistente. O
+cabecalho e **escopado a origem do alvo**: sem escopo, um redirecionamento
+entregaria o token a quem respondeu.
+
+`ChildEnvironment` ganhou uma unica coisa: `render`, como o material e ESCRITO
+na variavel. E formatacao, nao autoridade -- e o valor produzido entra em
+`secrets` junto com o material, porque **codificado nao e protegido**.
+
+### Exercitado de verdade
+
+Um servidor git HTTP no loopback, exigindo `Authorization`, com `git
+http-backend` do outro lado. Nao ha dublê:
+
+```
+sem credencial   rc=128  "could not read Username ... prompts disabled"
+com o cabecalho  rc=0    refs/heads/regente/k-1 -> o commit que o run produziu
+servidor viu     Basic eC1hY2Nl...
+```
+
+E toda recusa afirma tambem que o servidor continua **intocado** -- nenhuma
+requisicao, nenhuma ref. "Levantou uma excecao" nao prova que nada aconteceu.
+
+### Defeitos encontrados
+
+| # | Defeito | Como apareceu |
+|---|---|---|
+| 1 | `GitClone.push` levantava `NameError` em toda execucao real | executando o push contra um clone de verdade, no levantamento |
+| 2 | o provedor de area padrao dava `AttributeError` em quatro metodos | idem |
+| 3 | `regente init` escrevia `policies: ../policies/default.yaml` -- caminho que so resolve dentro do codigo-fonte. O passo 2 -> 3 do tutorial morria com `ValueError` cru | rodando o tutorial literalmente numa pasta nova |
+| 4 | `regente sombra` lia `args.mine`/`args.output`; o parser define `--minhas`/`--saida` | rodando todo comando da CLI |
+| 5 | `regente cadeia` lia `args.output` e `args.limit`; o parser define `--saida` e `--limite` | o quarto caso foi achado pelo teste novo, minutos depois de ele existir |
+| 6 | recusa de autoridade e erro de configuracao devolviam o mesmo `1` | auditoria de codigos de saida |
+| 7 | nao havia como descobrir a identidade do MOTOR pela CLI -- concede-la exigia escrever Python | executando a sequencia de prova |
+
+Os defeitos 4 e 5 sao a **terceira e quarta** ocorrencia da mesma classe (a
+primeira foi `regente decide`, no marco 13). Todas atravessaram uma suite verde,
+porque a fiacao de argumentos nao tinha teste -- e ela e exatamente onde uma
+renomeacao deixa restos. Agora tem: um teste compara, comando a comando, o que
+o parser DEFINE com o que o handler LE.
+
+### Sweep de mutacao
+
+17 mutantes sobre o caminho novo, **17 capturados**. Entre eles: policy nao
+consultada, capacidade ignorada, SHA nao conferido, ambiente herdado,
+`credential.helper` global de volta, material em argv, material no remote, force
+push, PR adotado as cegas, CI do SHA errado, `UNAVAILABLE` devolvido como
+`PASSED`, revogacao ignorada, alvo local aceito, handler lendo argumento
+inexistente, recusa desconhecida virando sucesso, e `init` voltando a escrever
+policies inexistente.
+
+**Duas escaparam na primeira rodada, e as duas eram minhas, malformadas** -- uma
+acrescentava um argumento inofensivo sem colocar material em argv nenhum; a
+outra renomeava uma funcao e devolvia exatamente o mesmo objeto. No-op nao conta
+nem como captura nem como escape: conta como driver errado. Refeitas de verdade,
+as duas foram capturadas.
+
+A primeira delas deixou uma licao que virou teste. Ela foi pega porque PEDIA
+material fora da porta unica -- e nao porque alguem tivesse olhado o `argv`.
+Material que vazasse para o `argv` de dentro da propria porta nao seria visto
+por ninguem. Agora um espiao le o `argv` real de todo `git` disparado num push,
+e uma mutacao que vaza ali fica vermelha.
+
+### Limitacoes
+
+**Entrega real de task continua bloqueada, e nao pelo push.** O board tem 50
+issues abertas de verdade, 15 em TO DO. O motor nao as alcanca: nao ha
+credencial de Jira que ele consiga resolver, e nenhuma foi inventada. Sem M7 nao
+ha agente autenticado para produzir a mudanca. O push, o PR e a leitura de CI
+estao prontos e provados -- falta o comeco da fila, nao o fim.
+
+**`ssh` nao e suportado**, e recusa em vez de funcionar pelo agente do usuario.
+
+---
+
 ## Milestone 6.1 — o material chega ao subprocesso, e so por ali
 
 O marco 16 provou **autoridade**: uma porta unica decide se um adapter pode ter

@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from typing import Callable
 
 from ..core import childenv
 from ..core.redaction import scrub
@@ -92,6 +93,11 @@ class ChildEnvironment:
     #: de configuracao, desligar interatividade. Ficam aqui porque sao
     #: conhecimento do fornecedor, e o fornecedor mora no adapter.
     fixed: tuple[tuple[str, str], ...] = ()
+    #: Como o material e ESCRITO na variavel. Uma ferramenta quer o token cru;
+    #: outra quer `Authorization: Basic <base64>`. E formatacao, nao autoridade:
+    #: nada aqui decide se o material pode ser usado, e o valor produzido entra
+    #: no mesmo lugar e sai pelo mesmo `scrub`.
+    render: Callable[[str], str] = str
 
     def expects_credential(self) -> bool:
         return bool(self.names)
@@ -134,7 +140,12 @@ class ChildEnvironment:
                 f"o ambiente do processo no lugar")
 
         material = self.broker.material(use)
+        escrito = self.render(material)
         for name in self.names:
-            extra[name] = material
+            extra[name] = escrito
+        # Os DOIS entram em `secrets`. O que a ferramenta ecoa de volta pode ser
+        # o cabecalho inteiro, e limpar so o token deixaria passar o base64 que
+        # o contem -- codificado nao e protegido.
+        segredos = (material,) if escrito == material else (material, escrito)
         return ChildLaunch(env=childenv.compose(os.environ, self.allow, extra),
-                           secrets=(material,))
+                           secrets=segredos)

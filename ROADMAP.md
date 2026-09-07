@@ -10,7 +10,7 @@ Marco não fecha sem prova em disco.
 | **3** | **TaskProvider real** ✅ | adapter real lendo o board de verdade em sombra; contrato passa em dois provedores; zero mutacao |
 | **4** | **RepositoryProvider** ✅ | dois provedores reais em sombra; identidade dentro da tenancy; contrato de escrita declarado, nada implementado |
 | **5** | **AgentRunner + validation loop** ✅ | missão selecionada, alvo resolvido, clone isolado, agente executado, teste com linha de base, veredito e commit — DECLARED e DISCOVERED provados ponta a ponta |
-| **6** | **CI + PR** ⚠ | caminho completo implementado e testado em contrato; **transporte de credencial ate o subprocesso provado de verdade** (6.1); **prova remota real bloqueada em `NEEDS_HUMAN`** por ausencia de task elegivel |
+| **6** | **CI + PR** ⚠ | caminho completo, com `git push` autenticado provado contra um servidor git real; push, PR e leitura de CI **prontos e exercitados**; **entrega real de task bloqueada** por ausencia de credencial de Jira que o motor resolva e de agente autenticado -- falta o comeco da fila, nao o fim |
 | **7** | **AgentRunner real** ⚠ | motor observa o mundo por conta propria e nao acredita no agente; sandbox sem execucao de comando; **modelo real bloqueado** por falta de credencial que o motor possa resolver |
 | **8** | **Operacao continua sob falha** ✅ | 1000 ticks, 43 reinicios sem fechamento limpo, 13 mortes de worker e 13 recuperacoes, 142 quedas de provider, zero violacao de invariante |
 | **9** | **Concorrencia real entre processos** ✅ | interpretadores separados sobre um SQLite: posse exclusiva, revalidacao no momento de agir, claim atomico, zero execucao duplicada em 60 rodadas com SIGKILL |
@@ -42,6 +42,17 @@ porta, e ela pergunta identidade, concessao, escopo, estado, capacidade e policy
 a cada chamada. O motor virou principal de servico com concessao propria --
 abrir excecao para o processo automatico seria devolver a segunda autoridade, e
 seria a mais facil de justificar.
+
+O marco 6 fechou o caminho operacional. O levantamento achou duas coisas que
+ninguem esperava: `GitClone.push` levantava `NameError` em toda execucao real --
+`_looks_local` era chamada em dois lugares e definida em nenhum -- e o provedor
+de area PADRAO dava `AttributeError` em quatro metodos que fingia ter. Cinco
+marcos de entrega provada contra um dublê que nao tem essas linhas.
+
+Agora o push tem ambiente classificado variavel por variavel, credencial pelo
+broker, e e provado contra um servidor git HTTP de verdade: sem credencial,
+`rc=128`; com ela, a ref chega do outro lado. `ssh` e recusado com motivo em vez
+de funcionar pelo agente do usuario.
 
 O marco 6.1 fechou a distancia entre autorizar e entregar. Os adapters que
 invocam a CLI de hospedagem herdavam o ambiente inteiro do motor, e a ferramenta

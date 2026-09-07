@@ -14,7 +14,7 @@ autonomy: L2
 shadow: true
 
 root: .regente
-policies: ../policies/default.yaml
+policies: policies.yaml
 
 providers:
   tasks:

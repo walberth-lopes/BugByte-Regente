@@ -16,8 +16,10 @@ from .app import container
 from .app.config import Config, load
 from .core.states import TaskState
 from .app.container import _stable_id
-from .core import ids
+from .core import ids, redaction
 from .engine import chain, escalation, shadow
+from .ports import AdapterError
+from .ports.support import CredentialDenied
 from .engine.store_sqlite import SqliteStore
 
 DEFAULT_CONFIG_FILE = "regente.yaml"
@@ -32,6 +34,44 @@ def _force_utf8() -> None:
             pass
 
 
+#: Codigos de saida. Um script que orquestra o Regente precisa distinguir
+#: "voce nao tem autoridade" de "o arquivo esta errado" de "nao deu para
+#: perguntar" -- e um unico `2` para tudo obriga quem chama a ler texto e
+#: adivinhar. Os nomes sao os do motor: a CLI nao inventa vocabulario proprio.
+EXIT_OK = 0
+EXIT_REFUSED = 1            # o motor decidiu nao; a decisao esta impressa
+EXIT_INVALID_ARGUMENT = 2   # tambem o que o argparse usa; mantido de proposito
+EXIT_NOT_FOUND = 3
+EXIT_POLICY_DENIED = 4
+EXIT_AUTHENTICATION = 5
+EXIT_CREDENTIAL = 6         # ausente, expirada ou revogada
+EXIT_CONFLICT = 7
+EXIT_BLOCKED = 8            # nao deu para perguntar; ausencia de resposta
+EXIT_UNKNOWN = 9
+
+#: Recusa do motor -> codigo. A CLI TRADUZ; ela nao classifica. Se o motor
+#: ganhar uma recusa nova e ela nao estiver aqui, cai em `EXIT_UNKNOWN`, que e
+#: a resposta honesta -- nunca `0`.
+EXIT_POR_RECUSA = {
+    "NOT_FOUND": EXIT_NOT_FOUND,
+    "POLICY_DENIED": EXIT_POLICY_DENIED,
+    "UNAUTHENTICATED": EXIT_AUTHENTICATION,
+    "FORBIDDEN": EXIT_POLICY_DENIED,
+    "INVALID": EXIT_INVALID_ARGUMENT,
+    "CONFLICT": EXIT_CONFLICT,
+    "EXPIRED": EXIT_CREDENTIAL,
+    "REVOKED": EXIT_CREDENTIAL,
+    "NO_CAPABILITY": EXIT_CREDENTIAL,
+    "SOURCE_UNAVAILABLE": EXIT_BLOCKED,
+}
+
+
+def _exit_for(refusal: object) -> int:
+    """O codigo desta recusa. Desconhecida vira UNKNOWN, nunca sucesso."""
+    return EXIT_POR_RECUSA.get(str(getattr(refusal, "value", refusal) or ""),
+                               EXIT_UNKNOWN)
+
+
 def _load_config(args) -> Config:
     return load(args.config)
 
@@ -39,18 +79,37 @@ def _load_config(args) -> Config:
 # ---- comandos ------------------------------------------------------------
 
 def cmd_init(args) -> int:
+    """Cria uma pasta de trabalho que REALMENTE sobe.
+
+    Ate o marco 6 este comando escrevia um `regente.yaml` apontando para
+    `../policies/default.yaml` -- um caminho que so resolve dentro da arvore do
+    codigo-fonte. Quem seguia o tutorial (`mkdir meu-regente; cd; regente init`)
+    recebia, no comando seguinte, um `ValueError` cru na cara.
+
+    O arquivo de policies e escrito junto, no mesmo diretorio. Uma configuracao
+    que nao sobe nao e configuracao inicial.
+    """
     destination = Path(args.config)
+    recursos = Path(__file__).parent / "resources"
     if destination.exists() and not args.force:
         print(f"{destination} ja existe. Use --force para sobrescrever.")
-        return 1
-    model = Path(__file__).parent / "resources" / "regente.yaml.example"
-    destination.write_text(model.read_text(encoding="utf-8"), encoding="utf-8")
+        return EXIT_CONFLICT
+    destination.write_text(
+        (recursos / "regente.yaml.example").read_text(encoding="utf-8"),
+        encoding="utf-8")
+
+    policies = destination.parent / "policies.yaml"
+    if not policies.exists() or args.force:
+        policies.write_text(
+            (recursos / "policies.yaml.example").read_text(encoding="utf-8"),
+            encoding="utf-8")
     tasks = destination.parent / "tasks"
     tasks.mkdir(exist_ok=True)
     print(f"criado {destination}")
+    print(f"criado {policies} -- o que o motor pode fazer, e o que nao pode")
     print(f"criado {tasks}/ -- descreva trabalho em YAML aqui")
     print("proximo: regente doctor")
-    return 0
+    return EXIT_OK
 
 
 def cmd_doctor(args) -> int:
@@ -179,7 +238,7 @@ def cmd_decide(args) -> int:
             note=args.nota or "")
         if not outcome.accepted:
             print(f"{outcome.denial.value}: {outcome.reason}", file=sys.stderr)
-            return 1
+            return _exit_for(outcome.denial)
         print(f"{outcome.task_key or outcome.task_id}: "
               f"registrado '{outcome.choice}' por {outcome.decided_by}.")
         print("O proximo tick retoma a task a partir daqui.")
@@ -241,7 +300,7 @@ def cmd_credentials(args) -> int:
             saida = service.listing(who, workspace)
             if not isinstance(saida, list):
                 print(f"{saida.refusal.value}: {saida.reason}", file=sys.stderr)
-                return 1
+                return _exit_for(saida.refusal)
             if not saida:
                 print("nenhuma credencial registrada neste workspace")
                 return 0
@@ -286,7 +345,7 @@ def cmd_credentials(args) -> int:
 
         if not saida.accepted:
             print(f"{saida.refusal.value}: {saida.reason}", file=sys.stderr)
-            return 1
+            return _exit_for(saida.refusal)
         print(saida.reason)
         print(f"  ator : {saida.actor}")
         if saida.credential:
@@ -319,7 +378,22 @@ def cmd_access(args) -> int:
             capacidades = sorted(a.value for a in
                                  who.abilities.get(workspace, ()))
             print(f"pode aqui  : {', '.join(capacidades) or 'nada'}")
-            return 0
+
+            # O motor tambem e um principal (marco 16), e alguem precisa
+            # CONCEDER a ele para que um tick de madrugada consiga usar
+            # credencial. Sem isto impresso aqui, descobrir a identidade dele
+            # exigia escrever Python -- e um passo obrigatorio do fluxo que so
+            # existe fora da CLI e um passo que ninguem da.
+            motor_ = motor.engine_principal()
+            do_motor = sorted(a.value for a in
+                              motor_.abilities.get(workspace, ()))
+            print()
+            print(f"o motor    : {motor_.label}")
+            print(f"pode aqui  : {', '.join(do_motor) or 'nada'}")
+            if not do_motor:
+                print(f"             (para um tick usar credencial: "
+                      f"regente access conceder {motor_.label} --papel service)")
+            return EXIT_OK
 
         if args.acao == "inicial":
             saida = service.bootstrap(who, workspace, note=args.nota or "")
@@ -348,7 +422,7 @@ def cmd_access(args) -> int:
 
         if not saida.accepted:
             print(f"{saida.refusal.value}: {saida.reason}", file=sys.stderr)
-            return 1
+            return _exit_for(saida.refusal)
         print(saida.reason)
         if args.acao in ("inicial", "conceder"):
             print(f"  ator  : {saida.actor}")
@@ -483,7 +557,7 @@ def cmd_log(args) -> int:
                     break
             if target is None:
                 print(f"task '{args.task}' nao encontrada")
-                return 1
+                return EXIT_NOT_FOUND
         events = motor.store.events(motor.workspace.id, task_id=target, limit=args.n)
         for e in reversed(events):
             hora = e.ts.strftime("%d/%m %H:%M")
@@ -534,13 +608,19 @@ def cmd_sombra(args) -> int:
         r = shadow.execute(
             provider=motor.orchestrator.tasks_provider,
             limits=cfg.limits,
-            filtro={"apenas_minhas": True} if args.mine else None,
+            # `args.minhas` e `args.saida` sao os nomes que o PARSER define.
+            # Ate o marco 6 este handler lia `args.mine` e `args.output`,
+            # sobras de uma renomeacao -- e `regente sombra`, que o README
+            # anuncia como o comando de entrada, morria com `AttributeError`
+            # antes de tocar em coisa nenhuma. O mesmo defeito que `decide`
+            # teve no marco 13, e `cadeia` tinha na linha de baixo.
+            filtro={"apenas_minhas": True} if args.minhas else None,
             eu=args.eu)
         print(shadow.render(r))
-        if args.output:
-            Path(args.output).write_text(shadow.render(r), encoding="utf-8")
+        if args.saida:
+            Path(args.saida).write_text(shadow.render(r), encoding="utf-8")
             print()
-            print(f"  gravado em {args.output}")
+            print(f"  gravado em {args.saida}")
         return 0 if not r.provider_errors else 2
     finally:
         motor.close()
@@ -553,7 +633,7 @@ def cmd_repos(args) -> int:
     try:
         if motor.repos is None:
             print("nenhum provedor de repositorio configurado")
-            return 1
+            return EXIT_INVALID_ARGUMENT
         items = motor.repos.list_repositories()
         print(f"{len(items)} repositorio(s) via {motor.repos.name}")
         print()
@@ -576,7 +656,7 @@ def cmd_cadeia(args) -> int:
     try:
         if motor.repos is None:
             print("nenhum provedor de repositorio configurado")
-            return 1
+            return EXIT_INVALID_ARGUMENT
         items = motor.orchestrator.tasks_provider.list_tasks()
         repositories = motor.repos.list_repositories()
         branches = {}
@@ -592,11 +672,11 @@ def cmd_cadeia(args) -> int:
             policy=motor.policy, risk=motor.risk,
             autonomy=motor.workspace.max_autonomy, branches=branches,
             organization=cfg.organization, client=cfg.client)
-        print(chain.render(rel, limit=args.limit))
-        if args.output:
-            Path(args.output).write_text(chain.render(rel, limit=200), encoding="utf-8")
+        print(chain.render(rel, limit=args.limite))
+        if args.saida:
+            Path(args.saida).write_text(chain.render(rel, limit=200), encoding="utf-8")
             print()
-            print(f"  gravado em {args.output}")
+            print(f"  gravado em {args.saida}")
         return 0
     finally:
         motor.close()
@@ -609,7 +689,7 @@ def cmd_mission(args) -> int:
     try:
         if engine.repos is None:
             print("no repository provider configured")
-            return 1
+            return EXIT_INVALID_ARGUMENT
         outcome = engine.run_mission(execute=args.run, only=args.task)
         if outcome.refused:
             print(outcome.refusal)
@@ -656,8 +736,15 @@ def cmd_rules(args) -> int:
 
 # ---- entrada -------------------------------------------------------------
 
-def main(argv: list[str] | None = None) -> int:
-    _force_utf8()
+def build_parser() -> argparse.ArgumentParser:
+    """O parser inteiro, montado e devolvido sem rodar nada.
+
+    Separado de `main` para que um teste possa comparar, comando a comando, os
+    `dest` que o parser define com os `args.X` que cada handler le. Duas vezes
+    esta divergencia atravessou uma suite verde -- `decide` no marco 13,
+    `sombra` e `cadeia` neste -- porque a fiacao de argumentos nao tinha teste,
+    e ela e exatamente onde uma renomeacao deixa restos.
+    """
     ap = argparse.ArgumentParser(prog="regente",
                                  description="Sistema operacional para agentes de engenharia.")
     ap.add_argument("-c", "--config", default=DEFAULT_CONFIG_FILE)
@@ -775,15 +862,43 @@ def main(argv: list[str] | None = None) -> int:
                         "identidade de desenvolvimento ainda recusa autenticar")
     p.set_defaults(fn=cmd_ui)
 
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    _force_utf8()
+    ap = build_parser()
     args = ap.parse_args(argv)
     try:
         return args.fn(args)
     except FileNotFoundError as e:
         print(f"{e}\nRode `regente init` para comecar.", file=sys.stderr)
-        return 1
+        return EXIT_NOT_FOUND
+    except CredentialDenied as e:
+        # A recusa do caminho governado chega aqui com o motivo do MOTOR. A CLI
+        # nao reclassifica: transformar "voce nao tem autoridade" num erro
+        # generico manda a pessoa procurar o problema no lugar errado.
+        print(f"{e.refusal}: {e.reason}", file=sys.stderr)
+        return _exit_for(e.refusal)
+    except PermissionError as e:
+        print(f"AUTHENTICATION: {e}", file=sys.stderr)
+        return EXIT_AUTHENTICATION
+    except (ValueError, KeyError) as e:
+        # Configuracao errada, nome inexistente, argumento impossivel. Nao e
+        # falta de autoridade, e a pessoa conserta um arquivo -- nao um acesso.
+        print(f"INVALID_ARGUMENT: {type(e).__name__}: {e}", file=sys.stderr)
+        return EXIT_INVALID_ARGUMENT
+    except AdapterError as e:
+        # O mundo externo nao respondeu, ou respondeu nao. Nunca sucesso, e
+        # tambem nunca "sua culpa": e a categoria de "nao deu para saber".
+        print(f"BLOCKED: {redaction.redact_url(str(e))}", file=sys.stderr)
+        return EXIT_BLOCKED
     except Exception as e:  # noqa: BLE001
-        print(f"{type(e).__name__}: {e}", file=sys.stderr)
-        return 2
+        # O texto de uma excecao inesperada pode citar uma URL com credencial
+        # embutida -- e um traceback na tela e o primeiro lugar onde isso vaza.
+        print(f"UNKNOWN: {type(e).__name__}: {redaction.redact_url(str(e))}",
+              file=sys.stderr)
+        return EXIT_UNKNOWN
 
 
 if __name__ == "__main__":

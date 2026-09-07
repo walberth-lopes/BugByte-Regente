@@ -33,7 +33,7 @@ escrita humana pelo navegador, atravessando as mesmas barreiras do terminal.
 
 ```
 Identidade real → concessão gravada → policy → credencial → capacidade
-                → segredo → ambiente do filho → subprocesso → auditoria
+                → segredo → ambiente do filho → git push → PR → CI → humano
 ```
 
 O último elo é do marco 6.1: autorizar não é entregar. Enquanto a ferramenta
@@ -137,7 +137,8 @@ Se aparecer a lista de comandos, está pronto.
 >
 > Se preferir não ativar nada, todo comando deste tutorial também funciona
 > prefixado com `uv run`, a partir da pasta do projeto:
-> `uv run regente --help`.
+> `uv run regente --help`. E `python -m regente --help` funciona sempre que o
+> pacote estiver instalado, ativado ou não.
 >
 > No PowerShell, se a ativação for barrada por política de execução, rode
 > `Set-ExecutionPolicy -Scope Process RemoteSigned` nessa mesma janela e tente
@@ -154,7 +155,13 @@ cd meu-regente
 regente init
 ```
 
-Isso cria o `regente.yaml` e uma pasta `tasks/`.
+Isso cria três coisas:
+
+| arquivo | o que é |
+|---|---|
+| `regente.yaml` | onde ficam os providers, os limites e o modo |
+| `policies.yaml` | o que o motor pode fazer, e o que não pode |
+| `tasks/` | onde você descreve o trabalho, em YAML |
 
 O ambiente continua ativo depois do `cd` — é a janela do terminal que está
 ativada, não a pasta. Daqui em diante todos os comandos rodam **dentro de

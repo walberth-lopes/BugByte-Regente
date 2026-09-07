@@ -20,8 +20,11 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ...core.credential import Use
 from ...ports import AdapterError
+from ...ports.support import CredentialBroker
 from ...ports.workspace import WorkArea, WorkspaceProvider
+from . import git_process
 
 
 class IsolatedDirectory(WorkspaceProvider):
@@ -47,95 +50,36 @@ class IsolatedDirectory(WorkspaceProvider):
             return []
         return [WorkArea(id=p.name, path=str(p)) for p in self.root.iterdir() if p.is_dir()]
 
-    # ---- writing history, inside the area only --------------------------
+    # ---- escrever historia: esta area nao sabe, e diz isso -------------
+    #
+    # Ate o marco 6, esta classe tinha `head`, `is_dirty`, `commit` e `push`
+    # copiados do provedor de clone. Os quatro chamavam `self._git`, que NAO
+    # EXISTE aqui -- e este e o provedor PADRAO, o que a configuracao de exemplo
+    # traz. Executados, davam `AttributeError`, que nao e uma recusa: e um
+    # defeito com cara de bug do motor.
+    #
+    # E funcionar nem seria o certo. Uma pasta nao e um clone; nao ha historia
+    # para escrever nem remoto para onde empurrar. O que faltava aqui nao era
+    # implementacao, era uma recusa nomeada.
+
+    def _sem_historia(self, verbo: str):
+        return AdapterError(
+            f"esta area e uma pasta, nao um clone git: nao ha como {verbo}. "
+            f"Para entregar codigo, configure `workspace_provider: clone`")
 
     def head(self, area: WorkArea) -> str:
-        return self._git("rev-parse", "HEAD", cwd=Path(area.path)).strip()
-
-    #: Branch names a push may never target, whatever the caller asks for.
-    INTEGRATION_BRANCHES = frozenset({"main", "master", "develop", "dev",
-                                      "release", "staging", "production", "HEAD"})
-
-    def push(self, area: WorkArea, expected_sha: str,
-             branch: str | None = None) -> str:
-        """Publish the work branch. Five refusals, checked in this order.
-
-        Order matters: the cheapest and most dangerous checks run first, so a
-        misconfigured call never reaches the network.
-        """
-        path = Path(area.path)
-        target_branch = branch or area.branch
-        if not target_branch:
-            raise AdapterError("refused: the area has no work branch")
-
-        # 1. Never an integration branch, whoever asked.
-        if target_branch in self.INTEGRATION_BRANCHES:
-            raise AdapterError(
-                f"refused to push '{target_branch}': it is an integration branch")
-
-        # 2. Never a branch this run does not own.
-        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
-        if current != target_branch:
-            raise AdapterError(
-                f"refused to push: the area is on '{current}' and the push asks "
-                f"for '{target_branch}'")
-
-        # 3. Never to a local path. The whole point of separating `sources` from
-        #    `remotes` is that a local target means somebody's checkout.
-        destination = self.push_target_of(path)
-        if not destination:
-            raise AdapterError(
-                "refused to push: this area has no push target. Absence of "
-                "configuration means a push is impossible, not local")
-        if _looks_local(destination):
-            raise AdapterError(
-                f"refused to push to a local path: {destination}")
-
-        # 4. Never work nobody verified. Between validation and push the branch
-        #    may have moved, and pushing then vouches for an unseen commit.
-        actual = self.head(area)
-        if actual != expected_sha:
-            raise AdapterError(
-                f"refused to push: expected {expected_sha[:12]} and the branch "
-                f"is at {actual[:12]}; the work changed after it was validated")
-
-        # 5. Never rewrite history. `--force-with-lease` is still a force, and
-        #    the engine has no business overwriting anyone's refs.
-        self._git("push", "--set-upstream", "origin",
-                  f"{target_branch}:{target_branch}", cwd=path)
-        return actual
+        raise self._sem_historia("ler o commit corrente")
 
     def is_dirty(self, area: WorkArea) -> bool:
-        return bool(self._git("status", "--porcelain", cwd=Path(area.path)).strip())
+        raise self._sem_historia("dizer se ha mudanca pendente")
 
     def commit(self, area: WorkArea, message: str,
                author: tuple[str, str] | None = None) -> str:
-        path = Path(area.path)
-        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
+        raise self._sem_historia("escrever um commit")
 
-        # Refusing here rather than trusting the caller: the engine builds the
-        # work branch, so being on anything else means something upstream went
-        # wrong, and a commit is a terrible place to find that out.
-        if current in ("HEAD", "main", "master", "develop"):
-            raise AdapterError(
-                f"refused to commit on '{current}': the isolated area must be on "
-                f"its own work branch, never on an integration branch")
-        if area.branch and current != area.branch:
-            raise AdapterError(
-                f"refused to commit: the area is on '{current}' and the run owns "
-                f"'{area.branch}'")
-
-        if not self.is_dirty(area):
-            raise AdapterError("nothing to commit: the area has no changes")
-
-        # `--no-verify` is deliberately NOT used: a repository's own hooks are
-        # part of its rules, and an engine that skips them is writing history
-        # the team did not agree to.
-        name, email = author or ("Regente", "regente@localhost.invalid")
-        self._git("add", "-A", cwd=path)
-        self._git("-c", f"user.name={name}", "-c", f"user.email={email}",
-                  "commit", "-q", "-m", message, cwd=path)
-        return self.head(area)
+    def push(self, area: WorkArea, expected_sha: str,
+             branch: str | None = None) -> str:
+        raise self._sem_historia("empurrar")
 
 
 class GitWorktree(WorkspaceProvider):
@@ -222,6 +166,14 @@ class GitClone(WorkspaceProvider):
     remotes: dict[str, str] = field(default_factory=dict)
     name: str = "clone"
     timeout: int = 600
+    #: A porta governada do marco 16, ja presa a quem age, a que workspace e a
+    #: que provider. `None` significa: este provedor nao empurra -- e recusa,
+    #: em vez de deixar o `git` procurar credencial sozinho.
+    credentials: CredentialBroker | None = None
+    #: O nome de usuario do par HTTP Basic. Nao e segredo: para um token de
+    #: hospedagem qualquer nome serve, e o que autentica e a senha. Configuravel
+    #: porque o valor esperado varia por fornecedor.
+    credential_user: str = "x-access-token"
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
@@ -233,13 +185,29 @@ class GitClone(WorkspaceProvider):
     def verify(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def _git(self, *args: str, cwd: Path | None = None) -> str:
+    def _git(self, *args: str, cwd: Path | None = None,
+             remote: str = "") -> str:
+        """Roda `git` com ambiente CLASSIFICADO, nunca herdado.
+
+        Sem `remote`, a invocacao e local -- `rev-parse`, `status`, `commit` --
+        e nao recebe credencial nenhuma. Com `remote`, o material vem do broker
+        pelo caminho governado, e so entao.
+
+        Herdar o ambiente era o que deixava o `credential.helper` global do
+        usuario autenticar em nome do motor, sem passar por lugar nenhum.
+        """
+        ambiente = git_process.child_environment(
+            remote, self.credentials, self.credential_user)
+        launch = ambiente.launch(Use.REPO_PUSH) if remote else ambiente.plain()
         p = subprocess.run(["git", *args], cwd=str(cwd) if cwd else None,
                            capture_output=True, encoding="utf-8",
-                           errors="replace", timeout=self.timeout)
+                           errors="replace", timeout=self.timeout,
+                           env=launch.env)
         if p.returncode != 0:
-            raise AdapterError(f"git {args[0]} rc={p.returncode}: "
-                               f"{(p.stderr or '').strip()[:300]}")
+            # Limpo ANTES de truncar: cortar primeiro deixa metade do cabecalho,
+            # e metade de um base64 ainda e a parte que ninguem deveria escrever.
+            erro = launch.scrub((p.stderr or "").strip())[:300]
+            raise AdapterError(f"git {args[0]} rc={p.returncode}: {erro}")
         return p.stdout
 
     def prepare(self, key: str, repo: str | None = None,
@@ -357,7 +325,12 @@ class GitClone(WorkspaceProvider):
             raise AdapterError(
                 f"refused to push to a local path: {destination}")
 
-        # 4. Never work nobody verified. Between validation and push the branch
+        # 4. Never a target whose authentication the engine cannot govern. An
+        #    `ssh://` remote would work -- through the user's agent, which is
+        #    authority nobody granted the engine and nobody can revoke from it.
+        git_process.refuse_unless_governable(destination)
+
+        # 5. Never work nobody verified. Between validation and push the branch
         #    may have moved, and pushing then vouches for an unseen commit.
         actual = self.head(area)
         if actual != expected_sha:
@@ -365,10 +338,16 @@ class GitClone(WorkspaceProvider):
                 f"refused to push: expected {expected_sha[:12]} and the branch "
                 f"is at {actual[:12]}; the work changed after it was validated")
 
-        # 5. Never rewrite history. `--force-with-lease` is still a force, and
+        # 6. Never rewrite history. `--force-with-lease` is still a force, and
         #    the engine has no business overwriting anyone's refs.
+        #
+        # `remote=` is what turns this single invocation into the one that
+        # carries a credential. Every other `git` call in this class runs
+        # without one, and none of them can acquire one by being edited: the
+        # material only exists inside `launch()`.
         self._git("push", "--set-upstream", "origin",
-                  f"{target_branch}:{target_branch}", cwd=path)
+                  f"{target_branch}:{target_branch}", cwd=path,
+                  remote=destination)
         return actual
 
     def is_dirty(self, area: WorkArea) -> bool:
@@ -402,3 +381,34 @@ class GitClone(WorkspaceProvider):
         self._git("-c", f"user.name={name}", "-c", f"user.email={email}",
                   "commit", "-q", "-m", message, cwd=path)
         return self.head(area)
+
+
+def _looks_local(destination: str) -> bool:
+    """True quando o alvo e um caminho no disco, e nao um servidor.
+
+    **Esta funcao nao existia.** Era chamada em dois lugares e definida em
+    nenhum, e `GitClone.push` levantava `NameError` em toda execucao real --
+    por cinco marcos, porque a entrega era provada contra um dublê que nao tem
+    esta linha e o unico teste do alvo de push nunca chamou `push`.
+
+    A guarda existe porque `git` aponta `origin` para o que foi clonado: uma
+    area clonada de um caminho local ja nasce mirando o checkout de alguem, e a
+    configuracao que parece mais segura -- clonar local, e mais rapido -- e a
+    que escreve no repositorio de trabalho de outra pessoa.
+
+    Reconhece esquema de rede primeiro e trata todo o resto como local. Na
+    duvida, LOCAL: recusar um push legitimo custa uma mensagem legivel; aceitar
+    um push para o disco de alguem custa o trabalho dessa pessoa.
+    """
+    alvo = (destination or "").strip()
+    if not alvo:
+        return True
+    baixo = alvo.lower()
+    if baixo.startswith(("https://", "http://", "ssh://", "git://", "ftp://",
+                         "ftps://")):
+        return False
+    # `git@host:org/repo` -- scp-like, que nao e URL e escapa de qualquer parser.
+    antes_da_barra = baixo.split("/", 1)[0]
+    if "@" in antes_da_barra and ":" in antes_da_barra:
+        return False
+    return True
