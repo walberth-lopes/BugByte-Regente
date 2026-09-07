@@ -29,11 +29,10 @@ from ..core.risk import RiskLevel
 #: ask for more investigation, or stop. "Stop" has to be available always --
 #: without it, the owner's only way out would be to edit the database by hand.
 #:
-#: The ids stay as they are: they are persisted as the approval's choice.
-FOLLOW = Option("seguir", "Approve the recommendation", "the engine runs the recommended path")
-INVESTIGATE = Option("investigar", "Ask for more investigation", "sends the task back to analysis")
-BLOCK = Option("bloquear", "Block the task", "leaves the work queue until somebody unblocks it")
-CANCEL = Option("cancelar", "Cancel the task", "closes the work out")
+FOLLOW = Option("follow", "Approve the recommendation", "the engine runs the recommended path")
+INVESTIGATE = Option("investigate", "Ask for more investigation", "sends the task back to analysis")
+BLOCK = Option("block", "Block the task", "leaves the work queue until somebody unblocks it")
+CANCEL = Option("cancel", "Cancel the task", "closes the work out")
 
 
 @dataclass(frozen=True, slots=True)

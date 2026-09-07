@@ -22,7 +22,7 @@ class Check:
         return self.state in {"QUEUED", "IN_PROGRESS", "PENDING"}
 
     @property
-    def verde(self) -> bool:
+    def green(self) -> bool:
         return self.conclusion in {"SUCCESS", "NEUTRAL", "SKIPPED"}
 
 
@@ -34,15 +34,15 @@ class PipelineStatus:
     url: str = ""
     #: True when the provider confirmed that NO check exists.
     #: An empty list caused by a read failure is an AdapterError, never this.
-    sem_checks: bool = False
+    no_checks: bool = False
 
     @property
-    def concluido(self) -> bool:
+    def completed(self) -> bool:
         return bool(self.checks) and not any(c.running for c in self.checks)
 
     @property
-    def falhou(self) -> tuple[str, ...]:
-        return tuple(c.name for c in self.checks if c.conclusion and not c.verde and not c.running)
+    def failed(self) -> tuple[str, ...]:
+        return tuple(c.name for c in self.checks if c.conclusion and not c.green and not c.running)
 
 
 class CICDProvider(Port):

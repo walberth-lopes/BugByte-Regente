@@ -79,17 +79,17 @@ class RunRequest:
 class RunResult:
     ok: bool
     summary: str
-    #: How the worker finished: 'concluido', 'timebox', 'sem_progresso',
-    #: 'orcamento', 'error', 'precisa_humano'. The engine decides the next step
-    #: from this -- which is why it is a closed vocabulary, not free text. The
-    #: values themselves stay as they are: the engine branches on them.
-    outcome: str = "concluido"
+    #: How the worker finished: 'FINISHED', 'TIMEBOX', 'NO_PROGRESS', 'BUDGET',
+    #: 'ERROR', 'NEEDS_HUMAN'. The engine decides the next step from this --
+    #: which is why it is a closed vocabulary, not free text. Same spelling as
+    #: `ports.agent.Outcome`, so the two runner protocols agree.
+    outcome: str = "FINISHED"
     artifacts: dict[str, Any] = field(default_factory=dict)
     cost_usd: float = 0.0
     tokens: int = 0
     tool_calls: int = 0
     iterations: int = 0
-    #: Question for the human, when `outcome == 'precisa_humano'`.
+    #: Question for the human, when `outcome == 'NEEDS_HUMAN'`.
     question: dict[str, Any] | None = None
 
 

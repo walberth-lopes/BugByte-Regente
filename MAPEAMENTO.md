@@ -12,21 +12,18 @@ they were read.
 The Core knows no tool's status names. It knows **position in the life cycle**,
 which every work system has.
 
-The internal values below stay in Portuguese: they are provider status strings,
-matched against captured data and persisted state.
-
 | status at the source | internal status | consequence in the engine |
 |---|---|---|
-| `TO DO`, `BACKLOG` | `NAO_INICIADA` | available — can be dispatched |
-| `PLANNING` | `EM_ANALISE` | available |
-| `CODING`, `IN PROGRESS` | `EM_EXECUCAO` | **blocked**: somebody is already on it |
-| `REVIEWING`, `IN REVIEW` | `EM_REVISAO` | blocked |
-| `QA STAGING`, `QA PRODUCTION` | `EM_VALIDACAO` | blocked |
-| `DONE` | `CONCLUIDA` | does not even enter the engine |
-| `CANCELLED`, `WON'T DO` | `CANCELADA` | does not enter |
-| **anything else** | `DESCONHECIDA` | **blocked** + anomaly reported |
+| `TO DO`, `BACKLOG` | `NOT_STARTED` | available — can be dispatched |
+| `PLANNING` | `IN_ANALYSIS` | available |
+| `CODING`, `IN PROGRESS` | `IN_PROGRESS` | **blocked**: somebody is already on it |
+| `REVIEWING`, `IN REVIEW` | `IN_REVIEW` | blocked |
+| `QA STAGING`, `QA PRODUCTION` | `IN_VALIDATION` | blocked |
+| `DONE` | `COMPLETED` | does not even enter the engine |
+| `CANCELLED`, `WON'T DO` | `CANCELLED` | does not enter |
+| **anything else** | `UNKNOWN` | **blocked** + anomaly reported |
 
-**Why `DESCONHECIDA` is not coerced.** A status outside the map means somebody
+**Why `UNKNOWN` is not coerced.** A status outside the map means somebody
 changed the process. Mapping it to the closest neighbour would make the engine
 work on a premise nobody verified, silently. It blocks and reports.
 
@@ -34,7 +31,7 @@ work on a premise nobody verified, silently. It blocks and reports.
 status as `new` / `indeterminate` / `done`, and that classification exists even
 for statuses nobody mapped. It is used only for `done` and `new`: it avoids the
 worst possible error — dispatching work that has already finished — without
-faking precision in the middle. `indeterminate` stays `DESCONHECIDA`, because "it
+faking precision in the middle. `indeterminate` stays `UNKNOWN`, because "it
 is in the middle" does not say whether that is code, review or validation.
 
 ## Priority → integer
@@ -90,7 +87,7 @@ real signal: two subtasks of the same parent almost always touch the same code.
 |---|---|---|
 | `parent` (default) | `parent:<KEY>` | siblings serialise, different parents parallelise |
 | `project` | `project:<KEY>` | serialises the whole project |
-| `nenhum` | — | declares no conflict |
+| `none` | — | declares no conflict |
 
 **It is a declared heuristic.** Real precision requires an agent reading the
 code, and that is Milestone 5.

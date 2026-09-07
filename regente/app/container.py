@@ -170,7 +170,7 @@ def build(cfg: Config) -> Engine:
     # listens is the engine.
     def observe(call) -> None:
         store.record_event(Event(
-            id=ids.new_id(ids.EVENT), workspace_id=ws.id, kind="chamada_provedor",
+            id=ids.new_id(ids.EVENT), workspace_id=ws.id, kind="provider_call",
             actor=cfg.providers["tasks"].name,
             summary=(f"{call.operation} {call.path} "
                     f"{'ok' if call.success else 'FALHOU'} {call.duration_ms}ms"),

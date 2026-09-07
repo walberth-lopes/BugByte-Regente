@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS counters (
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -242,10 +242,80 @@ def _v3_to_v4(c: sqlite3.Connection) -> None:
                    PRIMARY KEY (workspace_id, task_key, repo_provider, repo_key))""")
 
 
+def _v4_to_v5(c: sqlite3.Connection) -> None:
+    """Stored VALUES go to en-US, the way `_v2_to_v3` did for column names.
+
+    `_v2_to_v3` translated the schema and stopped there, so rows kept saying
+    `descoberta` and `situacao_externa` under English column names. This
+    finishes the job for the three places a Portuguese value was persisted:
+    event kinds, the JSON keys inside `tasks.data`, and the approval choice.
+
+    Rewritten in Python rather than SQL because `tasks.data` is a JSON blob and
+    SQLite's json1 is not guaranteed present in every build this has to run on.
+    """
+    for old, new in _EVENT_KINDS.items():
+        c.execute("UPDATE events SET kind=? WHERE kind=?", (new, old))
+
+    for old, new in _APPROVAL_CHOICES.items():
+        c.execute("UPDATE approvals SET choice=? WHERE choice=?", (new, old))
+        c.execute("UPDATE approvals SET recommendation=? WHERE recommendation=?",
+                  (new, old))
+
+    rows = c.execute("SELECT id, data FROM tasks").fetchall()
+    for task_id, blob in rows:
+        try:
+            data = json.loads(blob or "{}")
+        except ValueError:
+            continue                      # unreadable blob: leave it, do not lose it
+        if not isinstance(data, dict):
+            continue
+        moved = False
+        for old, new in _TASK_DATA_KEYS.items():
+            if old in data and new not in data:
+                data[new] = data.pop(old)
+                moved = True
+        if data.get("blocked_by") == "origem":
+            data["blocked_by"] = "source"
+            moved = True
+        status = data.get("normalised_status")
+        if status in _EXTERNAL_STATUS:
+            data["normalised_status"] = _EXTERNAL_STATUS[status]
+            moved = True
+        if moved:
+            c.execute("UPDATE tasks SET data=? WHERE id=?",
+                      (json.dumps(data, ensure_ascii=False), task_id))
+
+
+#: The pt-BR values `_v4_to_v5` rewrites. Kept as data so the migration and this
+#: file's writers cannot drift apart.
+_EVENT_KINDS = {
+    "descoberta": "discovered", "despachada": "dispatched", "transicao": "transition",
+    "recuperada": "recovered", "adiada": "deferred", "falhou": "failed",
+    "implementada": "implemented", "mudou_na_origem": "changed_at_source",
+    "tick_inicio": "tick_start", "tick_fim": "tick_end",
+    "chamada_provedor": "provider_call",
+}
+_APPROVAL_CHOICES = {
+    "seguir": "follow", "investigar": "investigate",
+    "bloquear": "block", "cancelar": "cancel",
+}
+_TASK_DATA_KEYS = {
+    "situacao_externa": "normalised_status", "estado_externo": "raw_status",
+    "rotulos": "labels", "bloqueada_por": "blocked_by",
+}
+_EXTERNAL_STATUS = {
+    "NAO_INICIADA": "NOT_STARTED", "EM_ANALISE": "IN_ANALYSIS",
+    "EM_EXECUCAO": "IN_PROGRESS", "EM_REVISAO": "IN_REVIEW",
+    "EM_VALIDACAO": "IN_VALIDATION", "CONCLUIDA": "COMPLETED",
+    "CANCELADA": "CANCELLED", "DESCONHECIDA": "UNKNOWN",
+}
+
+
 MIGRATIONS: dict[str, tuple[str, Any]] = {
     "1": ("2", _v1_to_v2),
     "2": ("3", _v2_to_v3),
     "3": ("4", _v3_to_v4),
+    "4": ("5", _v4_to_v5),
 }
 
 
@@ -477,7 +547,7 @@ class SqliteStore(Store):
 
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, actor, summary, data)
                          VALUES(?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), t.workspace_id, _iso(now()), "transicao",
+                      (ids.new_id(ids.EVENT), t.workspace_id, _iso(now()), "transition",
                        t.id, actor, f"{source.value} -> {destination.value}",
                        _j({"from": source.value, "to": destination.value,
                            "reason": reason, **(data or {})})))

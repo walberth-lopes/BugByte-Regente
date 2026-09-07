@@ -62,7 +62,7 @@ class FilesystemTasks(TaskProvider):
 
     #: This format's vocabulary -> the engine's vocabulary. Whoever writes the
     #: YAML chooses the text; the map is the contract. A status outside the map
-    #: becomes DESCONHECIDA and rises as an anomaly -- it is never coerced into
+    #: becomes UNKNOWN and rises as an anomaly -- it is never coerced into
     #: the neighbouring value. The keys are status text from user files and stay
     #: as they are.
     STATUS_MAP: dict[str, ExternalStatus] = {

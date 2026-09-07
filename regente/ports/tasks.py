@@ -23,20 +23,21 @@ class ExternalStatus(str, Enum):
     translation of any tool's flow: it is the position in the life cycle, which
     every work system has.
 
-    The values below stay in Portuguese on purpose: they are provider status
-    strings, matched against captured data and persisted state.
+    Member and value are kept identical. Old databases are migrated by
+    `_v4_to_v5` in the SQLite store; the Jira and YAML status names these map
+    FROM are untouched, since those belong to the provider.
     """
-    NOT_STARTED = "NAO_INICIADA"
-    IN_ANALYSIS = "EM_ANALISE"
-    IN_PROGRESS = "EM_EXECUCAO"
-    IN_REVIEW = "EM_REVISAO"
-    IN_VALIDATION = "EM_VALIDACAO"
-    COMPLETED = "CONCLUIDA"
-    CANCELLED = "CANCELADA"
+    NOT_STARTED = "NOT_STARTED"
+    IN_ANALYSIS = "IN_ANALYSIS"
+    IN_PROGRESS = "IN_PROGRESS"
+    IN_REVIEW = "IN_REVIEW"
+    IN_VALIDATION = "IN_VALIDATION"
+    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
     #: A status the adapter could not map. **Never** coerced into the most
     #: convenient neighbour: a new status on the board means somebody changed the
     #: process, and the engine has to say so instead of guessing.
-    UNKNOWN = "DESCONHECIDA"
+    UNKNOWN = "UNKNOWN"
 
     @property
     def available(self) -> bool:
@@ -98,7 +99,7 @@ class ExternalTask:
     title: str
     status: ExternalStatus = ExternalStatus.UNKNOWN
     #: The raw status, as the provider wrote it. Preserved for diagnosis: when
-    #: `status` comes back DESCONHECIDA, this field is what says what showed up.
+    #: `status` comes back UNKNOWN, this field is what says what showed up.
     external_status: str = ""
     description: str = ""
     url: str | None = None

@@ -211,7 +211,7 @@ def test_state_survives_to_process(bench):
 def test_worker_dead_returns_the_task_to_the_queue(bench):
     """The criterion for death is the expired lease, not the absence of a process."""
     write_task(bench.tasks, "A-1", resources=["repo:a"])
-    orq, store = bench(script={"A-1": {"ok": True, "resumo": "feito"}})
+    orq, store = bench(script={"A-1": {"ok": True, "summary": "done"}})
     orq.tick()
 
     # Simulates a worker that hung: a live run, a lease already expired.
@@ -258,19 +258,19 @@ def test_lease_expired_can_ser_taken(bench):
 
 def test_first_failure_retries_without_bothering_the_owner(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
-    orq, store = bench(script={"A-1": {"ok": False, "resumo": "teste vermelho"}})
+    orq, store = bench(script={"A-1": {"ok": False, "summary": "red test"}})
     orq.tick()
     rel = orq.tick()
 
     task = store.tasks("wks_teste")[0]
     assert task.state is TaskState.READY
     assert task.attempts == 1
-    assert not rel.escalated, "falha unica e trabalho, nao pergunta"
+    assert not rel.escalated, "a single failure is work, not a question"
 
 
 def test_ladder_ends_is_escalates(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
-    orq, store = bench(script={"A-1": {"ok": False, "resumo": "mesmo error"}})
+    orq, store = bench(script={"A-1": {"ok": False, "summary": "same error"}})
     for _ in range(5):
         orq.tick()
 
@@ -285,12 +285,12 @@ def test_ladder_ends_is_escalates(bench):
 def test_worker_can_pedir_decision_human(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
     orq, store = bench(script={"A-1": {
-        "ok": False, "desfecho": "precisa_humano",
-        "resumo": "contrato da API publica e ambiguo",
-        "pergunta": {"o_que_aconteceu": "contrato da API publica e ambiguo",
-                     "por_que_importa": "escolher errado quebra cliente em producao",
+        "ok": False, "outcome": "NEEDS_HUMAN",
+        "summary": "the public API contract is ambiguous",
+        "question": {"what_happened": "the public API contract is ambiguous",
+                     "why_it_matters": "choosing wrong breaks a client in production",
                      "tentativas": ["li os dois consumidores", "procurei ADR"],
-                     "recomendacao": "seguir"}}})
+                     "recommendation": "follow"}}})
     orq.tick()
     rel = orq.tick()
 
@@ -300,21 +300,21 @@ def test_worker_can_pedir_decision_human(bench):
     assert task.paused_at is TaskState.IMPLEMENTING
 
     a = store.open_approvals("wks_teste")[0]
-    assert a.recommendation == "seguir"
+    assert a.recommendation == "follow"
     assert len(a.options) >= 3
 
 
 def test_decision_human_is_recorded_is_resumes(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
     orq, store = bench(script={"A-1": {
-        "ok": False, "desfecho": "precisa_humano", "resumo": "ambiguo",
-        "pergunta": {"por_que_importa": "afeta contrato publico"}}})
+        "ok": False, "outcome": "NEEDS_HUMAN", "summary": "ambiguous",
+        "question": {"why_it_matters": "affects a public contract"}}})
     orq.tick()
     orq.tick()
 
     a = store.open_approvals("wks_teste")[0]
-    decided = store.decide_approval(a.id, "seguir", by="walberth", note="manter compat")
-    assert decided.choice == "seguir"
+    decided = store.decide_approval(a.id, "follow", by="walberth", note="keep compatibility")
+    assert decided.choice == "follow"
     assert not store.open_approvals("wks_teste")
 
     task = store.task(a.task_id)
@@ -325,8 +325,8 @@ def test_decision_human_is_recorded_is_resumes(bench):
 def test_choice_outside_of_options_is_refused(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
     orq, store = bench(script={"A-1": {
-        "ok": False, "desfecho": "precisa_humano", "resumo": "x",
-        "pergunta": {"por_que_importa": "y"}}})
+        "ok": False, "outcome": "NEEDS_HUMAN", "summary": "x",
+        "question": {"why_it_matters": "y"}}})
     orq.tick()
     orq.tick()
     a = store.open_approvals("wks_teste")[0]
@@ -359,9 +359,9 @@ def test_timeline_tells_the_story(bench):
 
     task = store.tasks("wks_teste")[0]
     kinds = [e.kind for e in store.events("wks_teste", task_id=task.id, limit=50)]
-    assert "descoberta" in kinds
-    assert "despachada" in kinds
-    assert kinds.count("transicao") >= 4
+    assert "discovered" in kinds
+    assert "dispatched" in kinds
+    assert kinds.count("transition") >= 4
 
 
 def test_every_transition_leaves_trail(bench):
@@ -371,7 +371,7 @@ def test_every_transition_leaves_trail(bench):
     task = store.tasks("wks_teste")[0]
     store.transition(task.id, TaskState.ANALYZING, actor="teste", reason="porque sim")
     event = store.events("wks_teste", task_id=task.id, limit=1)[0]
-    assert event.kind == "transicao"
+    assert event.kind == "transition"
     assert event.data["reason"] == "porque sim"
     assert event.actor == "teste"
 
@@ -395,7 +395,7 @@ def test_task_recovered_returns_the_ser_schedulable(bench):
 def test_area_of_work_is_of_task_is_survives_the_resume(bench):
     """The previous attempt's WIP has to be there when the worker comes back."""
     write_task(bench.tasks, "A-1", resources=["repo:a"])
-    orq, store = bench(script={"A-1": {"ok": False, "resumo": "caiu"}})
+    orq, store = bench(script={"A-1": {"ok": False, "summary": "fell over"}})
     orq.tick()
     orq.tick()
 
@@ -433,7 +433,7 @@ def test_not_dispatches_work_that_already_tem_someone(bench):
     by_key = {t.key: t for t in store.tasks("wks_teste")}
     assert by_key["A-2"].state is TaskState.BLOCKED
     assert by_key["A-3"].state is TaskState.BLOCKED
-    assert by_key["A-2"].data["bloqueada_por"] == "origem"
+    assert by_key["A-2"].data["blocked_by"] == "source"
 
 
 def test_status_unknown_not_is_dispatched(bench):
@@ -525,6 +525,78 @@ def test_database_old_migrates_in_instead_of_refusing(tmp_path):
     assert s.acquire_lease("repo:x", "run_a", "wks_a", 60) is not None
     assert s.acquire_lease("repo:x", "run_b", "wks_b", 60) is not None
     s.close()
+
+
+def test_values_stored_in_portuguese_are_migrated(tmp_path):
+    """`_v2_to_v3` translated the COLUMNS and left the rows saying `descoberta`.
+
+    A migration nobody exercises is worth nothing, so this builds a v4 database
+    by hand -- English columns, Portuguese values -- and checks every place a
+    pt-BR value was persisted comes back translated.
+    """
+    import json
+    import sqlite3
+    from regente.engine.store_sqlite import SqliteStore
+
+    path = tmp_path / "v4.db"
+    con = sqlite3.connect(str(path))
+    con.executescript("""
+        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        INSERT INTO meta VALUES('schema','4');
+        CREATE TABLE events (
+          id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, ts TEXT NOT NULL,
+          kind TEXT NOT NULL, task_id TEXT, run_id TEXT,
+          actor TEXT NOT NULL DEFAULT 'engine', summary TEXT NOT NULL DEFAULT '',
+          data TEXT NOT NULL DEFAULT '{}');
+        CREATE TABLE tasks (
+          id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL,
+          title TEXT NOT NULL, state TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+          provider TEXT, external_key TEXT, url TEXT,
+          priority INTEGER NOT NULL DEFAULT 100, risk TEXT, paused_at TEXT,
+          resources TEXT NOT NULL DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          data TEXT NOT NULL DEFAULT '{}');
+        CREATE TABLE approvals (
+          id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
+          run_id TEXT, state TEXT NOT NULL, risk TEXT NOT NULL,
+          what_happened TEXT NOT NULL DEFAULT '', why_it_matters TEXT NOT NULL DEFAULT '',
+          attempts TEXT NOT NULL DEFAULT '[]', options TEXT NOT NULL DEFAULT '[]',
+          recommendation TEXT, created_at TEXT NOT NULL, decided_at TEXT,
+          decided_by TEXT, choice TEXT, note TEXT NOT NULL DEFAULT '');
+    """)
+    con.execute("INSERT INTO events VALUES('evt_1','wks_a','2026-01-01T00:00:00.000000Z',"
+                "'descoberta',NULL,NULL,'engine','',  '{}')")
+    con.execute("INSERT INTO events VALUES('evt_2','wks_a','2026-01-01T00:00:00.000000Z',"
+                "'transicao',NULL,NULL,'engine','',  '{}')")
+    con.execute(
+        "INSERT INTO tasks VALUES('tsk_1','wks_a','prj_1','t','BLOCKED','',NULL,NULL,"
+        "NULL,100,NULL,NULL,'[]',0,'2026-01-01T00:00:00.000000Z','2026-01-01T00:00:00.000000Z',?)",
+        (json.dumps({"situacao_externa": "EM_EXECUCAO", "estado_externo": "CODING",
+                     "rotulos": ["a"], "bloqueada_por": "origem"}),))
+    con.execute("INSERT INTO approvals VALUES('apv_1','wks_a','tsk_1',NULL,'DECIDED',"
+                "'MEDIUM','','','[]','[]','seguir','2026-01-01T00:00:00.000000Z',NULL,NULL,"
+                "'seguir','')")
+    con.commit(); con.close()
+
+    store = SqliteStore(path)
+    store.migrate()
+    store.verify()
+
+    kinds = [e.kind for e in store.events("wks_a", limit=10)]
+    assert "discovered" in kinds and "transition" in kinds
+    assert "descoberta" not in kinds and "transicao" not in kinds
+
+    task = store.task("tsk_1")
+    assert task.data["normalised_status"] == "IN_PROGRESS"
+    assert task.data["raw_status"] == "CODING"
+    assert task.data["labels"] == ["a"]
+    assert task.data["blocked_by"] == "source"
+    assert "situacao_externa" not in task.data
+
+    approval = store.approval("apv_1")
+    assert approval.choice == "follow"
+    assert approval.recommendation == "follow"
+    store.close()
 
 
 def test_database_of_version_future_is_refused(tmp_path):

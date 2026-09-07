@@ -39,7 +39,7 @@ from .transport import Transport
 #: EXTERNAL STATUS -> INTERNAL STATUS.
 #:
 #: The names were read from the real board, not assumed. A status outside this
-#: map is NOT coerced into the neighbouring one: it becomes DESCONHECIDA and
+#: map is NOT coerced into the neighbouring one: it becomes UNKNOWN and
 #: rises as an anomaly. A new status means somebody changed the process, and the
 #: engine has to say so instead of pretending it understood. Keys are Jira status
 #: names and stay as they are.
@@ -62,7 +62,7 @@ STATUS_MAP: dict[str, ExternalStatus] = {
 #: `new` / `indeterminate` / `done`, and that classification exists even for
 #: statuses nobody mapped. Using it for `done` avoids the worst possible error --
 #: dispatching work that is already finished -- without faking precision on the
-#: rest: `indeterminate` stays DESCONHECIDA, because "it is in the middle" does
+#: rest: `indeterminate` stays UNKNOWN, because "it is in the middle" does
 #: not say whether that is code, review or validation, and guessing is worse than
 #: admitting the ignorance.
 CATEGORY_MAP: dict[str, ExternalStatus] = {
@@ -147,7 +147,7 @@ class JiraTasks(TaskProvider):
     #: the configuration: the only place where the notion of "relevant" is declared.
     jql: str = "statusCategory != Done ORDER BY updated DESC"
     #: Where the resource key used by the scheduler comes from. See `_resources_of`.
-    #: Its values ("parent", "project", "nenhum") are configuration and stay as they are.
+    #: Its values are "parent", "project" and "none".
     resources_by: str = "parent"
     #: Page cap. It exists so that a loose JQL does not turn into a sweep of an
     #: entire board in one tick.
@@ -313,12 +313,12 @@ class JiraTasks(TaskProvider):
 
         `parent` (default): serialises siblings, parallelises different parents.
         `project`: serialises the whole project -- conservative, almost no gain.
-        `nenhum`:  declares no conflict; only for those who enrich this later.
+        `none`:    declares no conflict; only for those who enrich this later.
 
         Real precision comes from an analysis agent reading the code. Until then
         this is a declared heuristic -- and it says so in writing.
         """
-        if self.resources_by == "nenhum":
+        if self.resources_by == "none":
             return ()
         if self.resources_by == "project":
             return (f"project:{(fields.get('project') or {}).get('key') or '?'}",)

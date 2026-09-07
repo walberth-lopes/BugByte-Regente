@@ -112,7 +112,7 @@ class Orchestrator:
     # ------------------------------------------------------------------
     def tick(self) -> TickReport:
         rel = TickReport(workspace=self.workspace.name)
-        self._record("tick_inicio", summary="tick started")
+        self._record("tick_start", summary="tick started")
         try:
             self._recover(rel)
             first_pass = self._discover(rel)
@@ -127,7 +127,7 @@ class Orchestrator:
             # with a declared error and the next one tries again.
             rel.errors += (f"adapter: {e}",)
             self._record("error", summary=str(e)[:300])
-        self._record("tick_fim", summary=rel.summary())
+        self._record("tick_end", summary=rel.summary())
         return rel
 
     # ---- 1. recovery ----------------------------------------------------
@@ -158,7 +158,7 @@ class Orchestrator:
                 self.store.transition(task.id, destination, actor="supervisor",
                                        reason="worker interrupted")
             rel.recovered += (task.key,)
-            self._record("recuperada", task_id=task.id, run_id=run.id,
+            self._record("recovered", task_id=task.id, run_id=run.id,
                         summary=f"worker dead; task comes back as {destination.value}")
 
     # ---- 2. discovery ---------------------------------------------------
@@ -176,7 +176,7 @@ class Orchestrator:
             if task is None:
                 task = self._create_task(e)
                 rel.discovered += 1
-                self._record("descoberta", task_id=task.id,
+                self._record("discovered", task_id=task.id,
                             summary=f"{e.key}: {e.title}"[:200],
                             status=e.status.value, anomalies=list(e.anomalies))
             else:
@@ -212,21 +212,21 @@ class Orchestrator:
         issue on the board, that changes the *relevance* of the work, not the
         step at which the worker stopped.
 
-        The `data` keys below (situacao_externa, estado_externo, rotulos) are
-        persisted JSON and stay as they are.
+        The `data` keys below (normalised_status, raw_status, labels) are
+        persisted JSON; old databases are migrated by `_v4_to_v5` in the store.
         """
-        before = task.data.get("situacao_externa")
+        before = task.data.get("normalised_status")
         current_status = e.status.value
         task.title = e.title
         task.priority = e.priority
-        task.data.update({"situacao_externa": current_status,
-                           "estado_externo": e.external_status,
-                           "rotulos": list(e.labels)})
+        task.data.update({"normalised_status": current_status,
+                           "raw_status": e.external_status,
+                           "labels": list(e.labels)})
         task.updated_at = now()
         self.store.save_task(task)
         if before and before != current_status:
             rel.changes += ((task.key, before, current_status),)
-            self._record("mudou_na_origem", task_id=task.id,
+            self._record("changed_at_source", task_id=task.id,
                         summary=f"{before} -> {current_status} ({e.external_status})",
                         de=before, to_state=current_status)
 
@@ -238,9 +238,9 @@ class Orchestrator:
             external=ExternalRef(provider=self.tasks_provider.name, key=e.key, url=e.url),
             description=e.description, priority=e.priority,
             resources=tuple(e.resources),
-            data={**dict(e.data), "situacao_externa": e.status.value,
-                   "estado_externo": e.external_status,
-                   "rotulos": list(e.labels)})
+            data={**dict(e.data), "normalised_status": e.status.value,
+                   "raw_status": e.external_status,
+                   "labels": list(e.labels)})
         self.store.save_task(t)
         return t
 
@@ -257,10 +257,10 @@ class Orchestrator:
         # queue when the source changes its mind. This is the only way back: a
         # task blocked by FAILURE is not unblocked by an external status.
         for t in self.store.tasks(self.workspace.id, [TaskState.BLOCKED]):
-            if t.data.get("bloqueada_por") != "origem":
+            if t.data.get("blocked_by") != "source":
                 continue
             if self._status_of(t).available:
-                t.data.pop("bloqueada_por", None)
+                t.data.pop("blocked_by", None)
                 self.store.save_task(t)
                 self.store.transition(t.id, TaskState.READY, actor="planner",
                                        reason="the source released the work")
@@ -291,11 +291,11 @@ class Orchestrator:
             # through, and no test with invented data would have found it.
             status = self._status_of(t)
             if not status.available:
-                t.data["bloqueada_por"] = "origem"
+                t.data["blocked_by"] = "source"
                 self.store.save_task(t)
                 self.store.transition(
                     t.id, TaskState.BLOCKED, actor="planner",
-                    reason=f"the source says {t.data.get('estado_externo') or status.value}")
+                    reason=f"the source says {t.data.get('raw_status') or status.value}")
                 rel.analyzed += 1
                 continue
 
@@ -362,7 +362,7 @@ class Orchestrator:
                                         self.lease_seconds) is None:
                 for r in held:
                     self.store.release_lease(r, run.id, self.workspace.id)
-                self._record("adiada", task_id=task.id,
+                self._record("deferred", task_id=task.id,
                             summary=f"resource {resource} became busy between the plan and the dispatch")
                 return
             held.append(resource)
@@ -377,14 +377,14 @@ class Orchestrator:
         self.store.transition(task.id, TaskState.IMPLEMENTING, actor=run.agent,
                                reason="worker started")
         rel.dispatched += (task.key,)
-        self._record("despachada", task_id=task.id, run_id=run.id,
+        self._record("dispatched", task_id=task.id, run_id=run.id,
                     summary=f"{run.agent} em {area.path}")
 
         request = RunRequest(
             run_id=run.id, task_id=task.id, agent=run.agent,
             goal=task.title, area=area,
-            context={"descricao": task.description, "chave": task.key,
-                      "risco": task.risk.name if task.risk else "LOW",
+            context={"description": task.description, "key": task.key,
+                      "risk": task.risk.name if task.risk else "LOW",
                       "resources": list(task.resources)},
             limit_iterations=self.budget.max_iterations,
             limit_tool_calls=self.budget.max_tool_calls,
@@ -413,7 +413,7 @@ class Orchestrator:
         run.cost_usd, run.tokens = result.cost_usd, result.tokens
         run.tool_calls, run.iterations = result.tool_calls, result.iterations
 
-        if result.outcome == "precisa_humano":
+        if result.outcome == "NEEDS_HUMAN":
             run.state, run.reason = RunState.ABORTED, result.summary
             self.store.save_run(run)
             self.store.transition(task_id, TaskState.WAITING_HUMAN, actor=run.agent,
@@ -428,14 +428,14 @@ class Orchestrator:
             self.store.transition(task.id, TaskState.TESTING, actor=run.agent,
                                    reason=result.summary)
             rel.completed += (task.key,)
-            self._record("implementada", task_id=task.id, run_id=run.id,
+            self._record("implemented", task_id=task.id, run_id=run.id,
                         summary=result.summary[:200])
             return
 
         self._failed(task_id, run, result.summary, rel, outcome=result.outcome)
 
     def _failed(self, task_id: str, run: Run, reason: str, rel: TickReport,
-                outcome: str = "error") -> None:
+                outcome: str = "ERROR") -> None:
         run.state, run.reason = RunState.FAILED, reason
         self.store.save_run(run)
 
@@ -460,7 +460,7 @@ class Orchestrator:
         else:
             self.store.transition(task.id, TaskState.READY, actor="supervisor",
                                    reason=f"{step_name} after failure: {reason}"[:300])
-            self._record("falhou", task_id=task.id, run_id=run.id,
+            self._record("failed", task_id=task.id, run_id=run.id,
                         summary=f"{reason[:160]} -> {step_name}")
 
     # ---- escalation ------------------------------------------------------
@@ -469,10 +469,10 @@ class Orchestrator:
         p = result.question or {}
         approval = escalation.build(
             task=task,
-            what_happened=p.get("o_que_aconteceu", result.summary),
-            why_it_matters=p.get("por_que_importa", "the agent stopped without being able to decide on its own"),
-            attempts=tuple(p.get("tentativas", ())),
-            recommendation=p.get("recomendacao", escalation.FOLLOW.id),
+            what_happened=p.get("what_happened", result.summary),
+            why_it_matters=p.get("why_it_matters", "the agent stopped without being able to decide on its own"),
+            attempts=tuple(p.get("attempts", ())),
+            recommendation=p.get("recommendation", escalation.FOLLOW.id),
             risk=task.risk or RiskLevel.MEDIUM,
             run_id=run.id)
         self._publish(approval, task, rel)
@@ -524,11 +524,11 @@ class Orchestrator:
     def _status_of(self, t: Task) -> ExternalStatus:
         """The status at the source, rebuilt from what was persisted.
 
-        A provider with no notion of status returns DESCONHECIDA -- which is NOT
+        A provider with no notion of status returns UNKNOWN -- which is NOT
         available. Deliberately conservative: not knowing whether somebody is on
         the task has to cost a deferral, never a collision.
         """
-        raw = t.data.get("situacao_externa")
+        raw = t.data.get("normalised_status")
         try:
             return ExternalStatus(raw)
         except ValueError:
