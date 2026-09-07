@@ -274,7 +274,7 @@ def cmd_plan(args) -> int:
         motor.close()
 
 
-def cmd_sombra(args) -> int:
+def cmd_shadow(args) -> int:
     """Discovers and plans against the real provider, mutating nothing."""
     cfg = _load_config(args)
     motor = container.build(cfg)
@@ -314,7 +314,7 @@ def cmd_repos(args) -> int:
         motor.close()
 
 
-def cmd_cadeia(args) -> int:
+def cmd_chain(args) -> int:
     """task -> repository -> base -> resources -> risk/policy -> candidate."""
     cfg = _load_config(args)
     motor = container.build(cfg)
@@ -447,25 +447,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--task", help="filter by task key")
     p.set_defaults(fn=cmd_log)
 
-    p = sub.add_parser("sombra", help="see the real work without touching anything")
+    p = sub.add_parser("shadow", help="see the real work without touching anything")
     p.add_argument("--mine", action="store_true", help="only what is assigned to me")
     p.add_argument("--me", metavar="NAME",
                    help="assignee name to count as 'mine'")
     p.add_argument("--output", metavar="FILE",
                    help="write the report here; a bare name goes to reports/")
-    p.set_defaults(fn=cmd_sombra)
+    p.set_defaults(fn=cmd_shadow)
 
     p = sub.add_parser("repos", help="visible repositories, without touching anything")
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(fn=cmd_repos)
 
-    p = sub.add_parser("cadeia", help="from the real task to an execution candidate, in shadow")
+    p = sub.add_parser("chain", help="from the real task to an execution candidate, in shadow")
     p.add_argument("--limit", type=int, default=10)
     p.add_argument("--no-branches", action="store_true",
                    help="skip reading branches (faster, less evidence)")
     p.add_argument("--output", metavar="FILE",
                    help="write the report here; a bare name goes to reports/")
-    p.set_defaults(fn=cmd_cadeia)
+    p.set_defaults(fn=cmd_chain)
 
     p = sub.add_parser("mission", help="select one task, show the briefing, optionally run")
     p.add_argument("--run", action="store_true", help="execute; without it, nothing runs")

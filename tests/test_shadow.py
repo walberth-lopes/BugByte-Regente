@@ -4,7 +4,7 @@
 `shadow.execute()` had no test at all, and the gap cost exactly what an untested
 entry point costs: `plan = plan(...)` made the name local to the function, so the
 call on the right-hand side raised UnboundLocalError against the `plan` imported
-from `core.scheduling`. Every `regente sombra` died on that line.
+from `core.scheduling`. Every `regente shadow` died on that line.
 
 It survived because the only caller is the CLI, and the CLI was itself dead on an
 argument mismatch two hundred lines earlier -- one broken layer hiding the next.

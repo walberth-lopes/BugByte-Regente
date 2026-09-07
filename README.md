@@ -29,7 +29,7 @@ See [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md),
 ## Shadow: see without touching
 
 ```bash
-regente sombra
+regente shadow
 ```
 
 Discovers, normalises, builds the graph and shows what the engine would do —
@@ -64,20 +64,20 @@ regente status    # what is happening, what needs you
 | `needs-me` | the queue of human decisions, with a briefing |
 | `decide` | records your decision on an item in the queue |
 | `log` | the trail: every transition, with actor and reason |
-| `sombra` | sees the real work and what the engine would do, without touching anything |
+| `shadow` | sees the real work and what the engine would do, without touching anything |
 | `repos` | visible repositories, as the engine sees them |
-| `cadeia` | from the real task to an execution candidate, link by link |
+| `chain` | from the real task to an execution candidate, link by link |
 | `mission` | picks one task and shows the briefing; executes only with `--run` |
 | `rules` | the rules, limits and adapters in force |
 
 ## Reports
 
-`sombra`, `cadeia` and `mission` print to the terminal. Add `--output` to keep a
+`shadow`, `chain` and `mission` print to the terminal. Add `--output` to keep a
 copy:
 
 ```bash
-regente sombra --output r.txt        # -> reports/r.txt
-regente cadeia --output docs/r.txt   # -> docs/r.txt
+regente shadow --output r.txt        # -> reports/r.txt
+regente chain  --output docs/r.txt   # -> docs/r.txt
 ```
 
 A bare filename is a **name**, not a location: it lands in `reports/`, which is

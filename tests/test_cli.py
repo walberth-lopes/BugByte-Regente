@@ -3,7 +3,7 @@
 
 The defect this file exists for: argparse declared `--minhas` while the handler
 read `args.mine`. Every such pair is an `AttributeError` on the command's first
-line, and `decide`, `sombra` and `cadeia` were all dead in the tree at once.
+line, and `decide`, `shadow` and `chain` were all dead in the tree at once.
 
 Nothing caught it because no test invoked the CLI, and the mismatch is invisible
 to a reader -- the declaration and the read sit two hundred lines apart. So the
