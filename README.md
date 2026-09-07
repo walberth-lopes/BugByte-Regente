@@ -67,6 +67,7 @@ regente status    # what is happening, what needs you
 | `sombra` | sees the real work and what the engine would do, without touching anything |
 | `repos` | visible repositories, as the engine sees them |
 | `cadeia` | from the real task to an execution candidate, link by link |
+| `mission` | picks one task and shows the briefing; executes only with `--run` |
 | `rules` | the rules, limits and adapters in force |
 
 ## Reports
