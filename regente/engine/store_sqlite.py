@@ -18,14 +18,16 @@ Escolhas que nao sao detalhe:
 from __future__ import annotations
 
 import json
+import random
 import sqlite3
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from ..core import ids
-from ..core.errors import CorruptedState
+from ..core.errors import AlreadyExists, CorruptedState
 from ..core.model import (ActionRecord, Approval, ApprovalState, Dependency, Event,
                           ExternalRef, Lease, Option, Project, Repository, Run,
                           RunState, Task, Workspace, now)
@@ -354,13 +356,47 @@ class SqliteStore(Store):
         self._con.execute("PRAGMA synchronous=NORMAL")
         self._con.execute("PRAGMA foreign_keys=ON")
         self._con.execute("PRAGMA busy_timeout=5000")
+        #: How many times to wait for the write lock before giving up. Counted
+        #: so a soak run can report contention rather than hide it.
+        self.lock_attempts = 6
+        self.lock_backoff = 0.02
+        self.lock_retries = 0
 
     def close(self) -> None:
         self._con.close()
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
-        self._con.execute("BEGIN IMMEDIATE")
+        """A write transaction, retrying ONLY the acquisition of the write lock.
+
+        `BEGIN IMMEDIATE` takes the write lock up front, so two processes queue
+        instead of discovering the conflict half way through and rolling back
+        work they already did. Under real contention it can still exhaust
+        `busy_timeout` and raise `database is locked`.
+
+        The retry is deliberately placed BEFORE the block runs. Nothing inside
+        has executed yet, so retrying is exactly equivalent to having started
+        later -- no statement is repeated and no semantics change. Retrying
+        further in would mean re-running statements whose effects the caller may
+        already have observed, which is a different and much worse thing.
+
+        Raising the timeout instead would have made the tests pass and left the
+        engine one busy moment away from the same crash.
+        """
+        for attempt in range(self.lock_attempts):
+            try:
+                self._con.execute("BEGIN IMMEDIATE")
+                break
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower() and "busy" not in str(e).lower():
+                    raise
+                self.lock_retries += 1
+                if attempt == self.lock_attempts - 1:
+                    raise
+                # Back off with a little jitter, so two workers that collided do
+                # not collide again in lockstep for ever.
+                time.sleep(self.lock_backoff * (2 ** attempt)
+                           * (0.5 + random.random()))
         try:
             yield self._con
         except Exception:
@@ -490,20 +526,64 @@ class SqliteStore(Store):
             data=json.loads(r["data"]))
 
     def save_task(self, t: Task) -> None:
-        with self._tx() as c:
-            self._save_task_row(c, t)
+        """Persist a task, translating a lost race into a domain error.
 
-    def _save_task_row(self, c: sqlite3.Connection, t: Task) -> None:
+        The unique index on (workspace_id, provider, external_key) is what stops
+        two processes registering the same external task twice. Under real
+        contention that index fires, and it fired as a raw `IntegrityError` that
+        killed the whole tick of whichever worker was second.
+
+        The store owns the constraint, so the store owns the conflict: it comes
+        out as `AlreadyExists`, which the engine can act on without knowing what
+        database this is.
+        """
+        try:
+            with self._tx() as c:
+                self._save_task_row(c, t)
+        except sqlite3.IntegrityError as e:
+            if "external_key" not in str(e) and "tasks" not in str(e):
+                raise
+            raise AlreadyExists(
+                f"another process registered "
+                f"{t.externo.key if t.externo else t.id} first") from e
+
+    def _save_task_row(self, c: sqlite3.Connection, t: Task,
+                       with_state: bool = False) -> None:
+        """Insert a task, or update its METADATA. Never its state.
+
+        `state` and `paused_at` are written on insert, and on update ONLY when
+        the caller asks -- which exactly one caller does, `transition()`, having
+        read the current state inside the same transaction and validated the
+        move. Every other caller is updating metadata and must leave state
+        alone.
+
+        Making it an argument rather than a rule in a comment matters: the first
+        version of this fix simply stopped writing state on update, which also
+        silenced `transition()` and left every task frozen in DISCOVERED. The
+        intent has to be expressible, not merely intended.
+
+        It did. Under three contending processes, a worker read a task, another
+        worker advanced it two states, and the first worker's routine metadata
+        refresh wrote the OLD state back -- no validation, no event, no trace.
+        The task was left in an active state that nothing owned and nothing
+        would ever pick up again, and the only sign was a task whose
+        `updated_at` was six seconds newer than its last transition.
+
+        Lost updates are hard to see afterwards precisely because the write that
+        loses is a perfectly ordinary one.
+        """
         c.execute("""INSERT INTO tasks(id, workspace_id, project_id, title, state, description,
                        provider, external_key, url, priority, risk, paused_at, resources,
                        attempts, created_at, updated_at, data)
                      VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                      ON CONFLICT(id) DO UPDATE SET
-                       title=excluded.title, state=excluded.state,
+                       title=excluded.title,
                        description=excluded.description, priority=excluded.priority,
-                       risk=excluded.risk, paused_at=excluded.paused_at,
+                       risk=excluded.risk,
                        resources=excluded.resources, attempts=excluded.attempts,
-                       updated_at=excluded.updated_at, data=excluded.data""",
+                       updated_at=excluded.updated_at, data=excluded.data"""
+                  + (", state=excluded.state, paused_at=excluded.paused_at"
+                     if with_state else ""),
                   (t.id, t.workspace_id, t.project_id, t.title, t.state.value, t.description,
                    t.externo.provider if t.externo else None,
                    t.externo.key if t.externo else None,
@@ -541,24 +621,41 @@ class SqliteStore(Store):
         concorrentes de partirem do mesmo state e ambos despacharem.
         """
         with self._tx() as c:
-            r = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
-            if r is None:
-                raise CorruptedState(f"task {task_id} nao existe")
-            t = self._task_row(r)
-            source = t.state
-            require(source, destination, t.paused_at)
+            return self._transition_row(c, task_id, destination, actor, reason,
+                                        data)
 
-            t.paused_at = source if destination is TaskState.WAITING_HUMAN else None
-            t.state = destination
-            t.updated_at = self._now()
-            self._save_task_row(c, t)
+    def _transition_row(self, c: sqlite3.Connection, task_id: str,
+                        destination: TaskState, actor: str, reason: str = "",
+                        data: dict | None = None) -> Task:
+        """The transition itself, inside a transaction the caller owns.
 
-            c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, actor, summary, data)
-                         VALUES(?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), t.workspace_id, _iso(self._now()), "transicao",
-                       t.id, actor, f"{source.value} -> {destination.value}",
-                       _j({"from": source.value, "to": destination.value,
-                           "reason": reason, **(data or {})})))
+        Separated so a caller can make the move part of a larger atomic step.
+        `claim` does exactly that: taking the resources and moving the task have
+        to succeed or fail together, because either order on its own leaves a
+        window. Locking first meant a task could be escalated by another worker
+        between the claim and the move, leaving a live run holding leases for a
+        task it could not have; moving first meant a task could leave READY and
+        then fail to get its resources.
+        """
+        r = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        if r is None:
+            raise CorruptedState(f"task {task_id} nao existe")
+        t = self._task_row(r)
+        source = t.state
+        require(source, destination, t.paused_at)
+
+        t.paused_at = source if destination is TaskState.WAITING_HUMAN else None
+        t.state = destination
+        t.updated_at = self._now()
+        self._save_task_row(c, t, with_state=True)
+
+
+        c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, actor, summary, data)
+                     VALUES(?,?,?,?,?,?,?,?)""",
+                  (ids.new_id(ids.EVENT), t.workspace_id, _iso(self._now()), "transicao",
+                   t.id, actor, f"{source.value} -> {destination.value}",
+                   _j({"from": source.value, "to": destination.value,
+                       "reason": reason, **(data or {})})))
         return t
 
     def link_dependency(self, d: Dependency) -> None:
@@ -588,20 +685,28 @@ class SqliteStore(Store):
 
     def save_run(self, r: Run) -> None:
         with self._tx() as c:
-            c.execute("""INSERT INTO runs(id, task_id, workspace_id, agent, state, worker,
-                           workspace_path, branch, started_at, ended_at, reason,
-                           cost_usd, tokens, tool_calls, iterations, data)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                         ON CONFLICT(id) DO UPDATE SET state=excluded.state,
-                           worker=excluded.worker, workspace_path=excluded.workspace_path,
-                           branch=excluded.branch, ended_at=excluded.ended_at,
-                           reason=excluded.reason, cost_usd=excluded.cost_usd,
-                           tokens=excluded.tokens, tool_calls=excluded.tool_calls,
-                           iterations=excluded.iterations, data=excluded.data""",
-                      (r.id, r.task_id, r.workspace_id, r.agent, r.state.value, r.worker,
-                       r.workspace_path, r.branch, _iso(r.started_at), _iso(r.ended_at),
-                       r.reason, r.cost_usd, r.tokens, r.tool_calls, r.iterations,
-                       _j(r.data)))
+            self._save_run_row(c, r)
+
+    def _save_run_row(self, c: sqlite3.Connection, r: Run) -> None:
+        """The row write, shared with `claim` so both use one statement.
+
+        Two copies of an upsert drift, and the copy that drifts is the one
+        nobody is reading.
+        """
+        c.execute("""INSERT INTO runs(id, task_id, workspace_id, agent, state, worker,
+                       workspace_path, branch, started_at, ended_at, reason,
+                       cost_usd, tokens, tool_calls, iterations, data)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     ON CONFLICT(id) DO UPDATE SET state=excluded.state,
+                       worker=excluded.worker, workspace_path=excluded.workspace_path,
+                       branch=excluded.branch, ended_at=excluded.ended_at,
+                       reason=excluded.reason, cost_usd=excluded.cost_usd,
+                       tokens=excluded.tokens, tool_calls=excluded.tool_calls,
+                       iterations=excluded.iterations, data=excluded.data""",
+                  (r.id, r.task_id, r.workspace_id, r.agent, r.state.value, r.worker,
+                   r.workspace_path, r.branch, _iso(r.started_at), _iso(r.ended_at),
+                   r.reason, r.cost_usd, r.tokens, r.tool_calls, r.iterations,
+                   _j(r.data)))
 
     def run(self, run_id: str) -> Run | None:
         r = self._con.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
@@ -752,6 +857,14 @@ class SqliteStore(Store):
     def renew_lease(self, resource: str, owner: str, segundos: int,
                      workspace_id: str | None = None,
                      when: datetime | None = None) -> bool:
+        """Extend a lease this owner still holds. False if it does not.
+
+        The `WHERE ... AND owner=?` is what makes this safe: a worker whose
+        lease expired and was taken by somebody else updates nothing and is told
+        so. Without that clause a stale worker would quietly extend a lease that
+        is no longer its own, and two workers would believe they owned the same
+        resource -- which is the precise thing leases exist to prevent.
+        """
         ts = when or self._now()
         with self._tx() as c:
             if workspace_id:
@@ -767,6 +880,105 @@ class SqliteStore(Store):
                                 (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
                                  resource, owner))
             return cur.rowcount > 0
+
+    def claim(self, run: Run, resources: tuple[str, ...], seconds: int,
+              when: datetime | None = None, task_id: str | None = None,
+              destination: TaskState | None = None, actor: str = "",
+              reason: str = "") -> bool:
+        """Write the run and take every lease it needs, atomically.
+
+        Either this run exists holding all of its resources, or nothing was
+        written. There is no moment in between, which is the point.
+
+        Acquiring the leases first and saving the run afterwards -- separate
+        transactions, in that order -- left two windows in which a `SIGKILL`
+        orphaned a live lease whose owner had no run row. Nothing could clean it
+        up, because recovery finds dead workers by matching expired leases
+        against active runs and there was no run to match. The resource stayed
+        blocked until the lease expired, and no report could explain why.
+
+        It showed up in 2 of 25 contention rounds. A narrower window would have
+        made that 1 in 250 and left the same bug; `BEGIN IMMEDIATE` exists so
+        the window can be closed instead of shrunk.
+
+        Returns False when any resource is held by somebody else. Nothing is
+        written in that case, so there is no partial claim to unwind.
+        """
+        ts = when or self._now()
+        expires = ts + timedelta(seconds=seconds)
+        with self._tx() as c:
+            for resource in sorted(resources):
+                row = c.execute(
+                    """SELECT owner, expires_at FROM leases
+                       WHERE workspace_id=? AND resource=?""",
+                    (run.workspace_id, resource)).fetchone()
+                if row is not None and row["owner"] != run.id:
+                    held_until = _dt(row["expires_at"])
+                    if held_until and held_until > ts:
+                        return False
+            if task_id is not None and destination is not None:
+                # Part of the same transaction on purpose: the task moving and
+                # the resources being taken must happen together. A worker that
+                # took the locks and then found the task escalated by somebody
+                # else used to leave a live run holding leases for a task it
+                # could not have.
+                self._transition_row(c, task_id, destination, actor, reason)
+            self._save_run_row(c, run)
+            for resource in sorted(resources):
+                c.execute(
+                    """INSERT INTO leases(workspace_id, resource, owner,
+                                          expires_at, renewed_at)
+                       VALUES(?,?,?,?,?)
+                       ON CONFLICT(workspace_id, resource) DO UPDATE SET
+                         owner=excluded.owner, expires_at=excluded.expires_at,
+                         renewed_at=excluded.renewed_at""",
+                    (run.workspace_id, resource, run.id, _iso(expires),
+                     _iso(ts)))
+        return True
+
+    def orphan_leases(self, workspace_id: str,
+                      when: datetime | None = None) -> list[Lease]:
+        """Live leases whose owner is not an active run.
+
+        Residue from a database written by an older version, or by a process
+        killed between two writes that are now one. Reported so recovery can
+        clear them rather than leaving a resource blocked by nobody.
+
+        "No run row at all" rather than "not currently active", deliberately.
+        The looser test would also match a run that has just finished and is
+        releasing its leases, and clearing those would be taking a resource off
+        a worker that still legitimately holds it. An owner with no row anywhere
+        cannot be that; it can only be residue.
+        """
+        ts = when or self._now()
+        orphans = []
+        for lease in self.leases(workspace_id):
+            if not lease.expires_at or lease.expires_at <= ts:
+                continue
+            if self.run(lease.owner) is None:
+                orphans.append(lease)
+        return orphans
+
+    def holds_lease(self, resource: str, owner: str, workspace_id: str,
+                    when: datetime | None = None) -> bool:
+        """Does this owner hold this resource, right now, unexpired?
+
+        The question the engine must ask again immediately before acting. A
+        lease proves who started; only this proves who may finish.
+
+        Scoped by workspace because that is the identity of a lease. Two clients
+        with a repository of the same name hold two different leases, and a
+        check that forgot the workspace would let one answer for the other.
+        """
+        ts = when or self._now()
+        row = self._con.execute(
+            """SELECT owner, expires_at FROM leases
+               WHERE workspace_id=? AND resource=?""",
+            (workspace_id, resource)).fetchone()
+        if row is None or row["owner"] != owner:
+            return False
+        expires = _dt(row["expires_at"])
+        return bool(expires and expires > ts)
 
     def release_lease(self, resource: str, owner: str, workspace_id: str | None = None) -> None:
         with self._tx() as c:

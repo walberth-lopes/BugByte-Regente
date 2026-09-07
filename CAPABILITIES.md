@@ -17,6 +17,116 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 9 — real concurrency between processes
+
+`max_workers > 1` is a setting. Concurrency is a fact about processes, and until
+this milestone the project only had the setting: a thousand-tick soak with
+`max_workers=3` never held more than one lease at a time, so leases,
+`BEGIN IMMEDIATE` and the `(workspace_id, resource)` key were untested code that
+looked tested.
+
+### What ran
+
+Separate interpreters, separate memory, independent lifetimes, one SQLite file.
+Threads would have shared a GIL and a heap and let a broken design pass.
+
+| | |
+|---|---|
+| rounds | 60 |
+| worker processes | 238 |
+| `SIGKILL`s during contention | 60 |
+| dispatches | 1193 |
+| deferrals (resource already held) | 283 |
+| recoveries after a death | 33 |
+| **duplicate ownership** | **0** |
+| **duplicate execution** | **0** |
+| **stale writes accepted** | **0** |
+| **deadlocks** | **0** |
+| **unhandled `database is locked`** | **0** |
+| **invariant violations** | **0** |
+| **ticks crashed** | **0** |
+
+### Defects found, and what each one looked like
+
+| # | Defect | Why it was invisible |
+|---|---|---|
+| 1 | **Nothing ever renewed a lease.** The field comment promised "o worker renova"; no code renewed. | Every mission shorter than one lease window worked perfectly. |
+| 2 | **Ownership was never rechecked before writing.** A worker finished a mission and wrote the result for a task it no longer owned. | Refused only because that transition happened to be illegal from the state the task was in. One state further along it would have been legal and would have overwritten another worker's run. |
+| 3 | **A metadata save rewrote the task's state.** A stale snapshot wrote an old state back: no validation, no event, no trace. | The only sign was an `updated_at` six seconds newer than the last transition. The task sat in an active state nobody owned. |
+| 4 | **Dispatch was three separate writes.** A `SIGKILL` between them orphaned a live lease whose owner had no run row. | Recovery matches expired leases against active runs, so an orphan matched nothing and blocked its resource silently. Appeared in 2 of 25 rounds. |
+| 5 | **A claim and the task's transition were separate.** Another worker could escalate the task in between. | Left a live run holding resources for a task it could not have. |
+| 6 | **Losing a benign race killed the whole tick.** Discovery, analysis and decision application each raised. | Two workers agreeing cost the loser a full cycle of work. Four distinct shapes, found one at a time. |
+| 7 | **Refusing the stale result was not enough.** Two processes ran the same task in the same directory. | Both writes were correctly refused; both had already executed. |
+
+### Counter-proofs
+
+- A live lease cannot be taken, an expired one can, and **no instant exists where both owners are told yes** -- walked second by second across the boundary rather than checked once at the end.
+- A stale owner's renewal is refused; a stale owner's release cannot free the new owner's lease.
+- Two workspaces hold a resource of the same name simultaneously, without contending.
+- A mission needing two resources takes both or neither.
+- Losing the lease now **cancels** the mission. A process-driving runner is killed; an in-process runner can only cooperate, which is stated rather than assumed.
+
+### A measurement that lied
+
+The first overlap detector timed missions from a ledger file, and reported four
+duplicate executions in forty rounds. It was measuring itself: every ledger line
+opens and closes a file, and with four processes on one path a single write took
+over a second, so a mission that slept for 150ms measured as a 1.9s window and
+"overlapped" its own successor.
+
+Re-measured from `runs.started_at` / `runs.ended_at` -- written by the engine on
+the path that did the work -- the same campaign shows zero. The instrument had
+been reporting its own latency as concurrency, which is worth recording because
+the conclusion it produced was alarming and wrong.
+
+### Mutation sweep
+
+Twenty-one mutations aimed at concurrency, each applied, the suite and a short
+real-process campaign run, the source restored.
+
+**Sixteen caught immediately. Five escaped, and every one of them exposed a
+guard that was present and unexercised:**
+
+| Mutation | What was missing |
+|---|---|
+| Drop `workspace_id` from the claim's lease check | the tenancy test went through `acquire_lease`, so the scoping inside `claim` was never touched |
+| Stop retrying a locked database | nothing forced contention past `busy_timeout`, so the retry sat idle |
+| Never renew during a mission | the `Heartbeat` was tested; the tick's *use* of it was not |
+| Stop clearing orphaned leases | the mutation was a no-op of mine (`[] or X`), and the real one was uncovered |
+| Let a retry re-run the transaction body | added while fixing the above: nothing proved a retried write happens exactly once |
+
+All five caught after the gaps were closed. The last is the sharpest: a retry
+placed one line lower would re-execute statements the caller may already have
+observed, and now that is a red test rather than a subtle corruption.
+
+### Capability status
+
+| Capability | State | Evidence |
+|---|---|---|
+| Several independent processes on one store | **EXERCISED_REAL** | 60 rounds, ~240 processes |
+| Exclusive resource ownership under contention | **EXERCISED_REAL** | 0 duplicate ownership |
+| Ownership revalidated at the moment of acting | **EXERCISED_REAL** | stale writes refused in campaign and tests |
+| Lease renewal during a long mission | CONTRACT_TESTED | heartbeat tests |
+| Atomic claim: run + leases + transition | **EXERCISED_REAL** | orphan-lease race disappeared |
+| Killing a worker mid-contention | **EXERCISED_REAL** | 60 `SIGKILL`s |
+| Workspace isolation under contention | CONTRACT_TESTED | store-level, exact interleaving |
+| Deterministic acquisition order | CONTRACT_TESTED | structural, at the point of acquisition |
+| `database is locked` retry preserving semantics | CONTRACT_TESTED | retry sits before the block; 0 unhandled in campaign |
+| Cancelling a mission on ownership loss | IMPLEMENTED | process runners kill their child; in-process runners cooperate |
+
+### Limitations
+
+The contending workers run the deterministic agent, not a model, and the board
+is the filesystem adapter. This milestone is about coordination, not agents.
+
+Duplicate execution is zero **as measured**, and the mechanism that guarantees it
+depends on the runner: a process-driving runner can be killed within
+milliseconds of losing its lease; an in-process runner can only be asked. A
+runner that ignores cancellation could still overlap, and that is a property of
+that runner rather than of the engine.
+
+---
+
 ## Milestone 8 — sustained unattended operation
 
 The premise the whole project rests on, tested for the first time. Every earlier
@@ -42,6 +152,7 @@ outage from a real one.
 | escalations | 150 |
 | restarts without a clean close | 43 |
 | **invariant violations** | **0** |
+| **ticks crashed** | **0** |
 
 Invariants are checked after **every** tick, not at the end. A run that only
 checks its final state cannot tell a system that stayed correct from one that

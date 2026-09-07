@@ -42,3 +42,13 @@ class CapabilityMissing(RegenteError):
 
 class CorruptedState(RegenteError):
     """O estado persistido nao bate com o que o motor espera."""
+
+
+class AlreadyExists(RegenteError):
+    """Outro processo criou esta entidade primeiro.
+
+    Perder essa corrida nao e erro: a restricao de unicidade fez exatamente o
+    que existe para fazer. O motor precisa poder distinguir "colidi com um
+    concorrente" de "o banco esta corrompido", porque a resposta certa para o
+    primeiro e reler e seguir, e para o segundo e parar.
+    """

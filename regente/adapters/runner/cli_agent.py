@@ -53,6 +53,10 @@ class CliAgent(AgentRunner):
 
     #: Flags that would undo the sandbox, whatever their source.
     FORBIDDEN_FLAGS: tuple[str, ...] = ()
+    #: run_id -> the child currently working on it. A runner that drives a
+    #: process can actually be stopped, which is what makes `cancel` more than
+    #: a polite request.
+    _children: dict = field(default_factory=dict)
 
     # ---- hooks a profile overrides ------------------------------------
     def version_argv(self) -> list[str]:
@@ -194,11 +198,7 @@ class CliAgent(AgentRunner):
         started = time.monotonic()
         limit = mission.budget.max_process_seconds + self.kill_grace_seconds
         try:
-            p = subprocess.run(
-                self.argv(mission), cwd=mission.allowed_root,
-                capture_output=True, encoding="utf-8", errors="replace",
-                env=compose_env(self.sandbox.env_allowlist, self.sandbox.env),
-                timeout=limit, input="")
+            p = self._run_child(mission, limit)
         except subprocess.TimeoutExpired:
             return Outcome(status=ProcessStatus.TIMEBOX,
                            summary=f"the agent exceeded {limit}s and was killed",
@@ -209,6 +209,32 @@ class CliAgent(AgentRunner):
                            duration_seconds=time.monotonic() - started)
         return self.parse((p.stdout or "").strip(), (p.stderr or "").strip(),
                           p.returncode, time.monotonic() - started)
+
+    def _run_child(self, mission: Mission, limit: float):
+        """Start the agent and remember it, so `cancel` can actually stop it."""
+        child = subprocess.Popen(
+            self.argv(mission), cwd=mission.allowed_root,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
+            env=compose_env(self.sandbox.env_allowlist, self.sandbox.env))
+        self._children[mission.run_id] = child
+        try:
+            out, err = child.communicate(input="", timeout=limit)
+        finally:
+            self._children.pop(mission.run_id, None)
+        return subprocess.CompletedProcess(self.argv(mission), child.returncode,
+                                           out, err)
+
+    def cancel(self, run_id: str) -> None:
+        """Kill the child working on this run, if it is still going.
+
+        Called when the engine finds this worker no longer owns the resources.
+        Refusing the result keeps the state correct; killing the process is what
+        stops two agents editing one directory at the same time.
+        """
+        child = self._children.get(run_id)
+        if child is not None and child.poll() is None:
+            child.kill()
 
     # ---- probing -------------------------------------------------------
     def _probe(self, argv: list[str]) -> tuple[int | None, str, str]:

@@ -13,10 +13,10 @@ Marco não fecha sem prova em disco.
 | **6** | **CI + PR** ⚠ | caminho completo implementado e testado em contrato; **prova remota real bloqueada em `NEEDS_HUMAN`** por ausencia de task elegivel |
 | **7** | **AgentRunner real** ⚠ | motor observa o mundo por conta propria e nao acredita no agente; sandbox sem execucao de comando; **modelo real bloqueado** por falta de credencial que o motor possa resolver |
 | **8** | **Operacao continua sob falha** ✅ | 1000 ticks, 43 reinicios sem fechamento limpo, 13 mortes de worker e 13 recuperacoes, 142 quedas de provider, zero violacao de invariante |
-| 9 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
-| 10 | CloudProvider | leitura de recursos, logs e métricas |
-| 11 | Deploy em staging | deploy governado + smoke, com rollback |
-| 12 | Workers paralelos de verdade | 2+ workers reais simultâneos sem colisão |
+| **9** | **Concorrencia real entre processos** ✅ | interpretadores separados sobre um SQLite: posse exclusiva, revalidacao no momento de agir, claim atomico, zero execucao duplicada em 60 rodadas com SIGKILL |
+| 10 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
+| 11 | CloudProvider | leitura de recursos, logs e métricas |
+| 12 | Deploy em staging | deploy governado + smoke, com rollback |
 | 13 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
 | 14 | **Segundo cliente** | outro conjunto de provedores rodando **sem tocar em `core/` nem `engine/`** |
 

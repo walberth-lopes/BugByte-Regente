@@ -1,0 +1,5 @@
+key: RACE-6
+title: contended work 6
+status: TO DO
+resources:
+  - repo:r0

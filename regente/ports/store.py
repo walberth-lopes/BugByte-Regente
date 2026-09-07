@@ -127,6 +127,28 @@ class Store(Port):
                      when: datetime | None = None) -> bool: ...
 
     @abstractmethod
+    def claim(self, run: Run, resources: tuple[str, ...], seconds: int,
+              when: datetime | None = None) -> bool:
+        """Grava o run e toma todos os seus leases, atomicamente.
+
+        Ou este run existe segurando todos os recursos, ou nada foi escrito.
+        Nao existe momento intermediario -- e esse e o ponto.
+        """
+
+    @abstractmethod
+    def orphan_leases(self, workspace_id: str,
+                      when: datetime | None = None) -> list[Lease]: ...
+
+    @abstractmethod
+    def holds_lease(self, resource: str, owner: str, workspace_id: str,
+                    when: datetime | None = None) -> bool:
+        """Este owner ainda detem este recurso, agora, sem ter vencido?
+
+        A pergunta que o motor precisa refazer imediatamente antes de agir. O
+        lease prova quem comecou; so isto prova quem pode terminar.
+        """
+
+    @abstractmethod
     def release_lease(self, resource: str, owner: str,
                     workspace_id: str | None = None) -> None: ...
 

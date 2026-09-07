@@ -1,0 +1,5 @@
+key: RACE-3
+title: contended work 3
+status: TO DO
+resources:
+  - repo:r1

@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from ..core import ids
+from ..core.errors import AlreadyExists, InvalidTransition
 from ..core.graph import DependencyGraph
 from ..core.model import (Dependency, Event, ExternalRef, Run, RunState, Task, Workspace,
                           now)
@@ -38,6 +39,7 @@ from ..ports.workspace import WorkspaceProvider
 from ..ports.store import Store
 from . import escalation, supervisor
 from .gate import Scope, Gate
+from .ownership import Heartbeat, Ownership
 
 
 def _sanitize(key: str) -> str:
@@ -171,6 +173,18 @@ class Orchestrator:
             self._record("recuperada", task_id=task.id, run_id=run.id,
                         summary=f"worker morto; task volta como {destination.value}")
 
+        # Leases held by nobody. With an atomic claim these should not appear,
+        # but a database written by an older version can contain them and a
+        # blocked resource that no report can explain is worse than the cost of
+        # looking.
+        for orphan in self.store.orphan_leases(self.workspace.id,
+                                               when=self.clock()):
+            self.store.release_lease(orphan.resource, orphan.owner,
+                                     self.workspace.id)
+            self._record("lease_orfao", summary=(
+                f"'{orphan.resource}' estava preso por '{orphan.owner}', que "
+                f"nao e um run ativo"))
+
     def _resume_decided(self, rel: TickReport) -> None:
         """Act on decisions a person already made.
 
@@ -203,9 +217,10 @@ class Orchestrator:
             destination, why = self._destination_for(task, approval)
             if destination is None:
                 continue
-            self.store.transition(task.id, destination,
-                                   actor=approval.decided_by or "humano",
-                                   reason=why)
+            if not self._moved_by_another(task.id, destination,
+                                          actor=approval.decided_by or "humano",
+                                          reason=why):
+                continue          # another worker applied the same decision
             rel.unblocked_tasks += (task.key,)
             self._record("decisao_aplicada", task_id=task.id,
                         run_id=approval.run_id,
@@ -339,10 +354,73 @@ class Orchestrator:
             data={**dict(e.data), "situacao_externa": e.status.value,
                    "estado_externo": e.external_status,
                    "rotulos": list(e.labels)})
-        self.store.save_task(t)
+        try:
+            self.store.save_task(t)
+        except AlreadyExists:
+            # Another worker discovered the same external task in the same
+            # instant and inserted it first. The unique index on
+            # (workspace_id, provider, external_key) did its job; losing the
+            # race is not an error, and letting it kill the whole tick was.
+            #
+            # Observed on the first three-process run: two workers crashed out
+            # of their entire tick because a third created a task they had both
+            # just seen.
+            existing = self.store.task_by_key(self.workspace.id,
+                                              self.tasks_provider.name, e.key)
+            if existing is None:
+                raise
+            self._record("descoberta_concorrente", task_id=existing.id,
+                        summary=f"{e.key} ja registrada por outro worker")
+            return existing
         return t
 
     # ---- 3. analise -----------------------------------------------------
+    def _moved_by_another(self, task_id: str, destination: TaskState,
+                          actor: str, reason: str,
+                          expected: TaskState | None = None, **extra) -> bool:
+        """Transition, and treat losing the race as a normal outcome.
+
+        Two workers analysing the same board reach the same conclusion at the
+        same moment; one of them gets there first and the other's transition is
+        refused. That is the state machine doing its job, and it used to take
+        down the loser's entire tick with `InvalidTransition` -- so a correct
+        refusal cost a whole cycle of work.
+
+        Returns True when this worker made the move, False when somebody else
+        already had. Never swallows an invalid transition from a state nobody
+        else touched: it re-reads the row and only forgives the case where the
+        task genuinely moved on.
+        """
+        before = self.store.task(task_id)
+        if (expected is not None and before is not None
+                and before.state is not expected):
+            # The task is not where this worker last saw it, so the decision to
+            # move it was made about a world that no longer exists. Another
+            # worker got there between the read and the write -- which is
+            # ordinary, and used to arrive as `InvalidTransition` killing a
+            # whole tick.
+            self._record("corrida_perdida", task_id=task_id,
+                        summary=f"esperava {expected.value}, encontrou "
+                                f"{before.state.value}")
+            return False
+        if before is not None and before.state is destination:
+            # Already where this worker wanted to put it. Another worker did
+            # the same job first, which is not a failure and must not be an
+            # exception -- `READY -> READY` is an invalid transition and used to
+            # take a whole tick down for the crime of agreeing.
+            return False
+        try:
+            self.store.transition(task_id, destination, actor=actor,
+                                   reason=reason, **extra)
+            return True
+        except InvalidTransition:
+            after = self.store.task(task_id)
+            if after is not None and before is not None and after.state is not before.state:
+                self._record("corrida_perdida", task_id=task_id,
+                            summary=f"outro worker ja moveu para {after.state.value}")
+                return False
+            raise
+
     def _analyze(self, rel: TickReport) -> None:
         """DISCOVERED -> ANALYZING -> READY, calculando risco e recursos.
 
@@ -360,13 +438,20 @@ class Orchestrator:
             if self._status_of(t).available:
                 t.data.pop("bloqueada_por", None)
                 self.store.save_task(t)
-                self.store.transition(t.id, TaskState.READY, actor="planner",
+                self._moved_by_another(t.id, TaskState.READY, actor="planner",
                                        reason="a origem liberou o trabalho")
                 rel.unblocked_tasks += (t.key,)
 
         for t in self.store.tasks(self.workspace.id, [TaskState.DISCOVERED]):
-            self.store.transition(t.id, TaskState.ANALYZING, actor="planner",
-                                   reason="analise inicial")
+            # Two workers reading the same board reach this line together. The
+            # loser used to take its whole tick down with `InvalidTransition`,
+            # so a correct refusal cost a full cycle of work; now it simply
+            # leaves the task to whoever claimed it.
+            if not self._moved_by_another(t.id, TaskState.ANALYZING,
+                                          actor="planner",
+                                          reason="analise inicial",
+                                          expected=TaskState.DISCOVERED):
+                continue
             assessment = self.risk.assess({
                 "action": "task.analyze",
                 "environment": "local",
@@ -398,7 +483,7 @@ class Orchestrator:
                 continue
 
             self.store.save_task(t)
-            self.store.transition(t.id, TaskState.READY, actor="planner",
+            self._moved_by_another(t.id, TaskState.READY, actor="planner",
                                    reason=f"risco {assessment.level.name}",
                                    data={"sinais": list(assessment.reasons)})
             rel.analyzed += 1
@@ -452,26 +537,42 @@ class Orchestrator:
         run = Run(id=ids.new_id(ids.RUN), task_id=task.id, workspace_id=self.workspace.id,
                   agent="coder", state=RunState.RUNNING, started_at=self.clock())
 
-        # Travar ANTES de transicionar: se a trava falhar, a task nao pode ter
-        # saido de READY -- caso contrario ela fica ASSIGNED sem dono.
-        held: list[str] = []
-        for resource in task.resources:
-            if self.store.acquire_lease(resource, run.id, self.workspace.id,
-                                        self.lease_seconds,
-                                        when=self.clock()) is None:
-                for r in held:
-                    self.store.release_lease(r, run.id, self.workspace.id)
-                self._record("adiada", task_id=task.id,
-                            summary=f"recurso {resource} ficou ocupado entre o plano e o despacho")
-                return
-            held.append(resource)
+        # The run row and every lease it needs are written in ONE transaction.
+        #
+        # They used to be separate writes -- each lease its own transaction, the
+        # run saved afterwards -- which left two windows where a `SIGKILL`
+        # orphaned a live lease whose owner had no run row. Recovery finds dead
+        # workers by matching expired leases against active runs, so an orphan
+        # matched nothing and blocked its resource until it expired, with no
+        # report able to explain why. It appeared in 2 of 25 contention rounds.
+        #
+        # Sorted inside `claim`, so every worker asks for the same resource
+        # first. Acquisition never blocks, so a classic deadlock is impossible;
+        # LIVELOCK is not -- two tasks wanting {A,B} in opposite orders take one
+        # each, both fail, both release, both retry for ever. A global order
+        # breaks the symmetry: both ask for A first and exactly one proceeds.
+        held: list[str] = sorted(task.resources)
+        try:
+            claimed = self.store.claim(
+                run, tuple(held), self.lease_seconds, when=self.clock(),
+                task_id=task.id, destination=TaskState.ASSIGNED,
+                actor="orchestrator", reason=f"run {run.id}")
+        except InvalidTransition:
+            # Another worker moved this task between the plan and the dispatch.
+            # Nothing was written -- the transaction rolled back -- so there is
+            # no claim to unwind.
+            self._record("adiada", task_id=task.id,
+                        summary="a task mudou de state entre o plano e o despacho")
+            return
+        if not claimed:
+            self._record("adiada", task_id=task.id,
+                        summary="recurso ocupado entre o plano e o despacho")
+            return
 
-        self.store.transition(task.id, TaskState.ASSIGNED, actor="orchestrator",
-                               reason=f"run {run.id}")
         area = self.area_provider.prepare(_sanitize(task.key),
                                           branch=f"regente/{task.key.lower()}")
         run.workspace_path, run.branch = area.path, area.branch
-        self.store.save_run(run)
+        self.store.save_run(run)          # now an update: the row already exists
         self.store.mark_dispatch(self.workspace.id,
                                  self.clock().strftime("%Y-%m-%d"))
         self.store.transition(task.id, TaskState.IMPLEMENTING, actor=run.agent,
@@ -497,13 +598,51 @@ class Orchestrator:
                 max_seconds=self.budget.max_seconds,
                 max_process_seconds=self.budget.max_seconds))
 
-        try:
-            resultado = self.runner.run(request)
-        except Exception as e:   # noqa: BLE001
-            resultado = None
-            run.reason = f"{type(e).__name__}: {e}"[:300]
+        owner = Ownership(store=self.store, workspace_id=self.workspace.id,
+                          run_id=run.id, resources=tuple(held),
+                          lease_seconds=self.lease_seconds, clock=self.clock)
+
+        # The mission runs with its leases being renewed underneath it. Without
+        # this, a mission longer than one lease window loses its resources while
+        # doing everything right, and recovery hands its task to somebody else.
+        with Heartbeat(ownership=owner,
+                       cancel=getattr(self.runner, "cancel", None)) as beat:
+            try:
+                resultado = self.runner.run(request)
+            except Exception as e:   # noqa: BLE001
+                resultado = None
+                run.reason = f"{type(e).__name__}: {e}"[:300]
+
+        # Possession is checked AGAIN, here, because the world was allowed to
+        # move while the mission ran. A worker that lost its lease must not
+        # write: on the first real contention run one did exactly that, and was
+        # stopped only because the transition it attempted happened to be
+        # illegal. Had the task been in the ordinary next state, the write would
+        # have been legal and would have overwritten another worker's run.
+        if beat.lost or not owner.held():
+            self._abandon(task.id, run, held, rel)
+            return
 
         self._collect(task.id, run, resultado, held, rel)
+
+    def _abandon(self, task_id: str, run: Run, held: list[str],
+                 rel: TickReport) -> None:
+        """This run lost ownership while working. Write nothing about the task.
+
+        The run itself is recorded -- what happened is always recorded -- but
+        the task is left exactly as its current owner left it. Releasing the
+        leases is scoped by owner, so it cannot take away the new owner's.
+        """
+        for resource in held:
+            self.store.release_lease(resource, run.id, self.workspace.id)
+        run.state = RunState.INTERRUPTED
+        run.ended_at = self.clock()
+        run.reason = ("perdeu a posse durante a missao: outro worker assumiu ou "
+                      "o lease venceu")
+        self.store.save_run(run)
+        rel.errors += (f"{run.id}: ownership lost",)
+        self._record("posse_perdida", task_id=task_id, run_id=run.id,
+                    summary=run.reason)
 
     # ---- 6. colheita ----------------------------------------------------
     def _collect(self, task_id: str, run: Run, resultado, held: list[str],

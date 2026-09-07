@@ -28,6 +28,12 @@ packages = ["regente"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Registered so the marker is a contract rather than a typo pytest warns about.
+# `slow` marks the tests that spawn real processes and contend for real: they
+# belong in the default run -- concurrency proven only when someone remembers a
+# flag is concurrency unproven -- but naming them lets a tight loop skip them
+# with `-m "not slow"`.
+markers = ["slow: spawns real processes; seconds rather than milliseconds"]
 # Every test here is a function. Without this, pytest tries to collect domain
 # classes whose names merely start with "Test" -- `TestResult` is an enum, not
 # a suite, and the warning would train everyone to ignore warnings.

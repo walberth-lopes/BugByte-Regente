@@ -228,3 +228,74 @@ class HalfWrittenStore:
             return result
 
         return wrapped
+
+
+@dataclass
+class FrozenRenewal:
+    """A store whose lease renewals silently fail for this worker.
+
+    Simulates the process that is alive but not running: a long garbage
+    collection, a swapped-out page, a suspended VM, a thread that never gets
+    scheduled. From the outside it is indistinguishable from a healthy worker
+    right up until its lease expires and somebody else takes the resource.
+
+    This is the fault that produces a STALE worker -- alive, still holding a
+    mission, and no longer the owner. Killing a process cannot produce it,
+    because a dead process takes no further action. Only a live one can act
+    without the right to.
+    """
+    inner: Any
+    frozen: bool = True
+    refusals: int = 0
+
+    def renew_lease(self, *args, **kwargs) -> bool:
+        if self.frozen:
+            self.refusals += 1
+            return False
+        return self.inner.renew_lease(*args, **kwargs)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self.inner, item)
+
+
+@dataclass
+class StolenLease:
+    """A store that lets another owner take a lease out from under a run.
+
+    Renewal keeps succeeding -- so the heartbeat notices nothing -- and the
+    lease is quietly reassigned. It exists to test the SECOND guard on its own:
+    the ownership check immediately before the write, which must catch the loss
+    even when the heartbeat was perfectly happy.
+
+    Two guards, tested separately, because a test that only exercised both
+    together could not tell which one was holding.
+    """
+    inner: Any
+    steal_for: str = ""
+    thief: str = "run_thief"
+    stolen: list[str] = field(default_factory=list)
+
+    def renew_lease(self, resource: str, owner: str, *args, **kwargs) -> bool:
+        if self.steal_for and owner == self.steal_for:
+            return True          # the heartbeat is told everything is fine
+        return self.inner.renew_lease(resource, owner, *args, **kwargs)
+
+    def steal(self, resource: str, workspace_id: str, seconds: int = 300,
+              when=None) -> None:
+        """Hand the lease to somebody else, the way recovery legitimately does.
+
+        `acquire_lease` refuses to take a LIVE lease -- correctly -- so a steal
+        that only called it would quietly do nothing and the test would pass
+        while proving the opposite of what it claimed. The realistic sequence is
+        the one recovery performs: the previous holder is released, and the next
+        worker takes it.
+        """
+        self.inner.release_lease(resource, self.steal_for or "", workspace_id)
+        taken = self.inner.acquire_lease(resource, self.thief, workspace_id,
+                                         seconds, when=when)
+        if taken is None:
+            raise AssertionError(f"could not reassign '{resource}'")
+        self.stolen.append(resource)
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self.inner, item)

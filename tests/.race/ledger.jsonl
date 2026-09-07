@@ -1,0 +1,302 @@
+{"event": "worker_started", "worker": "w0", "pid": 1388, "wall": 1788785439.0056722}
+{"event": "tick", "worker": "w0", "n": 1, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.0179975}
+{"event": "worker_started", "worker": "w1", "pid": 20712, "wall": 1788785439.023138}
+{"event": "worker_started", "worker": "w2", "pid": 16672, "wall": 1788785439.0265021}
+{"event": "worker_started", "worker": "w3", "pid": 8456, "wall": 1788785439.0310197}
+{"event": "mission_start", "worker": "w2", "task": "RACE-2", "run": "run_7494f24c0348", "pid": 16672, "wall": 1788785439.0461295}
+{"event": "mission_start", "worker": "w1", "task": "RACE-1", "run": "run_f82d91583a03", "pid": 20712, "wall": 1788785439.0607672}
+{"event": "tick", "worker": "w3", "n": 1, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.075527}
+{"event": "tick", "worker": "w0", "n": 2, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.0925632}
+{"event": "tick", "worker": "w0", "n": 3, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.120747}
+{"event": "tick", "worker": "w3", "n": 2, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.1291082}
+{"event": "tick", "worker": "w0", "n": 4, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.1466181}
+{"event": "tick", "worker": "w0", "n": 5, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.16326}
+{"event": "tick", "worker": "w3", "n": 3, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.1814985}
+{"event": "tick", "worker": "w0", "n": 6, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.1884458}
+{"event": "tick", "worker": "w3", "n": 4, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.2118368}
+{"event": "tick", "worker": "w0", "n": 7, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.2138908}
+{"event": "mission_end", "worker": "w2", "task": "RACE-2", "run": "run_7494f24c0348", "cancelled": false, "pid": 16672, "wall": 1788785439.250933}
+{"event": "tick", "worker": "w2", "n": 1, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785439.2559917}
+{"event": "mission_end", "worker": "w1", "task": "RACE-1", "run": "run_f82d91583a03", "cancelled": false, "pid": 20712, "wall": 1788785439.2655098}
+{"event": "tick", "worker": "w1", "n": 1, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.2686381}
+{"event": "mission_start", "worker": "w0", "task": "RACE-2", "run": "run_8d8d75c2ba31", "pid": 1388, "wall": 1788785439.273161}
+{"event": "tick", "worker": "w3", "n": 5, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.2904797}
+{"event": "mission_start", "worker": "w2", "task": "RACE-1", "run": "run_7111c5f03af1", "pid": 16672, "wall": 1788785439.3034744}
+{"event": "tick", "worker": "w3", "n": 6, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.313056}
+{"event": "tick", "worker": "w1", "n": 2, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.31535}
+{"event": "tick", "worker": "w3", "n": 7, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.3607512}
+{"event": "tick", "worker": "w1", "n": 3, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.3702967}
+{"event": "tick", "worker": "w3", "n": 8, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.391194}
+{"event": "tick", "worker": "w1", "n": 4, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.4101899}
+{"event": "tick", "worker": "w3", "n": 9, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.417925}
+{"event": "tick", "worker": "w1", "n": 5, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.4549515}
+{"event": "tick", "worker": "w3", "n": 10, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.4624298}
+{"event": "mission_end", "worker": "w0", "task": "RACE-2", "run": "run_8d8d75c2ba31", "cancelled": false, "pid": 1388, "wall": 1788785439.4783854}
+{"event": "tick", "worker": "w0", "n": 8, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.4818134}
+{"event": "mission_start", "worker": "w1", "task": "RACE-2", "run": "run_20ea7bc702d1", "pid": 20712, "wall": 1788785439.5055552}
+{"event": "mission_end", "worker": "w2", "task": "RACE-1", "run": "run_7111c5f03af1", "cancelled": false, "pid": 16672, "wall": 1788785439.508385}
+{"event": "mission_start", "worker": "w3", "task": "RACE-3", "run": "run_5d5fa817c372", "pid": 8456, "wall": 1788785439.5151143}
+{"event": "tick", "worker": "w0", "n": 9, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.5253947}
+{"event": "tick", "worker": "w2", "n": 2, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785439.5412936}
+{"event": "tick", "worker": "w2", "n": 3, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785439.579303}
+{"event": "tick", "worker": "w0", "n": 10, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.5816338}
+{"event": "tick", "worker": "w2", "n": 4, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785439.6232803}
+{"event": "tick", "worker": "w0", "n": 11, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.6236293}
+{"event": "tick", "worker": "w2", "n": 5, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785439.6586235}
+{"event": "tick", "worker": "w0", "n": 12, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.6623292}
+{"event": "tick", "worker": "w2", "n": 6, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785439.6859596}
+{"event": "tick", "worker": "w0", "n": 13, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.6982691}
+{"event": "mission_end", "worker": "w1", "task": "RACE-2", "run": "run_20ea7bc702d1", "cancelled": false, "pid": 20712, "wall": 1788785439.7108696}
+{"event": "tick", "worker": "w2", "n": 7, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785439.711863}
+{"event": "mission_end", "worker": "w3", "task": "RACE-3", "run": "run_5d5fa817c372", "cancelled": false, "pid": 8456, "wall": 1788785439.7198937}
+{"event": "tick", "worker": "w1", "n": 6, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.7252452}
+{"event": "mission_start", "worker": "w2", "task": "RACE-1", "run": "run_189790105591", "pid": 16672, "wall": 1788785439.7342308}
+{"event": "mission_start", "worker": "w0", "task": "RACE-2", "run": "run_6a7fad17cdd3", "pid": 1388, "wall": 1788785439.7429361}
+{"event": "tick", "worker": "w3", "n": 11, "dispatched": ["RACE-3"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.7565217}
+{"event": "tick", "worker": "w1", "n": 7, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.775747}
+{"event": "tick", "worker": "w3", "n": 12, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.7785792}
+{"event": "tick", "worker": "w3", "n": 13, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.8216493}
+{"event": "tick", "worker": "w1", "n": 8, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.8270407}
+{"event": "tick", "worker": "w3", "n": 14, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.8440778}
+{"event": "tick", "worker": "w1", "n": 9, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.858282}
+{"event": "tick", "worker": "w3", "n": 15, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.8688917}
+{"event": "tick", "worker": "w1", "n": 10, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.8954694}
+{"event": "tick", "worker": "w1", "n": 11, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785439.915671}
+{"event": "tick", "worker": "w3", "n": 16, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785439.920671}
+{"event": "mission_end", "worker": "w2", "task": "RACE-1", "run": "run_189790105591", "cancelled": false, "pid": 16672, "wall": 1788785439.938495}
+{"event": "tick", "worker": "w2", "n": 8, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785439.9423165}
+{"event": "mission_end", "worker": "w0", "task": "RACE-2", "run": "run_6a7fad17cdd3", "cancelled": false, "pid": 1388, "wall": 1788785439.9482436}
+{"event": "tick", "worker": "w0", "n": 14, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.9509463}
+{"event": "mission_start", "worker": "w1", "task": "RACE-1", "run": "run_b38f3c8f2a31", "pid": 20712, "wall": 1788785439.9648087}
+{"event": "mission_start", "worker": "w3", "task": "RACE-2", "run": "run_95657b3cfbe3", "pid": 8456, "wall": 1788785439.9766479}
+{"event": "tick", "worker": "w2", "n": 9, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785439.987158}
+{"event": "tick", "worker": "w0", "n": 15, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785439.999285}
+{"event": "tick", "worker": "w0", "n": 16, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.0290124}
+{"event": "tick", "worker": "w2", "n": 10, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.0427213}
+{"event": "tick", "worker": "w0", "n": 17, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.0618784}
+{"event": "tick", "worker": "w0", "n": 18, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.081477}
+{"event": "tick", "worker": "w2", "n": 11, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.0855212}
+{"event": "tick", "worker": "w0", "n": 19, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.1111748}
+{"event": "tick", "worker": "w2", "n": 12, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.1176262}
+{"event": "tick", "worker": "w2", "n": 13, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.1372352}
+{"event": "tick", "worker": "w0", "n": 20, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.1439693}
+{"event": "tick", "worker": "w0", "n": 21, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.1618125}
+{"event": "mission_end", "worker": "w1", "task": "RACE-1", "run": "run_b38f3c8f2a31", "cancelled": false, "pid": 20712, "wall": 1788785440.1710956}
+{"event": "tick", "worker": "w1", "n": 12, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.17446}
+{"event": "mission_end", "worker": "w3", "task": "RACE-2", "run": "run_95657b3cfbe3", "cancelled": false, "pid": 8456, "wall": 1788785440.1810617}
+{"event": "mission_start", "worker": "w2", "task": "RACE-1", "run": "run_b4110717d56d", "pid": 16672, "wall": 1788785440.1836936}
+{"event": "mission_start", "worker": "w0", "task": "RACE-2", "run": "run_d91f3121dd84", "pid": 1388, "wall": 1788785440.19611}
+{"event": "tick", "worker": "w3", "n": 17, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.2063549}
+{"event": "tick", "worker": "w3", "n": 18, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.2341979}
+{"event": "tick", "worker": "w1", "n": 13, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.2434325}
+{"event": "tick", "worker": "w1", "n": 14, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.2779584}
+{"event": "tick", "worker": "w3", "n": 19, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.2895658}
+{"event": "tick", "worker": "w1", "n": 15, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.3186047}
+{"event": "tick", "worker": "w1", "n": 16, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.3367074}
+{"event": "tick", "worker": "w3", "n": 20, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.3392372}
+{"event": "tick", "worker": "w1", "n": 17, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.3559966}
+{"event": "tick", "worker": "w3", "n": 21, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.387243}
+{"event": "mission_end", "worker": "w2", "task": "RACE-1", "run": "run_b4110717d56d", "cancelled": false, "pid": 16672, "wall": 1788785440.3892438}
+{"event": "tick", "worker": "w2", "n": 14, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.3920708}
+{"event": "mission_end", "worker": "w0", "task": "RACE-2", "run": "run_d91f3121dd84", "cancelled": false, "pid": 1388, "wall": 1788785440.4018347}
+{"event": "tick", "worker": "w0", "n": 22, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.4044478}
+{"event": "mission_start", "worker": "w3", "task": "RACE-1", "run": "run_12d720e91592", "pid": 8456, "wall": 1788785440.4160895}
+{"event": "mission_start", "worker": "w2", "task": "RACE-2", "run": "run_49e540a6c4c1", "pid": 16672, "wall": 1788785440.4259734}
+{"event": "tick", "worker": "w1", "n": 18, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.439311}
+{"event": "tick", "worker": "w0", "n": 23, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.4418523}
+{"event": "tick", "worker": "w0", "n": 24, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.464311}
+{"event": "tick", "worker": "w1", "n": 19, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.4846544}
+{"event": "tick", "worker": "w0", "n": 25, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.496718}
+{"event": "tick", "worker": "w0", "n": 26, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.5292957}
+{"event": "tick", "worker": "w1", "n": 20, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.5421565}
+{"event": "tick", "worker": "w1", "n": 21, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.5879323}
+{"event": "tick", "worker": "w0", "n": 27, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.591823}
+{"event": "tick", "worker": "w0", "n": 28, "dispatched": [], "recovered": [], "errors": [], "pid": 1388, "wall": 1788785440.6124983}
+{"event": "mission_end", "worker": "w3", "task": "RACE-1", "run": "run_12d720e91592", "cancelled": false, "pid": 8456, "wall": 1788785440.6212697}
+{"event": "tick", "worker": "w3", "n": 22, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.624855}
+{"event": "mission_end", "worker": "w2", "task": "RACE-2", "run": "run_49e540a6c4c1", "cancelled": false, "pid": 16672, "wall": 1788785440.6306727}
+{"event": "tick", "worker": "w2", "n": 15, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.6331427}
+{"event": "mission_start", "worker": "w0", "task": "RACE-1", "run": "run_744ca66018fd", "pid": 1388, "wall": 1788785440.6364987}
+{"event": "mission_start", "worker": "w1", "task": "RACE-2", "run": "run_59333a2fcaf0", "pid": 20712, "wall": 1788785440.648061}
+{"event": "tick", "worker": "w3", "n": 23, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.6568086}
+{"event": "tick", "worker": "w2", "n": 16, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.6675487}
+{"event": "tick", "worker": "w3", "n": 24, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.6969163}
+{"event": "tick", "worker": "w2", "n": 17, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.7024856}
+{"event": "tick", "worker": "w3", "n": 25, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.7247021}
+{"event": "coordinator_killed", "worker": "w0", "pid": 17076, "wall": 1788785440.732547}
+{"event": "tick", "worker": "w2", "n": 18, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.7471535}
+{"event": "tick", "worker": "w2", "n": 19, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.777711}
+{"event": "tick", "worker": "w3", "n": 26, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.7801085}
+{"event": "tick", "worker": "w3", "n": 27, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785440.8135946}
+{"event": "tick", "worker": "w2", "n": 20, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.817146}
+{"event": "tick", "worker": "w2", "n": 21, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.8489916}
+{"event": "mission_end", "worker": "w1", "task": "RACE-2", "run": "run_59333a2fcaf0", "cancelled": false, "pid": 20712, "wall": 1788785440.852736}
+{"event": "tick", "worker": "w1", "n": 22, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.8554277}
+{"event": "mission_start", "worker": "w3", "task": "RACE-2", "run": "run_f3d850f75209", "pid": 8456, "wall": 1788785440.862117}
+{"event": "tick", "worker": "w2", "n": 22, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.8707488}
+{"event": "tick", "worker": "w1", "n": 23, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.8870099}
+{"event": "tick", "worker": "w2", "n": 23, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.9113088}
+{"event": "tick", "worker": "w1", "n": 24, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.9284425}
+{"event": "tick", "worker": "w2", "n": 24, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.9510095}
+{"event": "tick", "worker": "w1", "n": 25, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785440.9813037}
+{"event": "tick", "worker": "w2", "n": 25, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785440.9844582}
+{"event": "tick", "worker": "w1", "n": 26, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.0175314}
+{"event": "tick", "worker": "w2", "n": 26, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785441.035952}
+{"event": "tick", "worker": "w2", "n": 27, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785441.0629516}
+{"event": "mission_end", "worker": "w3", "task": "RACE-2", "run": "run_f3d850f75209", "cancelled": false, "pid": 8456, "wall": 1788785441.0669417}
+{"event": "tick", "worker": "w1", "n": 27, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.0676112}
+{"event": "tick", "worker": "w3", "n": 28, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.0760906}
+{"event": "tick", "worker": "w3", "n": 29, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.1112409}
+{"event": "tick", "worker": "w1", "n": 28, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.1152947}
+{"event": "mission_start", "worker": "w2", "task": "RACE-2", "run": "run_91017c34a3b5", "pid": 16672, "wall": 1788785441.1242518}
+{"event": "tick", "worker": "w3", "n": 30, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.132027}
+{"event": "tick", "worker": "w1", "n": 29, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.1482475}
+{"event": "tick", "worker": "w3", "n": 31, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.1555333}
+{"event": "tick", "worker": "w1", "n": 30, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.1706526}
+{"event": "tick", "worker": "w3", "n": 32, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.173518}
+{"event": "tick", "worker": "w3", "n": 33, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.1973703}
+{"event": "tick", "worker": "w1", "n": 31, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.208529}
+{"event": "tick", "worker": "w3", "n": 34, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.2297082}
+{"event": "tick", "worker": "w1", "n": 32, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.2409208}
+{"event": "tick", "worker": "w3", "n": 35, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.2850194}
+{"event": "tick", "worker": "w1", "n": 33, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.2939105}
+{"event": "tick", "worker": "w3", "n": 36, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.315995}
+{"event": "tick", "worker": "w1", "n": 34, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.3288655}
+{"event": "mission_end", "worker": "w2", "task": "RACE-2", "run": "run_91017c34a3b5", "cancelled": false, "pid": 16672, "wall": 1788785441.328948}
+{"event": "tick", "worker": "w2", "n": 28, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785441.3325467}
+{"event": "mission_start", "worker": "w2", "task": "RACE-2", "run": "run_ee9ce468dd16", "pid": 16672, "wall": 1788785441.3555546}
+{"event": "tick", "worker": "w3", "n": 37, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.359237}
+{"event": "tick", "worker": "w1", "n": 35, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.3801835}
+{"event": "tick", "worker": "w1", "n": 36, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.4046657}
+{"event": "tick", "worker": "w3", "n": 38, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.4134698}
+{"event": "tick", "worker": "w1", "n": 37, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.4360116}
+{"event": "tick", "worker": "w3", "n": 39, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.4420207}
+{"event": "tick", "worker": "w1", "n": 38, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.455036}
+{"event": "tick", "worker": "w3", "n": 40, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.4875572}
+{"event": "tick", "worker": "w1", "n": 39, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.5001938}
+{"event": "tick", "worker": "w3", "n": 41, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.5172467}
+{"event": "tick", "worker": "w1", "n": 40, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.547414}
+{"event": "mission_end", "worker": "w2", "task": "RACE-2", "run": "run_ee9ce468dd16", "cancelled": false, "pid": 16672, "wall": 1788785441.56078}
+{"event": "mission_start", "worker": "w3", "task": "RACE-2", "run": "run_ff032ad6075d", "pid": 8456, "wall": 1788785441.5712337}
+{"event": "tick", "worker": "w2", "n": 29, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785441.5727403}
+{"event": "tick", "worker": "w1", "n": 41, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.6010413}
+{"event": "tick", "worker": "w2", "n": 30, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785441.6126857}
+{"event": "tick", "worker": "w1", "n": 42, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.6198442}
+{"event": "mission_start", "worker": "w1", "task": "RACE-1", "run": "run_25893f065d85", "pid": 20712, "wall": 1788785441.6461418}
+{"event": "tick", "worker": "w2", "n": 31, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785441.6697562}
+{"event": "tick", "worker": "w2", "n": 32, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785441.7275176}
+{"event": "tick", "worker": "w2", "n": 33, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785441.771568}
+{"event": "mission_end", "worker": "w3", "task": "RACE-2", "run": "run_ff032ad6075d", "cancelled": false, "pid": 8456, "wall": 1788785441.7760444}
+{"event": "tick", "worker": "w3", "n": 42, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.78694}
+{"event": "mission_start", "worker": "w2", "task": "RACE-2", "run": "run_eeafc7773d6e", "pid": 16672, "wall": 1788785441.8060324}
+{"event": "tick", "worker": "w3", "n": 43, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785441.8299544}
+{"event": "mission_end", "worker": "w1", "task": "RACE-1", "run": "run_25893f065d85", "cancelled": false, "pid": 20712, "wall": 1788785441.8517904}
+{"event": "tick", "worker": "w1", "n": 43, "dispatched": ["RACE-1"], "recovered": ["RACE-1"], "errors": [], "pid": 20712, "wall": 1788785441.8544924}
+{"event": "mission_start", "worker": "w3", "task": "RACE-1", "run": "run_4bbbd3a8bd99", "pid": 8456, "wall": 1788785441.8637776}
+{"event": "tick", "worker": "w1", "n": 44, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.9034896}
+{"event": "tick", "worker": "w1", "n": 45, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.9292297}
+{"event": "tick", "worker": "w1", "n": 46, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.9641676}
+{"event": "tick", "worker": "w1", "n": 47, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785441.9877946}
+{"event": "mission_end", "worker": "w2", "task": "RACE-2", "run": "run_eeafc7773d6e", "cancelled": false, "pid": 16672, "wall": 1788785442.0110075}
+{"event": "tick", "worker": "w2", "n": 34, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.0137818}
+{"event": "mission_start", "worker": "w1", "task": "RACE-2", "run": "run_dfd2401dd813", "pid": 20712, "wall": 1788785442.046252}
+{"event": "tick", "worker": "w2", "n": 35, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.0537124}
+{"event": "mission_end", "worker": "w3", "task": "RACE-1", "run": "run_4bbbd3a8bd99", "cancelled": false, "pid": 8456, "wall": 1788785442.0684404}
+{"event": "tick", "worker": "w3", "n": 44, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.0724201}
+{"event": "mission_start", "worker": "w2", "task": "RACE-1", "run": "run_3be6eb4cf0f7", "pid": 16672, "wall": 1788785442.0869148}
+{"event": "tick", "worker": "w3", "n": 45, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.1308782}
+{"event": "tick", "worker": "w3", "n": 46, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.1597967}
+{"event": "tick", "worker": "w3", "n": 47, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.2108455}
+{"event": "tick", "worker": "w3", "n": 48, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.2469966}
+{"event": "mission_end", "worker": "w1", "task": "RACE-2", "run": "run_dfd2401dd813", "cancelled": false, "pid": 20712, "wall": 1788785442.251757}
+{"event": "tick", "worker": "w1", "n": 48, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785442.2560332}
+{"event": "mission_end", "worker": "w2", "task": "RACE-1", "run": "run_3be6eb4cf0f7", "cancelled": false, "pid": 16672, "wall": 1788785442.2927208}
+{"event": "mission_start", "worker": "w1", "task": "RACE-2", "run": "run_11135b4e7107", "pid": 20712, "wall": 1788785442.2965915}
+{"event": "mission_start", "worker": "w3", "task": "RACE-3", "run": "run_8cb2e2e14456", "pid": 8456, "wall": 1788785442.3004525}
+{"event": "tick", "worker": "w2", "n": 36, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.308375}
+{"event": "tick", "worker": "w2", "n": 37, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.343364}
+{"event": "tick", "worker": "w2", "n": 38, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.3694892}
+{"event": "tick", "worker": "w2", "n": 39, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.4204314}
+{"event": "tick", "worker": "w2", "n": 40, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.4426265}
+{"event": "tick", "worker": "w2", "n": 41, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.4811814}
+{"event": "mission_end", "worker": "w1", "task": "RACE-2", "run": "run_11135b4e7107", "cancelled": false, "pid": 20712, "wall": 1788785442.5017116}
+{"event": "tick", "worker": "w1", "n": 49, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785442.5045993}
+{"event": "mission_end", "worker": "w3", "task": "RACE-3", "run": "run_8cb2e2e14456", "cancelled": false, "pid": 8456, "wall": 1788785442.506401}
+{"event": "tick", "worker": "w3", "n": 49, "dispatched": ["RACE-3"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.5094924}
+{"event": "mission_start", "worker": "w2", "task": "RACE-1", "run": "run_ec6235bff097", "pid": 16672, "wall": 1788785442.532958}
+{"event": "mission_start", "worker": "w1", "task": "RACE-2", "run": "run_2effdbecba7e", "pid": 20712, "wall": 1788785442.5365252}
+{"event": "tick", "worker": "w3", "n": 50, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.5497015}
+{"event": "tick", "worker": "w3", "n": 51, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.6093116}
+{"event": "tick", "worker": "w3", "n": 52, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.631487}
+{"event": "tick", "worker": "w3", "n": 53, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.6844814}
+{"event": "tick", "worker": "w3", "n": 54, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.7178416}
+{"event": "mission_end", "worker": "w2", "task": "RACE-1", "run": "run_ec6235bff097", "cancelled": false, "pid": 16672, "wall": 1788785442.7376475}
+{"event": "tick", "worker": "w2", "n": 42, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.7413535}
+{"event": "mission_end", "worker": "w1", "task": "RACE-2", "run": "run_2effdbecba7e", "cancelled": false, "pid": 20712, "wall": 1788785442.7417638}
+{"event": "tick", "worker": "w1", "n": 50, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785442.7441583}
+{"event": "mission_start", "worker": "w3", "task": "RACE-1", "run": "run_2a330faad554", "pid": 8456, "wall": 1788785442.7709746}
+{"event": "tick", "worker": "w1", "n": 51, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785442.7829874}
+{"event": "mission_start", "worker": "w2", "task": "RACE-2", "run": "run_c20f33ab4b32", "pid": 16672, "wall": 1788785442.790382}
+{"event": "tick", "worker": "w1", "n": 52, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785442.8384233}
+{"event": "tick", "worker": "w1", "n": 53, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785442.8742754}
+{"event": "tick", "worker": "w1", "n": 54, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785442.9156275}
+{"event": "tick", "worker": "w1", "n": 55, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785442.9629624}
+{"event": "mission_end", "worker": "w3", "task": "RACE-1", "run": "run_2a330faad554", "cancelled": false, "pid": 8456, "wall": 1788785442.9754355}
+{"event": "tick", "worker": "w3", "n": 55, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785442.9783196}
+{"event": "mission_end", "worker": "w2", "task": "RACE-2", "run": "run_c20f33ab4b32", "cancelled": false, "pid": 16672, "wall": 1788785442.995556}
+{"event": "tick", "worker": "w2", "n": 43, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785442.9982166}
+{"event": "mission_start", "worker": "w3", "task": "RACE-1", "run": "run_fad0a6e02334", "pid": 8456, "wall": 1788785443.0145643}
+{"event": "mission_start", "worker": "w1", "task": "RACE-2", "run": "run_9f4bdfd3d64a", "pid": 20712, "wall": 1788785443.0323722}
+{"event": "tick", "worker": "w2", "n": 44, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.038457}
+{"event": "tick", "worker": "w2", "n": 45, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.0597596}
+{"event": "tick", "worker": "w2", "n": 46, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.0920815}
+{"event": "tick", "worker": "w2", "n": 47, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.1321454}
+{"event": "tick", "worker": "w2", "n": 48, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.160731}
+{"event": "tick", "worker": "w2", "n": 49, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.195283}
+{"event": "mission_end", "worker": "w3", "task": "RACE-1", "run": "run_fad0a6e02334", "cancelled": false, "pid": 8456, "wall": 1788785443.220178}
+{"event": "tick", "worker": "w3", "n": 56, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.2231772}
+{"event": "mission_start", "worker": "w2", "task": "RACE-1", "run": "run_e769985c996e", "pid": 16672, "wall": 1788785443.2355561}
+{"event": "mission_end", "worker": "w1", "task": "RACE-2", "run": "run_9f4bdfd3d64a", "cancelled": false, "pid": 20712, "wall": 1788785443.2377896}
+{"event": "tick", "worker": "w1", "n": 56, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785443.2411187}
+{"event": "mission_start", "worker": "w3", "task": "RACE-2", "run": "run_99ef7e912413", "pid": 8456, "wall": 1788785443.2756498}
+{"event": "tick", "worker": "w1", "n": 57, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785443.2905176}
+{"event": "tick", "worker": "w1", "n": 58, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785443.3360794}
+{"event": "tick", "worker": "w1", "n": 59, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785443.375922}
+{"event": "tick", "worker": "w1", "n": 60, "dispatched": [], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785443.4286358}
+{"event": "mission_end", "worker": "w2", "task": "RACE-1", "run": "run_e769985c996e", "cancelled": false, "pid": 16672, "wall": 1788785443.439712}
+{"event": "tick", "worker": "w2", "n": 50, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.4424791}
+{"event": "mission_start", "worker": "w1", "task": "RACE-1", "run": "run_f6efa4c0c71f", "pid": 20712, "wall": 1788785443.459281}
+{"event": "mission_end", "worker": "w3", "task": "RACE-2", "run": "run_99ef7e912413", "cancelled": false, "pid": 8456, "wall": 1788785443.481035}
+{"event": "tick", "worker": "w3", "n": 57, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.4867039}
+{"event": "mission_start", "worker": "w2", "task": "RACE-2", "run": "run_55b1de327757", "pid": 16672, "wall": 1788785443.4984415}
+{"event": "tick", "worker": "w3", "n": 58, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.522229}
+{"event": "tick", "worker": "w3", "n": 59, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.5504916}
+{"event": "tick", "worker": "w3", "n": 60, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.5966592}
+{"event": "tick", "worker": "w3", "n": 61, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.6323612}
+{"event": "tick", "worker": "w3", "n": 62, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.653422}
+{"event": "mission_end", "worker": "w1", "task": "RACE-1", "run": "run_f6efa4c0c71f", "cancelled": false, "pid": 20712, "wall": 1788785443.6646948}
+{"event": "tick", "worker": "w1", "n": 61, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785443.6673677}
+{"event": "mission_start", "worker": "w3", "task": "RACE-1", "run": "run_e5b25637ebe3", "pid": 8456, "wall": 1788785443.682104}
+{"event": "mission_end", "worker": "w2", "task": "RACE-2", "run": "run_55b1de327757", "cancelled": false, "pid": 16672, "wall": 1788785443.7039785}
+{"event": "mission_start", "worker": "w1", "task": "RACE-2", "run": "run_bac346f66c38", "pid": 20712, "wall": 1788785443.7142482}
+{"event": "tick", "worker": "w2", "n": 51, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.7225034}
+{"event": "tick", "worker": "w2", "n": 52, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.7557487}
+{"event": "tick", "worker": "w2", "n": 53, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.7892544}
+{"event": "tick", "worker": "w2", "n": 54, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.8396032}
+{"event": "tick", "worker": "w2", "n": 55, "dispatched": [], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785443.861806}
+{"event": "mission_end", "worker": "w3", "task": "RACE-1", "run": "run_e5b25637ebe3", "cancelled": false, "pid": 8456, "wall": 1788785443.886833}
+{"event": "tick", "worker": "w3", "n": 63, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.8896604}
+{"event": "mission_start", "worker": "w2", "task": "RACE-1", "run": "run_d645582d26db", "pid": 16672, "wall": 1788785443.9113767}
+{"event": "mission_end", "worker": "w1", "task": "RACE-2", "run": "run_bac346f66c38", "cancelled": false, "pid": 20712, "wall": 1788785443.9196706}
+{"event": "tick", "worker": "w1", "n": 62, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785443.922405}
+{"event": "mission_start", "worker": "w1", "task": "RACE-2", "run": "run_aa2218e76ec3", "pid": 20712, "wall": 1788785443.9476407}
+{"event": "tick", "worker": "w3", "n": 64, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.9567769}
+{"event": "tick", "worker": "w3", "n": 65, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785443.99843}
+{"event": "tick", "worker": "w3", "n": 66, "dispatched": [], "recovered": [], "errors": [], "pid": 8456, "wall": 1788785444.0233254}
+{"event": "worker_stopped", "worker": "w3", "ticks": 66, "pid": 8456, "wall": 1788785444.0433865}
+{"event": "mission_end", "worker": "w2", "task": "RACE-1", "run": "run_d645582d26db", "cancelled": false, "pid": 16672, "wall": 1788785444.1169996}
+{"event": "tick", "worker": "w2", "n": 56, "dispatched": ["RACE-1"], "recovered": [], "errors": [], "pid": 16672, "wall": 1788785444.11962}
+{"event": "mission_end", "worker": "w1", "task": "RACE-2", "run": "run_aa2218e76ec3", "cancelled": false, "pid": 20712, "wall": 1788785444.153129}
+{"event": "tick", "worker": "w1", "n": 63, "dispatched": ["RACE-2"], "recovered": [], "errors": [], "pid": 20712, "wall": 1788785444.156033}
+{"event": "worker_stopped", "worker": "w2", "ticks": 56, "pid": 16672, "wall": 1788785444.159272}
+{"event": "worker_stopped", "worker": "w1", "ticks": 63, "pid": 20712, "wall": 1788785444.179838}

@@ -137,6 +137,104 @@ Cada item carrega decisão, não diagnóstico: o que aconteceu, por que importa,
 que o agente já tentou, opções, recomendação, risco. Log fica no evento, sob
 demanda.
 
+## Concorrencia real: posse, e o direito de agir
+
+`max_workers > 1` e uma configuracao. Concorrencia e um fato sobre processos, e
+ate o marco 9 o projeto so tinha a configuracao: uma corrida de mil ticks com
+`max_workers=3` nunca segurou mais de um lease ao mesmo tempo, entao lease,
+`BEGIN IMMEDIATE` e a chave `(workspace_id, resource)` eram codigo nao testado
+com aparencia de testado.
+
+### Lease prova quem comecou; posse prova quem pode terminar
+
+Um lease impede dois workers de pegarem o mesmo recurso no mesmo instante. Ele
+nao impede o primeiro de **continuar** depois de deixar de ser dono, e sao
+problemas diferentes.
+
+Observado na primeira corrida real de tres processos: um worker terminou a
+missao e escreveu o resultado de uma task que ja nao era dele. Foi recusado
+apenas porque a transicao que tentou era ilegal a partir do estado em que a task
+por acaso estava. Se estivesse um estado adiante -- o caso comum -- a escrita
+seria legal e teria sobrescrito o trabalho de outro worker.
+
+Entao a posse e verificada duas vezes: uma para comecar, outra imediatamente
+antes de qualquer escrita feita em nome do run. Entre os dois momentos o mundo
+tem permissao de mudar, e a segunda verificacao e a unica coisa que percebe.
+
+### Renovar, e perceber quando a renovacao e recusada
+
+O comentario de `lease_seconds` prometia "o worker renova" muito antes de
+qualquer coisa renovar. Agora um heartbeat renova enquanto a missao roda -- sem
+isso, missao mais longa que a janela perde os recursos fazendo tudo certo.
+
+O `WHERE ... AND owner=?` da renovacao e o que torna tudo seguro: worker cujo
+lease venceu e foi tomado nao atualiza nada e fica sabendo. Sem essa clausula
+ele estenderia em silencio um lease que ja nao e dele, e dois workers acreditariam
+ser donos do mesmo recurso.
+
+E recusar o resultado nao basta. Uma campanha de contencao mostrou dois
+processos rodando a mesma task ao mesmo tempo na mesma area: nenhuma escrita
+sobreviveu, mas ambos ja tinham executado, e dois agentes editando um diretorio
+produzem uma bagunca que veredito nenhum desfaz. Perder a posse agora **cancela**
+a missao. Runner que dirige subprocesso e morto de verdade; runner em processo
+so pode cooperar, e isso esta dito onde importa em vez de assumido.
+
+### Uma transacao, nao duas
+
+Despachar escreve o run, toma todos os leases e move a task -- tudo dentro de um
+`BEGIN IMMEDIATE`. Ou existe um run segurando todos os recursos com a task
+movida, ou nada foi escrito.
+
+Eram tres escritas separadas, e cada emenda tinha uma janela:
+
+- entre os leases e o run: um `SIGKILL` deixava lease vivo com dono que nao
+  existia como run. A recuperacao encontra worker morto cruzando lease vencido
+  com run ativo, entao orfao nao casava com nada e travava o recurso ate vencer,
+  sem relatorio nenhum capaz de explicar. Aparecia em 2 de 25 rodadas.
+- entre o lease e a transicao: outra worker escalava a task no meio, e sobrava um
+  run vivo segurando recursos de uma task que ele nao podia ter.
+
+Janela mais estreita teria virado 1 em 250 e continuaria o mesmo defeito.
+
+### Perder uma corrida e normal, nao e erro
+
+Dois workers lendo o mesmo board chegam a mesma conclusao no mesmo instante. Um
+chega primeiro; a transicao do outro e recusada. Isso e a maquina de estados
+funcionando -- e derrubava o tick inteiro do perdedor com `InvalidTransition`,
+entao uma recusa correta custava um ciclo completo de trabalho.
+
+Agora o motor distingue tres casos e so o ultimo e erro:
+
+- a task ja esta onde eu queria por-la -> outro fez meu trabalho
+- a task nao esta mais de onde eu planejei sair -> perdi a corrida
+- a transicao e invalida e nada mudou -> isso e um defeito, e sobe
+
+O mesmo vale para descoberta: o indice unico de `(workspace_id, provider,
+external_key)` fez o que existe para fazer, e perder essa corrida virava
+`IntegrityError` matando o tick de quem chegou segundo. Hoje e `AlreadyExists`,
+que a store levanta -- a store e dona da restricao, entao e dona do conflito.
+
+### Estado so muda por transicao
+
+Salvar a linha de uma task grava metadados. **Nunca o estado.**
+
+Gravava. Sob tres processos, um worker leu uma task, outro a avancou dois
+estados, e o refresh de metadados do primeiro escreveu o estado ANTIGO de volta:
+sem validacao, sem evento, sem rastro. A task ficou num estado ativo que ninguem
+possuia e nada voltaria a pegar, e o unico sinal era um `updated_at` seis
+segundos mais novo que a ultima transicao. Update perdido e dificil de ver
+depois exatamente porque a escrita que perde e uma escrita perfeitamente comum.
+
+### `database is locked`
+
+O retry fica **antes** do bloco, na aquisicao do lock. Nada de dentro rodou
+ainda, entao repetir equivale a ter comecado mais tarde -- nenhuma instrucao e
+repetida e nenhuma semantica muda. Retry mais para dentro significaria reexecutar
+instrucoes cujos efeitos quem chamou ja pode ter observado.
+
+Aumentar o `busy_timeout` ate os testes passarem teria funcionado e deixado o
+motor a um momento ocupado do mesmo crash.
+
 ## Operacao continua: tempo, falha e volta
 
 O motor existe para trabalhar sem alguem olhando. Ate o marco 8 isso era uma

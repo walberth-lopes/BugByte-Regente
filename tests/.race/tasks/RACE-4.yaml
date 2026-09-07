@@ -1,0 +1,6 @@
+key: RACE-4
+title: contended work 4
+status: TO DO
+resources:
+  - repo:r0
+  - repo:r1
