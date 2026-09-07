@@ -91,11 +91,15 @@ OUTCOME_SCHEMA: dict[str, Any] = {
 
 
 def restricted_profile(max_cost_usd: float = 2.0,
-                       env: dict[str, str] | None = None) -> SandboxProfile:
+                       env: dict[str, str] | None = None,
+                       credential_env: tuple[str, ...] = (),
+                       broker: object | None = None) -> SandboxProfile:
+    """`credential_env` sao NOMES; o material chega ao rodar, nao aqui."""
     return SandboxProfile(
         allowed_tools=DEFAULT_TOOLS, denied_tools=DENIED_TOOLS,
         allow_command_execution=False, allow_network=False,
-        env=dict(env or {}), max_cost_usd=max_cost_usd)
+        env=dict(env or {}), max_cost_usd=max_cost_usd,
+        credential_env=tuple(credential_env), broker=broker)
 
 
 @dataclass(slots=True)

@@ -46,6 +46,10 @@ class Ability(str, Enum):
     #: Administrar CREDENCIAIS e uma autoridade separada de administrar
     #: PESSOAS. Quem entra na equipe nao ganha, por tabela, o direito de
     #: apontar para onde as credenciais do cliente vivem.
+    #: USAR uma credencial. Separada de administra-la: o motor precisa desta e
+    #: de nenhuma outra, e antes ele teria de tomar emprestada uma capacidade
+    #: humana -- `approval.decide` -- que nao tem nada a ver com o que ele faz.
+    CREDENTIAL_USE = "workspace.credential.use"
     CREDENTIAL_GRANT = "workspace.credential.grant"
     CREDENTIAL_REVOKE = "workspace.credential.revoke"
     CREDENTIAL_LIST = "workspace.credential.list"
@@ -65,12 +69,19 @@ KEEPER = frozenset({Ability.CREDENTIAL_GRANT, Ability.CREDENTIAL_REVOKE,
 #: Quem so responde a fila humana.
 OPERATOR = frozenset({Ability.DECIDE})
 
+#: O motor. Uma capacidade so: usar as credenciais que lhe foram registradas.
+#: Ele nao decide escalada, nao concede acesso e nao administra credencial --
+#: e um papel estreito porque a autoridade de um processo automatico e o lugar
+#: onde "so mais uma" cresce sem ninguem decidir.
+SERVICE = frozenset({Ability.CREDENTIAL_USE})
+
 #: Papeis nomeados, para a concessao nao virar uma lista de strings digitadas.
 ROLES: dict[str, frozenset[Ability]] = {
     "operator": OPERATOR,
     "admin": ADMIN,
     "keeper": KEEPER,
-    "owner": ADMIN | OPERATOR | KEEPER,
+    "service": SERVICE,
+    "owner": ADMIN | OPERATOR | KEEPER | SERVICE,
 }
 
 

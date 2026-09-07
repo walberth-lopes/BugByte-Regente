@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ...core import childenv
+from ...ports import AdapterError
 from ...ports.agent import (AgentAvailability, AgentCapabilities, AgentRunner,
                             AuthMode, Check, Claim, ClaimedFile, ClaimedTest,
                             Finding, Mission, Outcome, ProcessStatus)
@@ -85,6 +86,16 @@ class SandboxProfile:
     #: Extra environment variables, resolved by the caller from the engine's
     #: own SecretProvider. Never read from the ambient environment.
     env: dict[str, str] = field(default_factory=dict)
+    #: Names the agent expects, filled at RUN time through the governed path.
+    #:
+    #: They are names, not values: this object is built long before anyone has
+    #: decided the run is authorised, and holding material here would mean the
+    #: secret lived in memory for the life of the process on the strength of a
+    #: construction. The broker below fills them when the process starts.
+    credential_env: tuple[str, ...] = ()
+    #: The one door to credential material. `None` means this sandbox has no
+    #: credential at all -- which is a real configuration, not a missing piece.
+    broker: object | None = None
     env_allowlist: tuple[str, ...] = BASE_ENV_ALLOWLIST
     #: Hard ceiling on money, when the substrate can enforce one.
     max_cost_usd: float = 2.0
@@ -215,9 +226,33 @@ class HeadlessAgent(AgentRunner):
                 return Check.yes(
                     f"the engine resolved {len(self.sandbox.env)} credential(s) "
                     f"for this workspace")
+            if not self.sandbox.credential_env:
+                return Check.no(
+                    "this workspace authenticates with a credential the engine "
+                    "resolves, and none was configured")
+            if self.sandbox.broker is None:
+                return Check.no(
+                    "this workspace authenticates with a credential the engine "
+                    "resolves, and no governed credential path was supplied")
+            # A pergunta mudou de significado, e ficou mais honesta.
+            #
+            # Antes: "algum valor foi lido do ambiente quando este objeto foi
+            # construido?" -- que respondia SIM para um segredo que ninguem
+            # havia autorizado, e continuaria respondendo SIM depois de a
+            # credencial ser revogada.
+            #
+            # Agora: "existe credencial registrada, viva e com capacidade para
+            # isto?". Nao resolve material e nao consome nada; e `material()`
+            # refaz tudo na hora de rodar, de qualquer forma.
+            from ...core.credential import Use
+
+            if self.sandbox.broker.allows(Use.AGENT_RUN):
+                return Check.yes(
+                    f"a governed credential authorises this agent for "
+                    f"{len(self.sandbox.credential_env)} variable(s)")
             return Check.no(
-                "this workspace authenticates with a credential the engine "
-                "resolves, and none was resolved")
+                "no live credential with `agent.run` is registered for this "
+                "workspace; register one with `regente credentials registrar`")
         if self.auth_mode is AuthMode.SESSION:
             return Check.unknown(
                 "this process is expected to hold its own session; it offers no "
@@ -237,6 +272,33 @@ class HeadlessAgent(AgentRunner):
                 "reopens every authority the engine withholds. If it is really "
                 "wanted, it must be stated in configuration and reviewed there")
 
+    def _child_env(self) -> dict[str, str]:
+        """The child's extra variables, resolved NOW and never before.
+
+        Each name goes through the broker, which redoes the whole authorisation
+        -- identity, grant, scope, state, capability, policy. A credential
+        revoked between building this adapter and running it closes the door
+        here, without restarting the engine.
+
+        A refusal is not swallowed: it stops the run. Starting an agent without
+        the credential it was told to expect would produce a failure the agent
+        cannot explain, blamed on the wrong thing.
+        """
+        extra = dict(self.sandbox.env)
+        if not self.sandbox.credential_env:
+            return extra
+        if self.sandbox.broker is None:
+            raise AdapterError(
+                f"this agent expects {len(self.sandbox.credential_env)} "
+                f"credential variable(s) and no governed credential path was "
+                f"supplied; it will not read the ambient environment instead")
+
+        from ...core.credential import Use
+
+        for name in self.sandbox.credential_env:
+            extra[name] = self.sandbox.broker.material(Use.AGENT_RUN)
+        return extra
+
     def run(self, mission: Mission) -> Outcome:
         payload = json.dumps(mission.as_dict(), ensure_ascii=False)
         started = time.monotonic()
@@ -245,7 +307,7 @@ class HeadlessAgent(AgentRunner):
             p = subprocess.run(
                 self.command, input=payload, cwd=mission.allowed_root,
                 capture_output=True, encoding="utf-8", errors="replace",
-                env=compose_env(self.sandbox.env_allowlist, self.sandbox.env),
+                env=compose_env(self.sandbox.env_allowlist, self._child_env()),
                 timeout=limit)
         except subprocess.TimeoutExpired:
             return Outcome(

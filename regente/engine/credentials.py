@@ -42,7 +42,7 @@ from ..core.policy import (Action, AutonomyLevel, Effect, PolicyContext,
 from ..core.principal import Principal
 from ..ports import AdapterError
 from ..ports.store import Store
-from ..ports.support import SecretProvider
+from ..ports.support import CredentialBroker, CredentialDenied, SecretProvider
 
 #: A trilha de credenciais. Verbos separados de proposito: "concedida" e
 #: "usada" respondem perguntas diferentes, e junta-las num `credential.event`
@@ -175,6 +175,50 @@ def _no(refusal: Refusal, reason: str, **kw) -> CredentialOutcome:
 
 
 @dataclass(slots=True)
+class BoundBroker(CredentialBroker):
+    """A porta que um adapter recebe: ja presa a quem age e a onde.
+
+    O adapter chama `material(use)` no momento da operacao. Cada chamada refaz
+    a autorizacao inteira -- e por isso revogar fecha a porta sem reiniciar o
+    motor, e por isso nao existe material guardado esperando reuso.
+
+    Nao ha como o adapter trocar o principal, o workspace ou o provider: os tres
+    entram na construcao, feita pela composicao. Um adapter que pudesse escolhe-
+    los escolheria o mais conveniente.
+    """
+
+    service: "CredentialService"
+    principal: Principal
+    workspace_id: str
+    provider: str
+    name: str = "governed"
+
+    def verify(self) -> None:
+        return None
+
+    def material(self, use: Use) -> str:
+        """O segredo, ou uma recusa com motivo. Nunca as duas coisas."""
+        saida = self.service.resolve(self.principal, self.workspace_id,
+                                     self.provider, use)
+        if isinstance(saida, CredentialOutcome):
+            raise CredentialDenied(
+                saida.refusal.value if saida.refusal else "DENIED",
+                saida.reason)
+        return saida.use_secret()
+
+    def allows(self, use: Use) -> bool:
+        """Pergunta que NAO consome nem autoriza.
+
+        Le o registro; nao resolve material e nao audita uso. Um adapter usa
+        isto para anunciar o que sabe fazer com o que tem -- e `material()`
+        refaz tudo de qualquer forma.
+        """
+        at = self.service.clock()
+        return any(c.allows(use, at) for c in self.service.store.credentials(
+            self.workspace_id, provider=self.provider, include_revoked=True))
+
+
+@dataclass(slots=True)
 class CredentialService:
     """Registra, revoga, lista e -- so no fim de tudo -- resolve."""
 
@@ -285,11 +329,13 @@ class CredentialService:
             return _no(Refusal.UNAUTHENTICATED,
                        "esta requisicao nao foi autenticada")
 
-        # Usar credencial exige acesso ao workspace -- qualquer capacidade
-        # humana serve como prova de pertencimento. Exigir uma capacidade
-        # ESPECIFICA aqui confundiria "posso trabalhar aqui" com "posso
-        # administrar segredos", que sao coisas diferentes.
-        if not actor.abilities.get(workspace_id):
+        # Usar credencial e uma capacidade NOMEADA.
+        #
+        # A primeira versao aceitava "qualquer capacidade neste workspace" como
+        # prova de pertencimento. Isso fazia de quem responde a fila humana um
+        # usuario de credencial por tabela -- e obrigava o motor a tomar
+        # emprestada uma capacidade que nao tem nada a ver com o que ele faz.
+        if not actor.can(workspace_id, Ability.CREDENTIAL_USE):
             return _no(Refusal.NOT_FOUND, "recurso nao encontrado neste escopo",
                        actor=actor.label)
 
@@ -376,6 +422,17 @@ class CredentialService:
             authorized=True, reach=reach, capability_supported=suportado,
             detail=detail[:200], credential_id=resolved.credential_id,
             provider=provider, use=use.value)
+
+    def broker(self, actor: Principal, workspace_id: str,
+               provider: str) -> BoundBroker:
+        """A porta deste adapter, presa a quem age.
+
+        Criada pela composicao e entregue ao adapter ja vinculada. E a unica
+        forma de um adapter alcancar material -- nao ha metodo aqui que devolva
+        segredo sem passar por `resolve`.
+        """
+        return BoundBroker(service=self, principal=actor,
+                           workspace_id=workspace_id, provider=provider)
 
     def record_use(self, actor: Principal, credential_id: str,
                    workspace_id: str, use: Use, ok: bool,

@@ -435,6 +435,12 @@ Consequencia: **adapter sozinho nunca fica READY**.
 primeiro eixo que falha e o reportado: consertar um eixo posterior enquanto um
 anterior esta quebrado nao resolve nada.
 
+**`authentication` pergunta pela autoridade, nao pelo ambiente.** Ja significou
+"algum valor foi lido do ambiente quando este objeto foi construido" -- o que
+respondia SIM para segredo que ninguem autorizou, e continuaria respondendo SIM
+depois da revogacao. Hoje pergunta ao caminho governado: existe credencial viva,
+neste escopo, com a capacidade `agent.run`?
+
 ### Autenticacao e assunto do adapter
 
 Cinco formatos de troca, nenhum preferido:
@@ -690,7 +696,8 @@ identidade -> acesso no workspace -> credencial deste escopo
 
 Antes disto existia `adapter -> secret`: a composicao montava o adapter e o
 valor era resolvido ali mesmo, antes de haver identidade, antes de a policy ser
-consultada. Funcionava perfeitamente e nao passava por lugar nenhum.
+consultada. Funcionava perfeitamente e nao passava por lugar nenhum. Esse
+caminho foi **removido**, nao marcado como obsoleto -- ver a secao seguinte.
 
 **Tres capacidades, nao uma.** `provider capability` e o que a ferramenta sabe
 fazer; `credential capability` e o que ESTA credencial foi autorizada a fazer;
@@ -707,6 +714,40 @@ pessoa fazer coisas diferentes.
 **Quatro fatos no teste de conexao.** `authorized` (o Regente), `reach` (o
 provedor), `capability_supported` (a ferramenta) e `usable` (os tres juntos).
 Autenticar nao e autorizar; indisponivel nao e recusado.
+
+### Uma unica porta ate material secreto
+
+Enquanto existir um segundo jeito de um adapter chegar ao segredo, o caminho
+governado e uma recomendacao. O antigo foi **removido**, nao marcado como
+obsoleto: nenhuma fabrica aceita um resolvedor de segredo, e o resolvedor nao e
+construivel pelo nome.
+
+```
+adapter --> broker.material(use)
+              --> identidade --> concessao --> escopo --> estado
+              --> capacidade --> policy --> fonte --> material
+```
+
+O adapter recebe uma **porta**, ja presa a quem age e a que workspace. Diz para
+que precisa da credencial e recebe material ou uma recusa com motivo. Nao
+escolhe principal, nao escolhe escopo, nao resolve endereco e nao consulta
+policy. Se recebesse o servico de credenciais teria `register` e `revoke` junto
+-- e um adapter que registra credencial concede autoridade a si mesmo.
+
+**Cada chamada refaz a autorizacao inteira.** Nao ha material guardado num
+atributo esperando reuso, e e por isso que revogar fecha a porta na chamada
+seguinte, sem reiniciar o motor.
+
+**Construir nao e autorizar.** O agente recebe NOMES de variaveis e preenche os
+valores no momento de rodar. Um objeto construido que ja carrega o segredo o
+mantem em memoria pelo resto do processo, sem que ninguem tenha autorizado nada.
+
+**O motor tambem e um principal.** Um tick roda de madrugada, sem ninguem
+olhando, e a autoridade dele era implicita -- agia por ter sido construido.
+Abrir uma excecao para o processo automatico seria a segunda autoridade de
+volta, e a mais facil de justificar. Em vez disso ele tem identidade
+(`engine:<workspace_id>`), concessao gravada e um papel de uma capacidade so.
+Sem concessao, o motor nao usa credencial nenhuma.
 
 ### Uma escrita, e as mesmas barreiras
 

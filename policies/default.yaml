@@ -69,7 +69,8 @@ rules:
     effect: ALLOW
     match: {action: ["workspace.credential.grant",
                      "workspace.credential.revoke",
-                     "workspace.credential.list"]}
+                     "workspace.credential.list",
+                     "workspace.credential.use"]}
     reason: "credencial precisa de dono nomeado, com validade e revogacao"
 
   - name: human_administers_access

@@ -111,6 +111,27 @@ class Engine:
             environment=(self.config.projects[0].default_environment
                          if self.config.projects else "staging"))
 
+    def engine_principal(self):
+        """Quem e o motor quando ele age sozinho.
+
+        Um tick roda de madrugada, sem ninguem olhando. Ate o marco 15 a
+        autoridade dele era implicita -- agia por ter sido construido. Agora ele
+        e um principal como qualquer outro: identidade, e o que uma concessao
+        gravada disser. Se ninguem conceder acesso ao motor, ele nao usa
+        credencial nenhuma, e isso e a resposta certa.
+        """
+        import socket
+
+        from ..adapters.identity.engine_service import EngineServiceIdentity
+
+        provider = EngineServiceIdentity(workspace_id=self.workspace.id,
+                                         host=socket.gethostname())
+        found = provider.authenticate(None)
+        if found is None:
+            from ..core.principal import ANONYMOUS
+            return ANONYMOUS
+        return self.access().authorize(provider.principal(found))
+
     def terminal_principal(self):
         """Quem esta no terminal: identidade real do sistema, e nada mais.
 
@@ -265,11 +286,6 @@ def build(cfg: Config) -> Engine:
     if not projects:
         store.save_project(Project(id=project_id, workspace_id=ws.id, name="padrao"))
 
-    # Segredos sao escopados ao workspace ANTES de qualquer adapter existir:
-    # nenhum adapter recebe um resolver que alcance outro cliente.
-    secrets = registry.create(Capability.SECRETS, "scoped",
-                             {"allowed": cfg.secrets, "workspace": ws.name})
-
     # Observador: toda call a provedor externo vira evento, com tenancy.
     # O adapter nao conhece o Store -- ele avisa, e quem escuta e o motor.
     def observe(call) -> None:
@@ -286,18 +302,28 @@ def build(cfg: Config) -> Engine:
                    "rate_limited": call.rate_limited,
                    "request_id": call.request_id, "error": call.error}))
 
+    def broker(key: str):
+        """A porta de credencial deste adapter, ja presa a quem age.
+
+        Delega a `_engine_broker`, que e o MESMO caminho que o `Engine` usa
+        depois de montado. Duas montagens divergem, e a que diverge e sempre a
+        que esquece de ler a concessao -- foi por isso que o sweep de mutacao
+        conseguiu conceder autoridade aqui sem nenhum teste perceber.
+        """
+        return _engine_broker(store, cfg, ws, key, projects)
+
     def create(cap: Capability, key: str, extras: dict | None = None):
         conf = cfg.providers[key]
         return registry.create(cap, conf.name, {**conf.options, **(extras or {})})
 
     tasks: TaskProvider = create(Capability.TASKS, "tasks",
-                               {"secrets": secrets, "observer": observe})
+                               {"credentials": broker("tasks"), "observer": observe})
     repos: RepositoryProvider | None = None
     areas: object | None = None
     agent: object | None = None
     if "repository" in cfg.providers:
         repos = create(Capability.REPOSITORY, "repository",
-                     {"secrets": secrets, "observer": observe})
+                     {"credentials": broker("repository"), "observer": observe})
     areas: WorkspaceProvider = create(Capability.WORKSPACE, "workspace_provider",
                                     {"root": str(cfg.areas)})
     runner: AgentRunner = create(Capability.RUNNER, "runner")
@@ -311,11 +337,11 @@ def build(cfg: Config) -> Engine:
     repos_write = None
     if "repository_write" in cfg.providers:
         repos_write = create(Capability.REPOSITORY, "repository_write",
-                             {"secrets": secrets, "observer": observe})
+                             {"credentials": broker("repository_write"), "observer": observe})
     cicd = None
     if "cicd" in cfg.providers:
         cicd = create(Capability.CICD, "cicd",
-                      {"secrets": secrets, "observer": observe})
+                      {"credentials": broker("cicd"), "observer": observe})
 
     policy = PolicyEngine.from_config(load_policies(cfg.policies))
     risk = RiskEngine.from_config(list(cfg.risk_factors))
@@ -345,6 +371,57 @@ def build(cfg: Config) -> Engine:
     return Engine(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate,
                   repos=repos, resolver=resolver, policy=policy, risk=risk,
                   areas=areas, agent=runner, delivery=delivery)
+
+
+def _engine_broker(store, cfg, ws, key: str, projects):
+    """A porta do motor para um provider. UMA montagem, usada por todos.
+
+    O motor age como principal de servico: identidade propria, e o que uma
+    concessao gravada disser. A autoridade e LIDA do registro -- nunca
+    concedida aqui, por mais pratico que fosse.
+    """
+    from ..adapters.identity.engine_service import EngineServiceIdentity
+    from ..adapters.secrets import ScopedSecrets
+    from ..engine.access import AccessService
+    from ..engine.credentials import CredentialService
+
+    regras = PolicyEngine.from_config(load_policies(cfg.policies))
+    ambiente = (projects[0].default_environment if projects else "staging")
+
+    provider = EngineServiceIdentity(workspace_id=ws.id)
+    quem = provider.principal(provider.authenticate(None))
+
+    servico = CredentialService(
+        store=store, policy=regras,
+        secrets=ScopedSecrets(workspace=cfg.workspace, allow_any=True,
+                              helpers=dict(cfg.helpers)),
+        organization=cfg.organization, client=cfg.client,
+        workspace_name=cfg.workspace, environment=ambiente)
+    acesso = AccessService(store=store, policy=regras,
+                           organization=cfg.organization, client=cfg.client,
+                           workspace_name=cfg.workspace)
+    return servico.broker(acesso.authorize(quem), ws.id, key)
+
+
+class _SemCredencial:
+    """A porta que o diagnostico recebe: existe e nao entrega nada.
+
+    `doctor` precisa construir adapters para provar que eles sobem, e construir
+    nao pode mais significar ter credencial. Devolver `None` faria o adapter
+    quebrar de um jeito que parece defeito; esta porta responde a mesma coisa
+    que a real responderia a quem nao foi autorizado.
+    """
+
+    def material(self, use) -> str:
+        from ..ports.support import CredentialDenied
+
+        raise CredentialDenied(
+            "NOT_FOUND",
+            "o diagnostico nao resolve credencial; use `regente credentials "
+            "testar` para provar uma de verdade")
+
+    def allows(self, use) -> bool:
+        return False
 
 
 def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
@@ -384,11 +461,24 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
                 extras = {"journal": str(cfg.journal)}
             elif cap in (Capability.TASKS, Capability.REPOSITORY,
                          Capability.RUNNER):
-                extras = {"secrets": registry.create(
-                    Capability.SECRETS, "scoped",
-                    {"allowed": cfg.secrets, "workspace": cfg.workspace})}
+                # O diagnostico constroi o adapter para provar que ele SOBE.
+                # Ele nao recebe porta de credencial: um `doctor` que resolvesse
+                # segredo faria da checagem de saude o caminho mais curto para
+                # extrair material -- e ninguem estranharia, porque `doctor` e
+                # o comando que todo mundo roda primeiro.
+                extras = {"credentials": _SemCredencial()}
             port = registry.create(cap, conf.name, {**conf.options, **extras})
-            port.verify()
+            try:
+                port.verify()
+            except Exception as e:                       # noqa: BLE001
+                # Um adapter que so falha por NAO TER CREDENCIAL aqui nao esta
+                # quebrado: o diagnostico deliberadamente nao resolve segredo.
+                # Reportar isso como falha faria `doctor` acusar um provedor
+                # saudavel, e ensinaria a ignorar `doctor`.
+                if "CredentialDenied" not in f"{type(e).__name__}: {e}":
+                    raise
+                return (f"{conf.name} (sobe; credencial nao verificada aqui -- "
+                        f"use `regente credentials testar`)")
             return conf.name
         expect_prefix(f"provider {key}", prova)
 
@@ -401,10 +491,7 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
         def prontidao() -> str:
             conf = cfg.providers["runner"]
             agent = registry.create(Capability.RUNNER, conf.name, {
-                **conf.options,
-                "secrets": registry.create(
-                    Capability.SECRETS, "scoped",
-                    {"allowed": cfg.secrets, "workspace": cfg.workspace})})
+                **conf.options, "credentials": _SemCredencial()})
             state = readiness.diagnose(
                 agent, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
                 autonomy=cfg.autonomy, organization=cfg.organization,

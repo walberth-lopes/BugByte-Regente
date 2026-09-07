@@ -76,8 +76,12 @@ POST   /api/workspaces/{id}/access                 {"principal","role","note"}
 DELETE /api/workspaces/{id}/access/{provedor:sujeito}
 ```
 
-Papeis: `operator` (decide escaladas), `admin` (administra acesso), `owner` (os
-dois). Um papel desconhecido concede **nada**, nunca tudo.
+Papeis: `operator` (decide escaladas), `admin` (administra acesso), `keeper`
+(administra credenciais), `service` (so usa credencial -- e o papel do proprio
+motor) e `owner` (todos). Um papel desconhecido concede **nada**, nunca tudo.
+
+Capacidades sao fotografadas no momento da concessao, nao relidas do papel:
+ampliar a definicao de um papel nao expande concessoes que ja existem.
 
 Conceder a si mesmo e recusado mesmo com autoridade para conceder: uma concessao
 so vale como prova se houver duas pessoas na linha. A excecao e a **concessao
@@ -169,6 +173,12 @@ vale para push so porque o provider oferece push.
 Administrar credenciais e uma capacidade humana separada de administrar pessoas:
 o papel `keeper` tem `workspace.credential.*` e nao decide escalada; `admin`
 administra pessoas e nao toca em credencial; `owner` tem os tres conjuntos.
+
+**Usar credencial e uma quinta capacidade** (`workspace.credential.use`),
+separada de administrar. Ja foi "qualquer capacidade neste workspace", e isso
+transformava quem responde a fila humana em usuario de credencial por tabela.
+E o unico poder do papel `service`, que e como o motor age quando roda sozinho:
+sem concessao, ele nao usa credencial nenhuma.
 
 ## Rotas
 

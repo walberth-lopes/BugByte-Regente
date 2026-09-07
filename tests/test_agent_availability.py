@@ -170,7 +170,9 @@ def test_5_a_missing_credential_blocks_on_authentication_not_on_the_executable()
 
     assert state.readiness is Readiness.BLOCKED_AUTHENTICATION
     assert state.executable.ok is True, "the binary is fine; the credential is not"
-    assert "none was resolved" in state.authentication.detail
+    # A frase mudou porque a PERGUNTA mudou: nao e mais "algum valor foi lido
+    # na construcao", e sim "ha credencial registrada, viva e com capacidade".
+    assert "none was configured" in state.authentication.detail
 
 
 def test_6_an_invalid_credential_surfaces_at_run_time_not_as_readiness(tmp_path):
@@ -257,39 +259,79 @@ def test_9_two_workspaces_may_authenticate_by_different_mechanisms(tmp_path):
 
     subscription = registry.create(Capability.RUNNER, "claude-code", {
         "cli": signed_in(tmp_path), "auth": "session"})
-    gateway_secrets = Secrets(**{"env:CORP_GATEWAY_TOKEN": "gw-token"})
     gateway = registry.create(Capability.RUNNER, "headless-agent", {
         "command": [sys.executable, "-c", "pass"],
         "auth": "gateway",
-        "credentials": {"LLM_GATEWAY_TOKEN": "env:CORP_GATEWAY_TOKEN"},
-        "secrets": gateway_secrets})
+        # NOMES, nao referencias. A partir do marco 16 nada e resolvido na
+        # construcao: o adapter recebe uma promessa e a cumpre ao rodar, pelo
+        # caminho governado.
+        "agent_env": ["LLM_GATEWAY_TOKEN"],
+        "credentials": PortaFake()})
 
     a, b = subscription.availability(), gateway.availability()
     assert a.auth_mode is AuthMode.SESSION
     assert b.auth_mode is AuthMode.GATEWAY
     assert a.authentication.ok is True and b.authentication.ok is True
-    assert gateway_secrets.asked == ["env:CORP_GATEWAY_TOKEN"]
-    # Neither resolved anything for the other.
+    # Nenhum dos dois resolveu nada AINDA -- construir nao e autorizar.
     assert subscription.sandbox.env == {}
+    assert gateway.sandbox.env == {}
+    assert gateway.sandbox.credential_env == ("LLM_GATEWAY_TOKEN",)
 
 
-def test_a_workspace_cannot_resolve_a_credential_it_does_not_own():
-    """Tenancy: the scoped SecretProvider refuses, and the factory surfaces it."""
+class PortaFake:
+    """Uma porta de credencial, do jeito que o adapter a recebe.
+
+    Ela NAO e um `SecretProvider`: nao aceita referencia e nao resolve endereco
+    nenhum. Ela responde a uma pergunta -- "material para este uso" -- e e a
+    unica forma de um adapter alcancar segredo desde o marco 16.
+    """
+
+    def __init__(self, material="material-do-gateway", nega=None):
+        self.material_ = material
+        self.nega = nega
+        self.pedidos = []
+
+    def material(self, use):
+        from regente.ports.support import CredentialDenied
+
+        self.pedidos.append(use)
+        if self.nega:
+            raise CredentialDenied(self.nega, "recusado pelo caminho governado")
+        return self.material_
+
+    def allows(self, use):
+        return self.nega is None
+
+
+def test_a_workspace_cannot_resolve_a_credential_it_does_not_own(tmp_path):
+    """Tenancy: a recusa vem do caminho governado, no MOMENTO DE RODAR.
+
+    Antes, a construcao do adapter falhava porque resolvia na hora. Agora ela
+    passa -- construir nao e autorizar -- e a porta fecha quando o agente tenta
+    usar a credencial que nao e dele.
+    """
     from regente.adapters import registry
     from regente.ports import Capability
+    from regente.ports import AdapterError
 
-    with pytest.raises(KeyError, match="not resolvable"):
-        registry.create(Capability.RUNNER, "headless-agent", {
-            "command": ["x"], "auth": "resolved_secret",
-            "credentials": {"K": "env:ANOTHER_CLIENTS_SECRET"},
-            "secrets": Secrets()})
+    agente = registry.create(Capability.RUNNER, "headless-agent", {
+        "command": [sys.executable, "-c", "pass"], "auth": "resolved_secret",
+        "agent_env": ["K"], "credentials": PortaFake(nega="NOT_FOUND")})
+
+    # Construiu. Nenhum segredo foi resolvido, e nada foi autorizado.
+    assert agente.sandbox.env == {}
+
+    from regente.ports.support import CredentialDenied
+
+    with pytest.raises(CredentialDenied):
+        agente._child_env()
 
 
 def test_a_credential_shaped_auth_mode_without_credentials_is_refused():
     from regente.adapters import registry
     from regente.ports import Capability
 
-    with pytest.raises(KeyError, match="needs a `credentials` mapping"):
+    with pytest.raises(KeyError, match="needs an `agent_env` list"):
         registry.create(Capability.RUNNER, "headless-agent", {
             "command": ["x"], "auth": "resolved_secret"})
 

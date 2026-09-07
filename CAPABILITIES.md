@@ -17,6 +17,149 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 16 — o caminho legado deixou de existir
+
+O marco 15 construiu e provou o caminho governado. Este removeu o outro.
+
+```
+ANTES:  adapter --> caminho governado
+                --> caminho legado
+
+DEPOIS: adapter --> caminho governado
+```
+
+A pergunta do marco: **existe hoje mais de um jeito de um adapter chegar a
+material de credencial?** Enquanto existir, o caminho governado e uma
+recomendacao, nao uma barreira.
+
+### Os dois sitios legados, e o que eram
+
+Registrado em `MILESTONE-16-RECON.md`, antes de qualquer codigo.
+
+```
+registry.py   tasks    secrets = o["secrets"]
+                       credencial=lambda: (secrets.resolve(ref_usuario), ...)
+registry.py   runner   env[variavel] = secrets.resolve(referencia)
+container.py  x6       {"secrets": secrets, "observer": observe}
+```
+
+O de tasks resolvia no momento do uso; o de agente, na **construcao**. A
+diferenca nunca foi projetada -- foi acidente, e nada impedia o de tasks de
+virar o de agente na proxima edicao. Nenhum dos dois perguntava por identidade,
+concessao, escopo, capacidade, validade, revogacao ou policy.
+
+### O que foi eliminado
+
+| caminho antigo | estado |
+|---|---|
+| fabrica de adapter que aceita `SecretProvider` | **removido** |
+| `SecretProvider` construivel pelo nome no registro | **desregistrado** |
+| composicao injetando resolvedor em adapter | **removido**, 6 pontos |
+| resolucao de segredo durante a construcao do agente | **removido** |
+| `doctor` resolvendo credencial para construir adapter | **removido** |
+
+Nenhum deles ficou marcado como `@deprecated`, atras de um `if legacy:`, nem
+mantido "para compatibilidade". Um caminho inseguro que ainda compila e um
+caminho inseguro.
+
+### A pergunta que a migracao forcou
+
+Quem e o principal quando o motor age sozinho? Um tick roda de madrugada, sem
+ninguem olhando, e ate aqui a autoridade dele era **implicita**: agia por ter
+sido construido.
+
+Havia duas saidas. Abrir uma excecao para o processo automatico recriaria a
+segunda autoridade que este marco existe para eliminar -- e seria a mais
+confortavel de justificar, porque "o motor precisa funcionar". A outra e esta:
+**o motor tambem e um principal**, com identidade propria
+(`engine:<workspace_id>`), concessao gravada e papel estreito (`service`, uma
+unica capacidade).
+
+A consequencia e desconfortavel e correta: sem concessao, o motor nao usa
+credencial nenhuma. Um sistema em que o processo automatico e o unico que
+dispensa autorizacao e um sistema em que a autorizacao e decorativa.
+
+### O contrato final
+
+```
+adapter --> broker.material(use)
+              --> identidade --> concessao --> escopo --> estado
+              --> capacidade --> policy --> fonte --> material
+```
+
+O adapter recebe uma **porta**, ja presa a quem age e a que workspace. Ele diz
+para que precisa da credencial e recebe material ou uma recusa com motivo. Nao
+escolhe principal, nao escolhe escopo, nao resolve endereco e nao consulta
+policy. Se recebesse o servico de credenciais teria `register` e `revoke` junto
+-- e um adapter que registra credencial concede autoridade a si mesmo.
+
+**Cada chamada refaz a autorizacao inteira.** Nao ha material guardado num
+atributo esperando reuso: e por isso que revogar fecha a porta na chamada
+seguinte, sem reiniciar o motor.
+
+**Construir nao e autorizar.** O agente passou a receber NOMES de variaveis e a
+preenche-los no momento de rodar. Antes, um objeto construido carregava o
+segredo em memoria pelo resto do processo, com ninguem tendo autorizado nada.
+
+### Defeitos encontrados
+
+| # | Defeito | Por que estava invisivel |
+|---|---|---|
+| 1 | **A prontidao do agente respondia a pergunta errada.** `authentication.ok` significava "algum valor foi lido do ambiente quando este objeto foi construido". Respondia SIM para segredo que ninguem autorizou, e continuaria respondendo SIM depois da revogacao. Agora pergunta ao caminho governado: existe credencial viva com `agent.run`? | A pergunta antiga sempre acerta o caso feliz. |
+| 2 | **Usar credencial aceitava "qualquer capacidade neste workspace".** Quem responde a fila humana virava usuario de credencial por tabela, e o motor tinha de tomar emprestado `approval.decide` -- que nao tem relacao nenhuma com o que ele faz. Criadas `workspace.credential.use` e o papel `service`. | So aparece quando ha mais de um tipo de principal. |
+| 3 | **A montagem do broker existia em dois lugares.** Uma closure na composicao e um metodo no `Engine`. O sweep conseguiu conceder `owner` ao motor dentro da closure sem nenhum teste perceber -- duas montagens divergem, e a que diverge e a que esquece de ler a concessao. Colapsadas numa unica funcao. | Duplicacao e invisivel enquanto as duas copias concordam. |
+| 4 | **`doctor` resolvia credencial para construir adapters.** O comando que todo mundo roda primeiro era o caminho mais curto para extrair material, e ninguem estranharia. Agora constroi sem credencial e separa as duas perguntas: "sobe?" e "autentica?". | Parecia diligencia. |
+
+### Exercitado de verdade
+
+A mesma credencial do marco 15, do chaveiro do sistema operacional, agora pelo
+caminho migrado:
+
+```
+$ regente access quem-sou-eu       -> autenticado, "pode aqui: nada"
+$ (motor, antes de conceder)       -> engine:wks_..., capacidades: nenhuma
+$ regente access inicial
+$ regente access conceder engine:wks_... --papel service
+$ regente credentials registrar principal --referencia helper:github \
+      --capacidades repo.read --dias 30
+
+$ regente credentials testar --uso repo.read
+  autorizado : True | provedor : AUTHENTICATED | utilizavel : True
+  detalhe    : aceita como 'walberth-lopes'
+
+$ regente credentials testar --uso repo.push
+  autorizado : False
+  detalhe    : a credencial existe e nao autoriza 'repo.push'; autoriza ['repo.read']
+```
+
+`repo.read` ALLOW e `repo.push` DENY com um token que tecnicamente empurra --
+preservado depois da migracao, que era exatamente o ponto. Revogar fechou a
+porta na chamada seguinte, antes de qualquer contato com o provedor.
+
+### Sweep de mutacao
+
+Doze mutacoes sobre a fronteira migrada. Doze capturadas -- seis so depois de
+testes novos, e uma delas expos a duplicacao do defeito 3. Uma mutacao minha
+saiu malformada (trocava um rotulo sem mudar comportamento) e foi classificada
+como no-op e substituida, nao contada como captura.
+
+### Limitacoes
+
+**O `gh` continua com credencial propria.** Os adapters de repositorio invocam
+`gh`, que se autentica pelo chaveiro do sistema sem passar pelo Regente. O
+caminho governado existe e foi provado por `credentials testar`; entregar o
+material para dentro do subprocesso do `gh` e trabalho do marco 6, que este nao
+reabre.
+
+**Capacidades sao fotografadas na concessao.** Ampliar a definicao de um papel
+nao expande concessoes ja existentes. E a escolha segura, e significa que
+ampliar um papel exige reconceder.
+
+**Um unico provider real exercitado.** Jira e agente continuam sem credencial
+neste ambiente -- CONTRACT_TESTED, nunca EXERCISED_REAL.
+
+---
+
 ## Milestone 15 — credenciais de provider
 
 A pergunta do marco: **quem concedeu esta credencial, para onde, para que

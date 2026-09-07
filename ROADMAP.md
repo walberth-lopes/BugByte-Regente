@@ -36,6 +36,13 @@ deixou de ser uma lista no YAML e virou credencial registrada, com autor,
 capacidades explicitas, validade e revogacao. O material nunca entra no dominio
 -- o que o motor guarda e um endereco.
 
+O marco 16 removeu o caminho antigo. Nao existe mais fabrica de adapter que
+aceite um resolvedor de segredo, nem construcao que produza material: uma unica
+porta, e ela pergunta identidade, concessao, escopo, estado, capacidade e policy
+a cada chamada. O motor virou principal de servico com concessao propria --
+abrir excecao para o processo automatico seria devolver a segunda autoridade, e
+seria a mais facil de justificar.
+
 O que segue faltando e **identidade real no navegador**. Nao ha provedor
 corporativo neste ambiente: sem OIDC, sem SSO, sem dominio. O `dev-token`
 continua sendo o unico mecanismo da tela, continua se anunciando como de

@@ -68,6 +68,7 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
     dois casos -- e por isso o teste de contrato exercita o mesmo codigo que
     roda contra a rede.
     """
+    from ..core.credential import Use
     from .tasks.jira import JiraTasks
     from .tasks.transport import HttpTransport, SnapshotTransport
 
@@ -79,15 +80,20 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
             directory=Path(o["snapshots"]), observer=observer)
     elif modo == "http":
         site = o["site"].rstrip("/")
-        # Injetado pela composicao. O nome desta chave e o que a composicao
-        # escreve -- ja divergiu uma vez depois de uma renomeacao, e o efeito
-        # foi um KeyError na construcao do adapter, nao um erro legivel.
-        secrets = o["secrets"]
-        ref_usuario = o.get("user_ref") or "env:JIRA_EMAIL"
-        ref_token = o.get("token_ref") or "env:JIRA_API_TOKEN"
+        # A CREDENCIAL vem do caminho governado, e nada mais.
+        #
+        # Antes, a composicao injetava um `SecretProvider` e este arquivo
+        # montava um `lambda` que resolvia uma referencia escrita no YAML. Nao
+        # havia identidade, concessao, capacidade, validade nem revogacao -- e
+        # funcionava perfeitamente, que e o que tornava o defeito duravel.
+        #
+        # O usuario NAO passa por aqui: um email e um identificador, nao um
+        # segredo, e trata-lo como segredo esconderia o que e realmente secreto.
+        broker = o["credentials"]
+        usuario = str(o.get("user") or "")
         transport = HttpTransport(
             base_url=site,
-            credencial=lambda: (secrets.resolve(ref_usuario), secrets.resolve(ref_token)),
+            credencial=lambda: (usuario, broker.material(Use.TASK_READ)),
             timeout=int(o.get("timeout", 30)),
             max_attempts=int(o.get("max_tentativas", 3)),
             observer=observer)
@@ -127,7 +133,7 @@ def _agent_headless(o: dict[str, Any]) -> Port:
     """
     from .runner.headless import HeadlessAgent, SandboxProfile
 
-    mode, env = _auth({**o, "auth": o.get("auth", "none")})
+    mode, env, variaveis, broker = _auth({**o, "auth": o.get("auth", "none")})
     return HeadlessAgent(
         command=list(o["command"]),
         auth_mode=mode,
@@ -137,10 +143,11 @@ def _agent_headless(o: dict[str, Any]) -> Port:
             allow_command_execution=bool(o.get("allow_command_execution", False)),
             allow_network=bool(o.get("allow_network", False)),
             env=env,
+            credential_env=variaveis, broker=broker,
             max_cost_usd=float(o.get("max_cost_usd", 2.0))))
 
 
-def _auth(o: dict[str, Any]) -> tuple[Any, dict[str, str]]:
+def _auth(o: dict[str, Any]) -> tuple[Any, dict[str, str], tuple[str, ...], Any]:
     """Resolve whatever THIS workspace's agent authenticates with.
 
     Five shapes, and the engine picks none of them: the workspace's
@@ -156,38 +163,39 @@ def _auth(o: dict[str, Any]) -> tuple[Any, dict[str, str]]:
     from ..ports.agent import AuthMode
 
     mode = AuthMode(str(o.get("auth", "session")).upper())
-    secrets = o.get("secrets")
+    broker = o.get("credentials")
     env: dict[str, str] = {}
 
-    # `credentials` maps the variable the agent expects -> the reference the
-    # engine resolves. Both sides are the workspace's choice; neither is
-    # hard-coded, because hard-coding either one is what made the engine look
-    # like it only supported a single vendor's API key.
-    for variable, reference in (o.get("credentials") or {}).items():
-        if secrets is None:
-            raise KeyError(
-                f"'{variable}' must be resolved through a SecretProvider and "
-                f"none was supplied to this adapter")
-        env[str(variable)] = secrets.resolve(str(reference))
+    # `agent_env` names the variables the agent expects. O VALOR nao e resolvido
+    # aqui: cada nome vira uma promessa que o adapter cumpre NO MOMENTO DE
+    # RODAR, pelo caminho governado.
+    #
+    # Antes, isto resolvia o material durante a CONSTRUCAO do adapter -- antes
+    # de existir identidade, antes de a policy ser consultada, antes de qualquer
+    # decisao sobre se aquele uso era autorizado. Um objeto construido carregava
+    # o segredo em memoria pelo resto do processo, e ninguem havia autorizado
+    # nada.
+    variaveis = tuple(str(v) for v in (o.get("agent_env") or ()))
 
-    if mode in (AuthMode.RESOLVED_SECRET, AuthMode.GATEWAY) and not env:
+    if mode in (AuthMode.RESOLVED_SECRET, AuthMode.GATEWAY) and not variaveis:
         raise KeyError(
-            f"auth mode '{mode.value}' needs a `credentials` mapping of "
+            f"auth mode '{mode.value}' needs an `agent_env` list of "
             f"variable -> secret reference; none was configured")
-    return mode, env
+    return mode, env, variaveis, broker
 
 
 def _agent_claude_code(o: dict[str, Any]) -> Port:
     """One headless coding-agent CLI. The vendor's name stops at this factory."""
     from .runner.vendors.claude_code import ClaudeCodeAgent, restricted_profile
 
-    mode, env = _auth(o)
+    mode, env, variaveis, broker = _auth(o)
     return ClaudeCodeAgent(
         cli_path=o["cli"],
         model=str(o.get("model", "sonnet")),
         auth_mode=mode,
         sandbox=restricted_profile(
-            max_cost_usd=float(o.get("max_cost_usd", 2.0)), env=env),
+            max_cost_usd=float(o.get("max_cost_usd", 2.0)), env=env,
+            credential_env=variaveis, broker=broker),
         extra_args=tuple(o.get("extra_args", ())))
 
 
@@ -200,13 +208,14 @@ def _agent_codex_cli(o: dict[str, Any]) -> Port:
     """
     from .runner.vendors.codex_cli import CodexCliAgent, restricted_profile
 
-    mode, env = _auth(o)
+    mode, env, variaveis, broker = _auth(o)
     return CodexCliAgent(
         cli_path=o["cli"],
         model=str(o.get("model", "")),
         auth_mode=mode,
         sandbox=restricted_profile(
-            max_cost_usd=float(o.get("max_cost_usd", 2.0)), env=env),
+            max_cost_usd=float(o.get("max_cost_usd", 2.0)), env=env,
+            credential_env=variaveis, broker=broker),
         extra_args=tuple(o.get("extra_args", ())))
 
 
@@ -232,6 +241,13 @@ def _cicd_github(o: dict[str, Any]) -> Port:
 
 
 def _scoped_secrets(o: dict[str, Any]) -> Port:
+    """DESREGISTRADO no marco 16. Mantido como funcao, sem porta.
+
+    Enquanto esta fabrica estava registrada, qualquer composicao podia pedir um
+    `SecretProvider` inteiro pelo nome e entrega-lo a um adapter -- que e
+    exatamente o caminho legado que este marco eliminou. Quem monta a fonte de
+    segredo agora e o `CredentialService`, e ele e o unico.
+    """
     from .secrets import ScopedSecrets
     return ScopedSecrets(allowed_from=frozenset(o.get("allowed", ())),
                     workspace=o.get("workspace", "?"))
@@ -259,7 +275,6 @@ def _runner_script(o: dict[str, Any]) -> Port:
 
 register(Capability.TASKS, "filesystem", _tasks_filesystem)
 register(Capability.TASKS, "jira", _tasks_jira)
-register(Capability.SECRETS, "scoped", _scoped_secrets)
 register(Capability.REPOSITORY, "git-local", _repos_git_local)
 register(Capability.REPOSITORY, "github", _repos_github)
 register(Capability.REPOSITORY, "github-write", _repos_github_write)

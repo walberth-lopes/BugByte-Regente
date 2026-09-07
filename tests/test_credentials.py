@@ -776,3 +776,138 @@ def test_an_audit_event_never_carries_a_field_that_holds_material(bench):
             if any(s in nome.lower() for s in suspeitos):
                 faltas.append(f"linha {no.lineno}: campo '{nome}' no evento")
     assert not faltas, "campo de material na auditoria:\n  " + "\n  ".join(faltas)
+
+# ---------------------------------------------------------------------------
+# 6. A porta, exercitada
+# ---------------------------------------------------------------------------
+
+def test_working_in_a_workspace_is_not_permission_to_use_its_credentials(bench):
+    """Quem responde a fila humana nao vira usuario de credencial por tabela.
+
+    A primeira versao aceitava "qualquer capacidade neste workspace" como prova
+    de pertencimento -- e pertencer nao e a mesma pergunta que poder usar o
+    segredo do cliente.
+    """
+    uma_credencial(bench)
+    operador = quem(ALICE, role="operator")          # so `approval.decide`
+    assert operador.can("wks_a", Ability.DECIDE) is True
+
+    out = service(bench).resolve(operador, "wks_a", "repository", Use.REPO_READ)
+    assert isinstance(out, CredentialOutcome)
+    assert out.refusal is Refusal.NOT_FOUND
+
+
+def test_the_broker_turns_a_refusal_into_an_error_and_never_material(bench):
+    """A porta devolve material OU levanta. Nunca as duas, nunca nenhuma."""
+    from regente.ports.support import CredentialDenied
+
+    uma_credencial(bench, revogada=True)
+    porta = service(bench).broker(quem(ALICE), "wks_a", "repository")
+
+    with pytest.raises(CredentialDenied) as erro:
+        porta.material(Use.REPO_READ)
+    assert erro.value.refusal == "REVOKED"
+    assert SEGREDO not in str(erro.value)
+
+
+def test_the_broker_asks_the_governed_path_every_single_time(bench):
+    """Revogar fecha a porta sem reiniciar o motor.
+
+    A mesma porta, o mesmo objeto: autoriza antes, recusa depois. Se ela
+    guardasse material ou veredito, a segunda chamada continuaria passando.
+    """
+    from regente.ports.support import CredentialDenied
+
+    c = uma_credencial(bench)
+    porta = service(bench).broker(quem(ALICE), "wks_a", "repository")
+    assert porta.material(Use.REPO_READ) == SEGREDO
+
+    service(bench).revoke(quem(ALICE), "wks_a", c.id)
+
+    with pytest.raises(CredentialDenied):
+        porta.material(Use.REPO_READ)
+
+
+def test_the_broker_is_bound_to_one_workspace_and_one_provider(bench):
+    """O adapter nao escolhe escopo. Se escolhesse, escolheria o conveniente."""
+    uma_credencial(bench, workspace="wks_b", client="cli_b", ref="env:TOKEN")
+    porta = service(bench).broker(quem(ALICE, "wks_a"), "wks_a", "repository")
+
+    assert porta.workspace_id == "wks_a"
+    assert porta.provider == "repository"
+    assert porta.allows(Use.REPO_READ) is False
+
+
+def test_an_agent_without_a_broker_refuses_instead_of_reading_the_environment(
+        tmp_path, monkeypatch):
+    """Sem porta governada, o agente NAO cai para o ambiente.
+
+    Cair seria o caminho legado voltando pela porta dos fundos -- e funcionaria,
+    porque a variavel costuma estar la.
+    """
+    import os
+    import sys
+
+    from regente.adapters.runner.headless import HeadlessAgent, SandboxProfile
+    from regente.ports import AdapterError
+
+    monkeypatch.setenv("TOKEN_DO_AGENTE", "material-do-ambiente")
+    agente = HeadlessAgent(
+        command=[sys.executable, "-c", "pass"],
+        sandbox=SandboxProfile(credential_env=("TOKEN_DO_AGENTE",),
+                               broker=None))
+
+    with pytest.raises(AdapterError, match="governed credential path"):
+        agente._child_env()
+
+
+def test_agent_readiness_says_no_when_no_credential_authorises_it(tmp_path):
+    """A prontidao pergunta ao caminho governado, e aceita o nao.
+
+    Antes ela perguntava "algum valor foi lido na construcao?" -- que respondia
+    SIM para um segredo que ninguem autorizou, e continuaria respondendo SIM
+    depois da revogacao.
+    """
+    import sys
+
+    from regente.adapters.runner.headless import HeadlessAgent, SandboxProfile
+    from regente.ports.agent import AuthMode
+
+    class PortaQueNega:
+        def material(self, use):
+            raise AssertionError("a prontidao nao deve resolver material")
+
+        def allows(self, use):
+            return False
+
+    agente = HeadlessAgent(
+        command=[sys.executable, "-c", "pass"],
+        auth_mode=AuthMode.RESOLVED_SECRET,
+        sandbox=SandboxProfile(credential_env=("K",), broker=PortaQueNega()))
+
+    check = agente.availability().authentication
+    assert check.ok is False
+    assert "agent.run" in check.detail
+
+
+def test_the_broker_never_crosses_to_another_providers_credential(bench):
+    """Uma credencial de tasks nao serve ao repositorio.
+
+    Sem esta prova, fixar o provider no caminho do broker passava despercebido:
+    todos os outros testes usam o mesmo nome, e um valor fixo casa com ele.
+    """
+    from regente.ports.support import CredentialDenied
+
+    uma_credencial(bench, provider="repository", name="do-repo",
+                   capabilities=("repo.read",))
+    porta_de_tasks = service(bench).broker(quem(ALICE), "wks_a", "tasks")
+
+    assert porta_de_tasks.allows(Use.REPO_READ) is False
+    with pytest.raises(CredentialDenied) as erro:
+        porta_de_tasks.material(Use.REPO_READ)
+    assert erro.value.refusal == "NOT_FOUND"
+
+    # E a porta do repositorio continua funcionando: o isolamento e entre
+    # providers, e nao uma quebra geral.
+    assert service(bench).broker(
+        quem(ALICE), "wks_a", "repository").material(Use.REPO_READ) == SEGREDO

@@ -749,8 +749,11 @@ def test_a_missing_credential_is_reported_as_a_missing_credential(tmp_path):
         os.environ.pop(var, None)
     results = diagnose(_config(
         tmp_path, "  tasks:\n    name: jira\n    site: https://example.invalid\n"))
-    tasks = next(d for name, _, d in results if name == "provider tasks")
-    assert "SecretMissing" in tasks and "JIRA_EMAIL" in tasks
+    ok = {name: (bom, d) for name, bom, d in results}
+    bom, detalhe = ok["provider tasks"]
+    assert bom is True, detalhe
+    assert "credencial nao verificada aqui" in detalhe
+    assert "regente credentials testar" in detalhe
 
 
 # ---------------------------------------------------------------------------

@@ -19,6 +19,53 @@ class NotificationProvider(Port):
         """Chamar isto e caro em atencao humana. O motor limita por tick."""
 
 
+class CredentialDenied(Exception):
+    """O caminho governado recusou. Carrega o MOTIVO, nunca material.
+
+    Excecao propria, e nao `AdapterError`, porque um adapter precisa distinguir
+    "o provedor me recusou" de "o Regente nao me deixou chegar la". As duas
+    aparecem no mesmo `try`, e confundi-las manda alguem trocar um token que
+    estava bom.
+    """
+
+    def __init__(self, refusal: str, reason: str) -> None:
+        super().__init__(f"{refusal}: {reason}")
+        self.refusal = refusal
+        self.reason = reason
+
+
+class CredentialBroker(Port):
+    """A UNICA porta pela qual um adapter recebe material de credencial.
+
+    O adapter nao sabe de quem e a credencial, nao sabe onde ela mora, nao sabe
+    se expirou e nao decide se pode usa-la. Ele diz **para que** precisa dela, e
+    recebe o material ou uma recusa com motivo.
+
+    Cada chamada refaz a autorizacao inteira -- identidade, concessao, escopo,
+    estado, capacidade, policy. E por isso que revogar fecha a porta sem
+    reiniciar o motor: nao existe material guardado num atributo esperando ser
+    reusado.
+
+    O broker chega ao adapter JA VINCULADO a quem age e a que workspace. Um
+    adapter que pudesse escolher esses dois escolheria o mais conveniente.
+    """
+
+    capability = Capability.SECRETS
+
+    @abstractmethod
+    def material(self, use) -> str:
+        """O segredo, para este uso. Levanta `CredentialDenied` se nao pode."""
+
+    @abstractmethod
+    def allows(self, use) -> bool:
+        """Pergunta sem consumir. Para um adapter decidir o que nem tentar.
+
+        Responder `True` aqui nao autoriza nada: `material()` refaz tudo. Isto
+        existe para o adapter poder anunciar capacidade honestamente, e nao para
+        substituir a verificacao.
+        """
+
+
 class SecretProvider(Port):
     capability = Capability.SECRETS
 

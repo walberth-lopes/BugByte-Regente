@@ -21,6 +21,26 @@ opostos (git local e hospedagem remota), identidade dentro da tenancy, e a cadei
 `task → repositório → base → recursos → risco/policy → candidato` respondida sem
 tocar em nada.
 
+**Marcos 8–11** — operação contínua sob falha, concorrência real entre
+processos, isolamento entre clientes, e o ciclo da task fechado até onde a
+autoridade do motor termina: veredito, push idempotente, pull request, CI
+observado — e então uma pessoa.
+
+**Marcos 12–13** — Mission Control: o estado do motor numa tela, e a primeira
+escrita humana pelo navegador, atravessando as mesmas barreiras do terminal.
+
+**Marcos 14–16** — a cadeia de autoridade fechada:
+
+```
+Identidade real → concessão gravada → policy → credencial
+                → capacidade → segredo → operação → auditoria
+```
+
+Identidade humana com procedência verificável; acesso concedido por alguém, com
+data e revogação; credenciais com capacidades explícitas e validade; e **uma
+única rota** até material secreto — o caminho antigo, em que um adapter recebia
+um resolvedor e usava a referência que quisesse, deixou de existir.
+
 Ver [ROADMAP.md](ROADMAP.md), [ARCHITECTURE.md](ARCHITECTURE.md),
 [MAPEAMENTO.md](MAPEAMENTO.md) e [ALVO.md](ALVO.md).
 
@@ -43,7 +63,236 @@ uv venv --python 3.13
 uv pip install -e ".[dev]"
 ```
 
-## Usar
+## Tutorial: do zero até a primeira decisão
+
+Se você nunca abriu este projeto, faça só isto, na ordem. Cada passo diz o que
+você deve ver e o que fazer quando o Regente disser não — e ele vai dizer não
+várias vezes, de propósito.
+
+O caminho inteiro roda **na sua máquina**, em modo sombra, sem tocar em nada de
+ninguém.
+
+### 1. Preparar o ambiente
+
+Você precisa de [Python 3.13](https://www.python.org/downloads/) e do
+[uv](https://docs.astral.sh/uv/getting-started/installation/).
+
+```bash
+uv venv --python 3.13
+uv pip install -e ".[dev]"
+```
+
+### 2. Criar uma pasta de trabalho
+
+O Regente roda dentro de uma pasta que tem um `regente.yaml`. Crie uma nova —
+não use a pasta do código-fonte:
+
+```bash
+mkdir meu-regente
+cd meu-regente
+regente init
+```
+
+Isso cria o `regente.yaml` e uma pasta `tasks/`.
+
+### 3. Ver se o motor sobe
+
+```bash
+regente doctor
+```
+
+Ele testa cada aposta do ambiente **por comando, não por suposição**: o banco
+abre, cada adapter constrói, as policies carregam. Se algo falhar, a mensagem
+diz o quê — e é isso que você conserta antes de seguir.
+
+### 4. Escrever uma tarefa
+
+Uma tarefa é um arquivo. Crie `tasks/MINHA-1.yaml`:
+
+```yaml
+key: MINHA-1
+title: Corrigir o texto do rodapé
+status: TO DO
+```
+
+### 5. Rodar o primeiro ciclo
+
+```bash
+regente tick
+```
+
+Você vai ver algo como `baseline com 1 tasks; nada despachado`.
+
+**Isso está certo.** O primeiro ciclo apenas *registra* o que existe. Ligar o
+motor num board de cinquenta tarefas e deixá-lo despachar tudo de uma vez seria
+um incidente, não um produto. Rode `regente tick` de novo para ele começar a
+trabalhar.
+
+### 6. Ver o que está acontecendo
+
+```bash
+regente status
+```
+
+Responde quatro perguntas: o que está rodando, o que precisa de você, o que
+travou, o que terminou.
+
+```bash
+regente health
+```
+
+Responde treze, incluindo as desconfortáveis — tarefas paradas, leases órfãos,
+execuções presas. Ele **não fica verde** para agradar: se algo está parado há
+horas, ele diz, com nome e há quanto tempo.
+
+### 7. Quando o motor precisa de você
+
+Um agente que falha duas vezes esgota a escada de recuperação e o motor
+**escala**: ele para e pergunta.
+
+```bash
+regente needs-me
+```
+
+Você vê o que aconteceu, por que importa, o que já foi tentado, e as opções.
+Para responder:
+
+```bash
+regente decide apv_abc123 investigar
+```
+
+E aqui vem o primeiro "não" que você vai encontrar:
+
+```
+NOT_FOUND: recurso nao encontrado neste escopo
+```
+
+Isso não é um erro. É o Regente dizendo que **você ainda não recebeu acesso**.
+
+### 8. Acesso: quem é você, e quem autorizou
+
+O Regente separa três perguntas que a maioria dos sistemas mistura:
+
+| pergunta | quem responde |
+|---|---|
+| **quem é você?** | sua conta do sistema operacional |
+| **você manda neste workspace?** | uma concessão gravada, com autor e data |
+| **esta ação é permitida?** | o arquivo de policies |
+
+Você já tem a primeira. Veja:
+
+```bash
+regente access quem-sou-eu
+```
+
+```
+identidade : os-account:S-1-5-21-...
+emissor    : SEU-COMPUTADOR
+pode aqui  : nada
+```
+
+Autenticado, e sem autoridade nenhuma. A primeira concessão de um workspace novo
+sai por uma porta estreita, que só funciona uma vez:
+
+```bash
+regente access inicial
+```
+
+Agora `regente decide` funciona. Confira quem tem acesso:
+
+```bash
+regente access listar
+```
+
+Para dar acesso a outra pessoa (conceder a si mesmo é recusado — uma concessão
+só vale como prova se houver duas pessoas na linha):
+
+```bash
+regente access conceder os-account:S-1-5-21-outra-pessoa --papel operator
+regente access revogar os-account:S-1-5-21-outra-pessoa
+```
+
+Papéis: `operator` decide escaladas · `admin` administra pessoas ·
+`keeper` administra credenciais · `owner` faz tudo.
+
+Revogar **não apaga o histórico**: continua registrado quem concedeu, quando, e
+quem tirou.
+
+### 9. A tela
+
+```bash
+regente ui
+```
+
+Abra o endereço que ele imprimir. Você vê o painel, as tarefas, a saúde, a fila
+de decisões — e pode decidir pelo navegador. Tudo passa exatamente pelas mesmas
+barreiras do terminal.
+
+A tela escuta só no seu computador, e o mecanismo de identidade dela se anuncia
+como **de desenvolvimento**. Não exponha na rede: ela recusa, e a recusa está no
+código, não num aviso.
+
+### 10. Credenciais, quando você conectar coisas de verdade
+
+Para ler um board real ou abrir um pull request, o Regente precisa de uma
+credencial. Ele **nunca guarda o segredo** — guarda o endereço dele:
+
+```bash
+regente credentials registrar principal \
+    --provider repository_write \
+    --referencia helper:github \
+    --capacidades repo.read \
+    --dias 30
+```
+
+Três formas de endereço:
+
+| forma | onde o segredo está |
+|---|---|
+| `env:NOME` | numa variável de ambiente |
+| `arquivo:CAMINHO` | num arquivo protegido |
+| `helper:NOME` | em lugar nenhum — um programa o produz na hora |
+
+Para provar que funciona, sem revelar nada:
+
+```bash
+regente credentials testar --provider repository_write --uso repo.read
+```
+
+```
+autorizado pelo Regente : True
+resposta do provedor    : AUTHENTICATED
+capacidade suportada    : True
+utilizavel              : True
+```
+
+Quatro respostas separadas, porque são quatro fatos diferentes. Se você pedir
+uma capacidade que **a credencial** não tem, ele recusa — mesmo que o token
+tecnicamente consiga:
+
+```
+detalhe : a credencial existe e nao autoriza 'repo.push'; autoriza ['repo.read']
+```
+
+E para tirar de circulação:
+
+```bash
+regente credentials revogar crd_abc123
+```
+
+A porta fecha na chamada seguinte, sem reiniciar nada.
+
+### O que esperar
+
+O Regente diz não com frequência, e quase sempre a resposta certa é olhar o
+motivo — ele é específico. `NOT_FOUND` quer dizer que falta concessão.
+`POLICY_DENIED` quer dizer que falta regra no arquivo de policies. `REVOKED` e
+`EXPIRED` querem dizer coisas diferentes e pedem ações diferentes.
+
+Nada disso é excesso de zelo. É a diferença entre um sistema que trabalha por
+você e um que age em seu nome sem você saber.
+
+## Referência de comandos
 
 ```bash
 regente init      # cria regente.yaml e a pasta tasks/
@@ -66,6 +315,11 @@ regente status    # o que está acontecendo, o que precisa de você
 | `repos` | repositórios visíveis, como o motor os enxerga |
 | `cadeia` | da task real ao candidato a execução, elo por elo |
 | `rules` | regras, limites e adapters em vigor |
+| `health` | as treze perguntas de saúde, respondidas do estado persistido |
+| `ui` | Mission Control: o estado do motor numa tela, no seu computador |
+| `access` | quem pode agir neste workspace, quem concedeu e quando |
+| `credentials` | credenciais de provider: endereço, capacidades, validade |
+| `mission` | seleciona uma task, mostra o briefing, opcionalmente executa |
 
 ## O primeiro tick é baseline
 
@@ -86,13 +340,13 @@ Uma linha no `regente.yaml`:
 ```yaml
 providers:
   tasks:
-    nome: filesystem     # o adapter, por nome
-    diretorio: ./tasks
+    name: filesystem     # o adapter, por nome
+    directory: ./tasks
 ```
 
 `regente rules` lista o que está disponível. Adicionar um provedor é adicionar
 uma entrada em `adapters/registry.py` — se algum dia exigir mexer em `core/` ou
-`engine/`, a abstração falhou, e `tests/test_fronteiras.py` acusa.
+`engine/`, a abstração falhou, e `tests/test_boundaries.py` acusa.
 
 ## Testes
 
