@@ -25,6 +25,10 @@ DEFAULT_CONFIG_FILE = "regente.yaml"
 #: Where a report goes when `--output` names a file and not a place.
 REPORTS_DIR = "reports"
 
+#: Said on screen and written into the report, so the two cannot disagree about
+#: whether anything actually ran.
+DRY_NOTICE = "DRY: nothing was executed. Add --run to execute."
+
 
 def _report_path(value: str) -> Path:
     """Resolve `--output`. A bare filename lands in `reports/`.
@@ -50,6 +54,21 @@ def _write_report(value: str, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def _emit_report(value: str | None, text: str) -> None:
+    """Honour `--output` when given, and say where the file landed.
+
+    One place, so that "every outcome that prints something can also save it"
+    holds by construction. `mission` used to write only on the executed path,
+    which meant `--output` on a dry run produced no file and no explanation --
+    a flag that is silently ignored is worse than one that refuses.
+    """
+    if not value:
+        return
+    written = _write_report(value, text)
+    print()
+    print(f"  written to {written}")
 
 
 def _force_utf8() -> None:
@@ -266,10 +285,7 @@ def cmd_sombra(args) -> int:
             filtro={"apenas_minhas": True} if args.mine else None,
             eu=args.eu)
         print(shadow.render(r))
-        if args.output:
-            written = _write_report(args.output, shadow.render(r))
-            print()
-            print(f"  written to {written}")
+        _emit_report(args.output, shadow.render(r))
         return 0 if not r.provider_errors else 2
     finally:
         motor.close()
@@ -322,10 +338,7 @@ def cmd_cadeia(args) -> int:
             autonomy=motor.workspace.max_autonomy, branches=branches,
             organization=cfg.organization, client=cfg.client)
         print(chain.render(rel, limit=args.limit))
-        if args.output:
-            written = _write_report(args.output, chain.render(rel, limit=200))
-            print()
-            print(f"  written to {written}")
+        _emit_report(args.output, chain.render(rel, limit=200))
         return 0
     finally:
         motor.close()
@@ -340,13 +353,23 @@ def cmd_mission(args) -> int:
             print("no repository provider configured")
             return 1
         outcome = engine.run_mission(execute=args.run, only=args.task)
+
+        # A refusal is a first-class outcome, not an error, so it is worth
+        # saving: it says which tasks were considered and why each was rejected.
         if outcome.refused:
             print(outcome.refusal)
+            _emit_report(args.output, outcome.refusal)
             return 3
-        print(outcome.briefing.render())
+
+        report = outcome.briefing.render()
+        print(report)
         if not args.run:
             print()
-            print("  DRY: nothing was executed. Add --run to execute.")
+            print(f"  {DRY_NOTICE}")
+            # The notice goes into the file too. Without it a dry report and an
+            # executed one differ only by the absence of the measurements, which
+            # is not something a reader should have to notice.
+            _emit_report(args.output, f"{report}\n\n{DRY_NOTICE}")
             return 0
         print()
         print(f"VERDICT  {outcome.verdict.value}")
@@ -355,11 +378,7 @@ def cmd_mission(args) -> int:
             print(f"  changed: {', '.join(outcome.loop.changed_files[:8])}")
         print()
         print(outcome.measurements.render())
-        if args.output:
-            report = outcome.briefing.render() + "\n\n" + outcome.measurements.render()
-            written = _write_report(args.output, report)
-            print()
-            print(f"  written to {written}")
+        _emit_report(args.output, f"{report}\n\n{outcome.measurements.render()}")
         return 0
     finally:
         engine.close()

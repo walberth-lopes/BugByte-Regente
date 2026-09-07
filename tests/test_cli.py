@@ -18,7 +18,9 @@ import dataclasses
 import os
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
+from regente import cli
 from regente.app.container import Engine
 from regente.cli import REPORTS_DIR, _report_path, _write_report
 
@@ -190,6 +192,87 @@ def test_write_report_creates_the_directory_and_reports_where(tmp_path, monkeypa
     written = _write_report("deep/nested/r.txt", "hello")
     assert written == Path("deep/nested/r.txt")
     assert (tmp_path / "deep" / "nested" / "r.txt").read_text(encoding="utf-8") == "hello"
+
+
+# ---------------------------------------------------------------------------
+# `mission --output` on every outcome, not just the executed one
+# ---------------------------------------------------------------------------
+
+class _Rendered:
+    def __init__(self, text: str):
+        self._text = text
+
+    def render(self) -> str:
+        return self._text
+
+
+def _mission_outcome(*, refused=False, executed=False):
+    """The shape `cmd_mission` reads off `Engine.run_mission`."""
+    if refused:
+        return SimpleNamespace(refused=True, refusal="REFUSED -- no safe task",
+                               briefing=None, verdict=None, loop=None,
+                               measurements=None)
+    return SimpleNamespace(
+        refused=False, refusal="",
+        briefing=_Rendered("BRIEFING for K-1"),
+        verdict=SimpleNamespace(value="GREEN") if executed else None,
+        loop=SimpleNamespace(reason="tests pass", changed_files=["a.py"]) if executed else None,
+        measurements=_Rendered("MEASUREMENTS") if executed else None,
+    )
+
+
+def _run_mission(monkeypatch, tmp_path, outcome, argv):
+    """Drive `cmd_mission` with a stubbed engine, in an empty directory."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_load_config", lambda args: SimpleNamespace())
+    monkeypatch.setattr(
+        cli.container, "build",
+        lambda cfg: SimpleNamespace(repos=object(), close=lambda: None,
+                                    run_mission=lambda execute, only: outcome))
+    return cli.main(argv)
+
+
+def test_mission_dry_run_still_honours_output(monkeypatch, tmp_path):
+    """The defect: --output was read only after the executed path, so a dry run
+    produced no file and said nothing about it."""
+    rc = _run_mission(monkeypatch, tmp_path, _mission_outcome(), ["mission", "--output", "m.txt"])
+
+    written = tmp_path / REPORTS_DIR / "m.txt"
+    assert rc == 0
+    assert written.exists(), "a dry run wrote no report"
+    body = written.read_text(encoding="utf-8")
+    assert "BRIEFING for K-1" in body
+    # Self-describing: otherwise a dry report and an executed one differ only by
+    # the absence of the measurements section.
+    assert cli.DRY_NOTICE in body
+
+
+def test_mission_refusal_is_saved_too(monkeypatch, tmp_path):
+    """A refusal is a first-class outcome, and the one worth keeping a copy of."""
+    rc = _run_mission(monkeypatch, tmp_path, _mission_outcome(refused=True),
+                      ["mission", "--output", "m.txt"])
+
+    written = tmp_path / REPORTS_DIR / "m.txt"
+    assert rc == 3
+    assert written.exists(), "a refusal wrote no report"
+    assert "REFUSED" in written.read_text(encoding="utf-8")
+
+
+def test_mission_executed_run_reports_measurements(monkeypatch, tmp_path):
+    """The path that already worked keeps working, measurements included."""
+    rc = _run_mission(monkeypatch, tmp_path, _mission_outcome(executed=True),
+                      ["mission", "--run", "--output", "m.txt"])
+
+    body = (tmp_path / REPORTS_DIR / "m.txt").read_text(encoding="utf-8")
+    assert rc == 0
+    assert "BRIEFING for K-1" in body and "MEASUREMENTS" in body
+    assert cli.DRY_NOTICE not in body
+
+
+def test_mission_writes_nothing_without_output(monkeypatch, tmp_path):
+    """Saving stays opt-in: no flag, no file."""
+    _run_mission(monkeypatch, tmp_path, _mission_outcome(), ["mission"])
+    assert not (tmp_path / REPORTS_DIR).exists()
 
 
 def test_engine_attributes_the_cli_uses_exist():
