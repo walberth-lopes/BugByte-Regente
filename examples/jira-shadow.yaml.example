@@ -6,9 +6,9 @@ autonomy: L0
 shadow: true
 
 root: .regente
-policies: ../policies/padrao.yaml
+policies: ../policies/default.yaml
 
-# Referencias que ESTE workspace pode resolver. Valor nenhum vive aqui.
+# References THIS workspace may resolve. No value ever lives here.
 secrets:
   - env:JIRA_EMAIL
   - env:JIRA_API_TOKEN
@@ -17,18 +17,18 @@ providers:
   tasks:
     name: jira
     site: https://silverguard.atlassian.net
-    # Reproduz respostas reais ja capturadas. Troque para `http` e o mesmo
-    # adapter passa a falar com o site, sem outra alteracao.
-    transporte: instantaneo
+    # Replays real responses already captured. Switch to `http` and the same
+    # adapter talks to the site, with no other change.
+    transport: snapshot
     snapshots: .regente/instantaneos/jira
     user_ref: env:JIRA_EMAIL
     token_ref: env:JIRA_API_TOKEN
     jql: 'project = SG AND statusCategory != Done ORDER BY updated DESC'
     resources_by: parent
   workspace_provider:
-    name: diretorio
+    name: directory
   runner:
-    name: roteiro
+    name: script
   notification:
     name: console
 

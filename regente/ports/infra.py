@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
-"""CloudProvider e DatabaseProvider.
+"""CloudProvider and DatabaseProvider.
 
-As duas portas mais perigosas do motor, e por isso as duas mais assimetricas:
-leitura e farta, escrita e minima. `DatabaseProvider` expoe `query_readonly()` e
-nada mais de consulta -- nao existe `execute()` na port. Um adapter que precise
-escrever no banco declara isso como acao propria, passa pelo Policy Engine e
-carrega o nivel de autonomia L4. Deixar um `execute()` generico aqui seria pedir
-que a policy adivinhasse o que uma string SQL faz.
+The two most dangerous ports in the engine, and for that reason the two most
+asymmetric ones: reading is plentiful, writing is minimal. `DatabaseProvider`
+exposes `query_readonly()` and nothing else for querying -- there is no
+`execute()` on the port. An adapter that needs to write to the database declares
+that as an action of its own, passes through the Policy Engine and carries
+autonomy level L4. Leaving a generic `execute()` here would be asking the policy
+to guess what a SQL string does.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ class Resource:
 @dataclass(frozen=True, slots=True)
 class LogEntry:
     ts: str
-    severidade: str
+    severity: str
     text: str
     source: str = ""
 
@@ -39,7 +40,7 @@ class LogEntry:
 class Metric:
     name: str
     value: float
-    unidade: str = ""
+    unit: str = ""
     ts: str = ""
 
 
@@ -53,14 +54,14 @@ class CloudProvider(Port):
     @abstractmethod
     def inspect_resource(self, resource_id: str) -> Resource: ...
 
-    def get_logs(self, resource_id: str, desde: str | None = None,
+    def get_logs(self, resource_id: str, since: str | None = None,
                  limit: int = 200) -> list[LogEntry]:
         return []
 
-    def get_metrics(self, resource_id: str, nomes: list[str] | None = None) -> list[Metric]:
+    def get_metrics(self, resource_id: str, names: list[str] | None = None) -> list[Metric]:
         return []
 
-    # ---- escrita ---------------------------------------------------------
+    # ---- writing ---------------------------------------------------------
 
     def deploy(self, resource_id: str, version: str, environment: str) -> str:
         raise NotImplementedError
@@ -73,22 +74,22 @@ class CloudProvider(Port):
 class Column:
     name: str
     kind: str
-    nulo: bool = True
+    nullable: bool = True
 
 
 @dataclass(frozen=True, slots=True)
 class Table:
     name: str
     schema: str = ""
-    colunas: tuple[Column, ...] = ()
-    linhas_aprox: int | None = None
+    columns: tuple[Column, ...] = ()
+    approx_rows: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class QueryResult:
-    colunas: tuple[str, ...]
+    columns: tuple[str, ...]
     lines: tuple[tuple[Any, ...], ...]
-    truncado: bool = False
+    truncated: bool = False
 
 
 class DatabaseProvider(Port):
@@ -102,9 +103,9 @@ class DatabaseProvider(Port):
 
     @abstractmethod
     def query_readonly(self, database: str, sql: str, limit: int = 100) -> QueryResult:
-        """Consulta sem efeito colateral.
+        """A query with no side effect.
 
-        O adapter e responsavel por garantir isso de verdade -- sessao somente
-        leitura, usuario sem GRANT de escrita, timeout. Prefixo 'SELECT' nao e
-        garantia: CTE com `INSERT ... RETURNING` tambem comeca com WITH.
+        The adapter is responsible for genuinely guaranteeing that -- read-only
+        session, a user with no write GRANT, a timeout. A 'SELECT' prefix is no
+        guarantee: a CTE with `INSERT ... RETURNING` also starts with WITH.
         """

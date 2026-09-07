@@ -1,36 +1,39 @@
 # -*- coding: utf-8 -*-
-"""Onde esta task pode ser executada? -- resolucao de repositorio alvo.
+"""Where can this task be executed? -- target repository resolution.
 
-**O achado que define este modulo:** medido contra 100 tasks e 12 repositorios
-reais em 06/09/2026, o campo natural para responder isso (`componentes`) esta
-vazio em 100 de 100. O sinal mais forte disponivel -- ja existir uma branch
-citando a chave da task -- cobre 14 de 100. Os demais sao ambiguos por natureza:
-o rotulo `scamchecker` aparece em 72 tasks e e ao mesmo tempo o nome de UM
-repositorio e o nome do produto inteiro, que tem doze.
+**The finding that defines this module:** measured against 100 real tasks and 12
+real repositories on 06/09/2026, the natural field for answering this
+(`components`) is empty in 100 out of 100. The strongest signal available -- a
+branch already existing that names the task key -- covers 14 out of 100. The rest
+are ambiguous by nature: the label `scamchecker` appears in 72 tasks and is at
+once the name of ONE repository and the name of the whole product, which has
+twelve.
 
-Ou seja: **a informacao esta faltando, nao escondida.** Nenhuma esperteza de
-casamento de texto resolve isso -- ela so troca "nao sei" por "errei com
-confianca", que e infinitamente pior num motor que vai escrever codigo.
+In other words: **the information is missing, not hidden.** No cleverness in text
+matching solves that -- it only swaps "I do not know" for "I got it wrong
+confidently", which is infinitely worse in an engine that is going to write code.
 
-Entao este modulo coleta evidencia e declara o que sabe. Ele nunca escolhe no
-empate e nunca inventa no vazio. Ambiguidade e ausencia sao desfechos legitimos,
-e viram pergunta ao humano -- que e exatamente o tipo de coisa que a fila NEEDS
-ME existe para receber.
+So this module collects evidence and declares what it knows. It never picks a
+winner in a tie and never invents something out of nothing. Ambiguity and absence
+are legitimate outcomes, and they become a question for the human -- which is
+exactly the kind of thing the NEEDS ME queue exists to receive.
 
-CONTRATO FUTURO ENTRE TaskProvider E RepositoryProvider
--------------------------------------------------------
-O que falta nao e codigo, e **dado declarado**. Em ordem de preferencia:
+FUTURE CONTRACT BETWEEN TaskProvider AND RepositoryProvider
+-----------------------------------------------------------
+What is missing is not code, it is **declared data**. In order of preference:
 
-1. O provedor de tasks passa a emitir o alvo (campo proprio, componente,
-   convencao de rotulo). E a unica source que nao envelhece, porque quem escreve
-   a task sabe onde ela roda.
-2. Enquanto isso nao existe, um mapa na configuracao do workspace
-   (`rotulo -> repo`, `projeto -> repo`) cobre o caso comum com zero adivinhacao.
-3. Um agente de analise le o codigo e propoe o alvo com evidencia -- caro, e por
-   isso ultimo, mas e o unico que resolve task nova em repositorio novo.
+1. The task provider starts emitting the target (a field of its own, a
+   component, a label convention). It is the only source that does not age,
+   because whoever writes the task knows where it runs.
+2. Until that exists, a map in the workspace configuration
+   (`label -> repo`, `project -> repo`) covers the common case with zero
+   guessing.
+3. An analysis agent reads the code and proposes the target with evidence --
+   expensive, and last for that reason, but the only one that resolves a new task
+   in a new repository.
 
-Nenhum dos tres exige mudar o Core: `ExternalTask.recursos` e `dados` ja
-carregam o resultado, venha ele de onde vier.
+None of the three requires changing the Core: `ExternalTask.resources` and
+`data` already carry the result, wherever it comes from.
 """
 
 from __future__ import annotations
@@ -44,18 +47,18 @@ from ..ports.tasks import ExternalTask
 
 
 class Confidence(str, Enum):
-    """Quanto o motor sabe sobre onde a task roda.
+    """How much the engine knows about where the task runs.
 
-    Nao existe grau intermediario inventado. Ou a evidencia e declarada por
-    alguem, ou e observada no mundo, ou nao existe.
+    There is no invented intermediate degree. Either the evidence is declared by
+    somebody, or it is observed in the world, or it does not exist.
     """
-    #: Alguem declarou explicitamente. Nao ha o que interpretar.
+    #: Somebody declared it explicitly. There is nothing to interpret.
     DECLARED = "DECLARED"
-    #: O mundo mostra trabalho ja comecado num repositorio (branch com a chave).
+    #: The world shows work already started in a repository (a branch with the key).
     OBSERVED = "OBSERVED"
-    #: Mais de um candidato com a mesma forca. O motor NAO desempata.
+    #: More than one candidate of equal strength. The engine does NOT break the tie.
     AMBIGUOUS = "AMBIGUOUS"
-    #: Nenhuma evidencia. O motor nao chuta.
+    #: No evidence at all. The engine does not guess.
     ABSENT = "ABSENT"
 
     @property
@@ -65,7 +68,7 @@ class Confidence(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class Evidence:
-    """Por que este repositorio e candidato. Sem isto, nada e auditavel."""
+    """Why this repository is a candidate. Without it, nothing is auditable."""
     source: str
     detail: str
 
@@ -74,13 +77,13 @@ class Evidence:
 class Candidate:
     repo: RepoInfo
     evidence: tuple[Evidence, ...]
-    #: Peso da evidencia mais forte que sustenta este candidato.
+    #: Weight of the strongest evidence supporting this candidate.
     strength: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class Target:
-    """O resultado da resolucao. Pode legitimamente nao ter repositorio."""
+    """The result of the resolution. It may legitimately have no repository."""
     task_key: str
     confidence: Confidence
     candidates: tuple[Candidate, ...] = ()
@@ -88,7 +91,7 @@ class Target:
 
     @property
     def repo(self) -> RepoInfo | None:
-        """O alvo, quando ha exatamente um e a evidencia sustenta."""
+        """The target, when there is exactly one and the evidence supports it."""
         if self.confidence.actionable and len(self.candidates) == 1:
             return self.candidates[0].repo
         return None
@@ -99,29 +102,29 @@ class Target:
         return r.base_branch if r else ""
 
 
-#: Pesos. `DECLARADA` supera `OBSERVADA` porque uma branch pode ser restos de uma
-#: tentativa abandonada, enquanto um mapa e uma afirmacao de quem sabe.
+#: Weights. `DECLARED` beats `OBSERVED` because a branch can be the leftovers of
+#: an abandoned attempt, whereas a map is a statement by someone who knows.
 WEIGHT_DECLARED = 100
 WEIGHT_BRANCH = 50
 
 
 @dataclass(slots=True)
 class TargetResolver:
-    """Junta evidencia declarada e observada. Nao interpreta texto livre."""
+    """Joins declared and observed evidence. It does not interpret free text."""
 
-    #: `rotulo -> chave de repo`, vindo da configuracao do workspace.
+    #: `label -> repo key`, coming from the workspace configuration.
     by_label: dict[str, str] = field(default_factory=dict)
-    #: `projeto -> chave de repo`.
+    #: `project -> repo key`.
     by_project: dict[str, str] = field(default_factory=dict)
-    #: `chave de task -> chave de repo`, para o caso pontual que nao cabe em regra.
+    #: `task key -> repo key`, for the one-off case that does not fit a rule.
     by_task: dict[str, str] = field(default_factory=dict)
 
     def resolve(self, task: ExternalTask, repos: list[RepoInfo],
                 branches: dict[str, list[Branch]] | None = None) -> Target:
         by_key = {r.ref.key: r for r in repos}
-        # Nome curto tambem resolve, para que a configuracao possa dizer
-        # `dashboard-api` em vez da chave inteira. Nome AMBIGUO entre dois
-        # repositorios nao entra no indice: seria reintroduzir o chute.
+        # A short name resolves too, so the configuration can say
+        # `dashboard-api` instead of the whole key. A name AMBIGUOUS between two
+        # repositories does not enter the index: that would reintroduce guessing.
         short_names: dict[str, list[RepoInfo]] = {}
         for r in repos:
             short_names.setdefault(r.name.lower(), []).append(r)
@@ -133,45 +136,45 @@ class TargetResolver:
         findings: dict[str, list[Evidence]] = {}
         strengths: dict[str, int] = {}
 
-        def mark(repo: RepoInfo | None, ev: Evidence, peso: int) -> None:
+        def mark(repo: RepoInfo | None, ev: Evidence, weight: int) -> None:
             if repo is None:
                 return
             findings.setdefault(repo.ref.key, []).append(ev)
-            strengths[repo.ref.key] = max(strengths.get(repo.ref.key, 0), peso)
+            strengths[repo.ref.key] = max(strengths.get(repo.ref.key, 0), weight)
 
-        # --- 1. declarado ------------------------------------------------
+        # --- 1. declared -------------------------------------------------
         if task.key in self.by_task:
             mark(find_repo(self.by_task[task.key]),
-                  Evidence("mapa:task", f"{task.key} -> {self.by_task[task.key]}"),
+                  Evidence("map:task", f"{task.key} -> {self.by_task[task.key]}"),
                   WEIGHT_DECLARED)
         for label in task.labels:
             if label in self.by_label:
                 mark(find_repo(self.by_label[label]),
-                      Evidence("mapa:rotulo", f"rotulo '{label}' -> {self.by_label[label]}"),
+                      Evidence("map:label", f"label '{label}' -> {self.by_label[label]}"),
                       WEIGHT_DECLARED)
         if task.project in self.by_project:
             mark(find_repo(self.by_project[task.project]),
-                  Evidence("mapa:projeto",
-                            f"projeto '{task.project}' -> {self.by_project[task.project]}"),
+                  Evidence("map:project",
+                            f"project '{task.project}' -> {self.by_project[task.project]}"),
                   WEIGHT_DECLARED)
 
-        # --- 2. observado no mundo ---------------------------------------
-        # Casamento por palavra inteira: `SG-11` nao pode casar com `SG-110`.
-        alvo_re = re.compile(rf"\b{re.escape(task.key.upper())}\b")
+        # --- 2. observed in the world ------------------------------------
+        # Whole-word matching: `SG-11` must not match `SG-110`.
+        target_re = re.compile(rf"\b{re.escape(task.key.upper())}\b")
         for key, items in (branches or {}).items():
             repo = by_key.get(key)
             if repo is None:
                 continue
             for b in items:
-                if alvo_re.search(b.name.upper()):
-                    mark(repo, Evidence("branch", f"'{b.name}' cita {task.key}"),
+                if target_re.search(b.name.upper()):
+                    mark(repo, Evidence("branch", f"'{b.name}' names {task.key}"),
                           WEIGHT_BRANCH)
                     break
 
         if not findings:
             return Target(task_key=task.key, confidence=Confidence.ABSENT,
-                        reason="nenhuma evidencia declarada nem observada liga esta "
-                               "task a um repositorio")
+                        reason="no declared or observed evidence links this "
+                               "task to a repository")
 
         best = max(strengths.values())
         winners = [k for k, f in strengths.items() if f == best]
@@ -182,8 +185,8 @@ class TargetResolver:
         if len(winners) > 1:
             return Target(task_key=task.key, confidence=Confidence.AMBIGUOUS,
                         candidates=candidates,
-                        reason=f"{len(winners)} repositorios com evidencia de mesma "
-                               f"forca: {', '.join(winners)}")
+                        reason=f"{len(winners)} repositories with evidence of the same "
+                               f"strength: {', '.join(winners)}")
 
         return Target(
             task_key=task.key,

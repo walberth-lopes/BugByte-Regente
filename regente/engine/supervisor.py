@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Supervisor: orcamentos, deteccao de nao-progresso e escada de recuperacao.
+"""Supervisor: budgets, non-progress detection and the recovery ladder.
 
-Falha e esperada. O que nao pode ser tolerado e **falhar sem sair do lugar**: o
-agente que reescreve o mesmo arquivo, colhe o mesmo error e tenta de novo consome
-orcamento inteiro sem produzir nada, e o motor precisa cortar isso sozinho.
+Failure is expected. What cannot be tolerated is **failing without moving**: the
+agent that rewrites the same file, harvests the same error and tries again burns
+an entire budget without producing anything, and the engine has to cut that off
+by itself.
 
-A escada de recuperacao e finita de proposito:
+The recovery ladder is deliberately finite:
 
-    falhou -> retenta (backoff) -> troca de estrategia -> escala ao humano
+    failed -> retry (backoff) -> change of strategy -> escalate to the human
 
-Cada degrau precisa ser *diferente* do anterior. Retentar identico depois de um
-error deterministico e so gastar dinheiro mais devagar -- por isso a troca de
-estrategia (outro agente, outro modelo) vem antes da segunda desistencia, e nao
-depois da quinta tentativa igual.
+Each rung has to be *different* from the previous one. Retrying identically after
+a deterministic error is just spending money more slowly -- which is why the
+change of strategy (another agent, another model) comes before the second
+give-up, and not after the fifth identical attempt.
 """
 
 from __future__ import annotations
@@ -31,105 +32,109 @@ class Budget:
     max_tool_calls: int = 120
     max_cost_usd: float = 5.0
     max_seconds: int = 2700
-    #: Tentativas por task antes de escalar. Tres degraus: original, retentativa,
-    #: estrategia alternativa.
+    #: Attempts per task before escalating. Three rungs: original, retry,
+    #: alternative strategy.
     max_attempts: int = 3
 
 
 @dataclass(frozen=True, slots=True)
 class StopVerdict:
-    """O que o supervisor manda fazer. Vocabulario fechado, nao texto livre."""
+    """What the supervisor orders. A closed vocabulary, not free text."""
     stop: bool
     reason: str = ""
-    #: 'seguir' | 'retentar' | 'trocar_estrategia' | 'escalar' | 'abortar'
-    next_action: str = "seguir"
+    #: 'follow' | 'retry' | 'change_strategy' | 'escalate' | 'abort'
+    #: A closed vocabulary the orchestrator branches on. It reaches storage
+    #: only inside free-text reasons and summaries, so renaming it needed no
+    #: migration: old rows keep the words they were written with, which is
+    #: what an append-only history is for.
+    next_action: str = "follow"
 
 
-def over_budget(run: Run, orc: Budget, when: datetime | None = None) -> StopVerdict:
+def over_budget(run: Run, budget: Budget, when: datetime | None = None) -> StopVerdict:
     ts = when or now()
-    if run.iterations > orc.max_iterations:
-        return StopVerdict(True, f"{run.iterations} iteracoes (teto {orc.max_iterations})", "escalar")
-    if run.tool_calls > orc.max_tool_calls:
-        return StopVerdict(True, f"{run.tool_calls} chamadas de tool (teto {orc.max_tool_calls})", "escalar")
-    if run.cost_usd > orc.max_cost_usd:
-        return StopVerdict(True, f"US$ {run.cost_usd:.2f} gastos (teto {orc.max_cost_usd:.2f})", "escalar")
+    if run.iterations > budget.max_iterations:
+        return StopVerdict(True, f"{run.iterations} iterations (cap {budget.max_iterations})", "escalate")
+    if run.tool_calls > budget.max_tool_calls:
+        return StopVerdict(True, f"{run.tool_calls} tool calls (cap {budget.max_tool_calls})", "escalate")
+    if run.cost_usd > budget.max_cost_usd:
+        return StopVerdict(True, f"US$ {run.cost_usd:.2f} spent (cap {budget.max_cost_usd:.2f})", "escalate")
     elapsed = (ts - run.started_at).total_seconds()
-    if elapsed > orc.max_seconds:
-        return StopVerdict(True, f"{int(elapsed)}s decorridos (teto {orc.max_seconds}s)", "trocar_estrategia")
+    if elapsed > budget.max_seconds:
+        return StopVerdict(True, f"{int(elapsed)}s elapsed (cap {budget.max_seconds}s)", "change_strategy")
     return StopVerdict(False)
 
 
 def _signature(text: str) -> str:
-    """Reduz uma mensagem a uma marca comparavel.
+    """Reduces a message to a comparable mark.
 
-    Sem isso, 'timeout apos 30.2s' e 'timeout apos 31.7s' parecem erros
-    diferentes e o detector de repeticao nunca dispara.
+    Without this, 'timeout after 30.2s' and 'timeout after 31.7s' look like
+    different errors and the repetition detector never fires.
     """
-    limpo = "".join(c for c in text.lower() if not c.isdigit())
-    return hashlib.sha1(" ".join(limpo.split()).encode("utf-8")).hexdigest()[:12]
+    cleaned = "".join(c for c in text.lower() if not c.isdigit())
+    return hashlib.sha1(" ".join(cleaned.split()).encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass(slots=True)
 class LoopDetector:
-    """Guarda marcas do que ja aconteceu neste run e acusa repeticao.
+    """Keeps marks of what already happened in this run and flags repetition.
 
-    Quatro padroes, todos com o mesmo significado -- o estado nao anda:
-    mesmo error, mesmo arquivo, mesmo teste, mesma decisao.
+    Four patterns, all with the same meaning -- the state is not moving: same
+    error, same file, same test, same decision.
     """
     limit: int = 3
-    _marcas: dict[str, int] = field(default_factory=dict)
+    _marks: dict[str, int] = field(default_factory=dict)
 
     def register(self, kind: str, detail: str) -> int:
         key = f"{kind}:{_signature(detail)}"
-        self._marcas[key] = self._marcas.get(key, 0) + 1
-        return self._marcas[key]
+        self._marks[key] = self._marks.get(key, 0) + 1
+        return self._marks[key]
 
     def repeated(self, kind: str, detail: str) -> StopVerdict:
         n = self.register(kind, detail)
         if n >= self.limit:
-            return StopVerdict(True, f"{kind} repetido {n}x sem progresso: {detail[:120]}",
-                            "trocar_estrategia")
+            return StopVerdict(True, f"{kind} repeated {n}x with no progress: {detail[:120]}",
+                            "change_strategy")
         return StopVerdict(False)
 
 
 def no_progress(task: Task, runs: list[Run], window: int = 3) -> StopVerdict:
-    """Acusa a task que consumiu varios runs e nao mudou de estado.
+    """Flags the task that burned several runs and never changed state.
 
-    Comparar estado entre runs -- e nao "o agente escreveu arquivos?" -- e o que
-    diferencia trabalho de agitacao.
+    Comparing state between runs -- and not "did the agent write files?" -- is
+    what tells work apart from agitation.
     """
     finished_runs = [r for r in runs if r.state is not RunState.RUNNING][-window:]
     if len(finished_runs) < window:
         return StopVerdict(False)
     if all(r.state in (RunState.FAILED, RunState.ABORTED) for r in finished_runs):
-        return StopVerdict(True, f"{window} execucoes seguidas sem sair de {task.state.value}", "escalar")
+        return StopVerdict(True, f"{window} consecutive runs without leaving {task.state.value}", "escalate")
     return StopVerdict(False)
 
 
-def next_recovery_step(task: Task, orc: Budget) -> str:
-    """Escada de recuperacao, baseada em quantas vezes a task ja falhou."""
+def next_recovery_step(task: Task, budget: Budget) -> str:
+    """The recovery ladder, based on how many times the task has already failed."""
     if task.attempts <= 0:
-        return "retentar"
-    if task.attempts < orc.max_attempts - 1:
-        return "trocar_estrategia"
-    return "escalar"
+        return "retry"
+    if task.attempts < budget.max_attempts - 1:
+        return "change_strategy"
+    return "escalate"
 
 
-def backoff_delay(attempts: int, base_segundos: int = 60, teto_segundos: int = 1800) -> timedelta:
-    """Exponencial com teto. O teto existe para que uma task nao suma por horas."""
-    return timedelta(seconds=min(teto_segundos, base_segundos * (2 ** max(0, attempts))))
+def backoff_delay(attempts: int, base_seconds: int = 60, cap_seconds: int = 1800) -> timedelta:
+    """Exponential with a cap. The cap exists so a task does not vanish for hours."""
+    return timedelta(seconds=min(cap_seconds, base_seconds * (2 ** max(0, attempts))))
 
 
 def resume_state(state: TaskState) -> TaskState:
-    """Para onde vai a task cujo worker morreu.
+    """Where the task whose worker died goes.
 
-    Sempre READY -- e READY e o unico estado do qual o scheduler despacha. Manter
-    a task no estado ativo para "preservar o progresso" nao preserva nada: o
-    progresso vive na area de trabalho e na branch, nao no rotulo do estado, e a
-    task fica viva no papel e parada de verdade.
+    Always READY -- and READY is the only state the scheduler dispatches from.
+    Keeping the task in an active state to "preserve the progress" preserves
+    nothing: the progress lives in the work area and in the branch, not in the
+    state label, and the task ends up alive on paper and stopped in practice.
 
-    O que preserva o trabalho parcial e a area ser enderecada pela task, e nao
-    pelo run: a proxima tentativa reabre a mesma arvore, com os commits WIP.
+    What preserves the partial work is the area being addressed by the task and
+    not by the run: the next attempt reopens the same tree, with the WIP commits.
     """
     if state in ACTIVE:
         return TaskState.READY

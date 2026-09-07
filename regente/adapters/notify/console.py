@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Notificacao no terminal e no arquivo de bordo.
+"""Notification to the terminal and to the logbook file.
 
-O arquivo importa mais do que parece: notificacao de terminal se perde quando
-ninguem esta olhando, e a fila NEEDS ME existe justamente para os momentos em que
-o dono nao esta olhando. O jornal e o que sobrevive.
+The file matters more than it looks: a terminal notification is lost when nobody
+is watching, and the NEEDS ME queue exists precisely for the moments when the
+owner is not watching. The journal is what survives.
 """
 
 from __future__ import annotations
@@ -23,17 +23,17 @@ class Console(NotificationProvider):
 
     def notify(self, title: str, body: str, urgency: str = "normal",
                link: str | None = None) -> None:
-        mark = {"alta": "!!", "normal": " *", "baixa": "  "}.get(urgency, " *")
-        linha = f"{mark} {title} -- {body}"
-        # `errors='replace'` porque o console do Windows nao e UTF-8 por padrao
-        # e um titulo com acento nao pode derrubar o tick.
+        mark = {"high": "!!", "normal": " *", "low": "  "}.get(urgency, " *")
+        line = f"{mark} {title} -- {body}"
+        # `errors='replace'` because the Windows console is not UTF-8 by default
+        # and a title with an accent must not bring the tick down.
         try:
-            print(linha, file=sys.stderr)
+            print(line, file=sys.stderr)
         except UnicodeEncodeError:
-            print(linha.encode("ascii", "replace").decode("ascii"), file=sys.stderr)
+            print(line.encode("ascii", "replace").decode("ascii"), file=sys.stderr)
         if self.journal:
-            carimbo = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             self.journal.parent.mkdir(parents=True, exist_ok=True)
             with self.journal.open("a", encoding="utf-8") as f:
-                f.write(f"{carimbo} | {urgency} | {title} | {body}"
+                f.write(f"{stamp} | {urgency} | {title} | {body}"
                         + (f" | {link}" if link else "") + "\n")

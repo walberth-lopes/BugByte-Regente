@@ -257,7 +257,7 @@ class Soak:
             risk=risk, clock=self.clock,
             limits=Limits(max_workers=3,
                           max_dispatches_per_day=self.max_dispatches),
-            notificador=Console(journal=self.root / "journal.log"),
+            notifier=Console(journal=self.root / "journal.log"),
             lease_seconds=self.lease_seconds)
         return self
 
@@ -333,7 +333,7 @@ class Soak:
             self.report.violations.append(f"tick {number}: {problem}")
         return metrics
 
-    def decide_everything(self, choice: str = "investigar",
+    def decide_everything(self, choice: str = "investigate",
                           who: str = "soak-operator") -> int:
         """Stand in for the person at the other end of the queue.
 
@@ -349,10 +349,10 @@ class Soak:
             # cancel, so those routes are exercised too rather than assumed.
             pick = choice
             if decided and decided % 7 == 0:
-                pick = "bloquear"
+                pick = "block"
             elif decided and decided % 11 == 0:
-                pick = "cancelar"
-            self.store.decide_approval(approval.id, pick, per=who,
+                pick = "cancel"
+            self.store.decide_approval(approval.id, pick, by=who,
                                        note="decided by the soak harness")
             decided += 1
         return decided

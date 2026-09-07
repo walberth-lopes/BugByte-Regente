@@ -1,24 +1,25 @@
 # -*- coding: utf-8 -*-
-"""Policy Engine: quem pode fazer o que, e onde.
+"""Policy Engine: who may do what, and where.
 
-Tres invariantes. Nenhuma delas e configuravel, porque sao elas que fazem o
-portao ser portao:
+Three invariants. None of them is configurable, because they are what makes the
+gate a gate:
 
-1. **Default deny.** Acao sem regra que a permita e negada. O contrario --
-   permitir o que ninguem previu -- transforma cada capacidade nova em brecha
-   silenciosa no dia em que um adapter novo entra.
+1. **Default deny.** An action with no rule allowing it is denied. The opposite
+   -- allowing whatever nobody anticipated -- turns every new capability into a
+   silent hole the day a new adapter arrives.
 
-2. **Vence o mais restritivo.** Se qualquer regra diz DENY, o veredito e DENY,
-   independentemente de quantas dizem ALLOW. Ordem de arquivo nao decide
-   seguranca; nem prioridade numerica, que sempre acaba mal configurada.
+2. **The most restrictive wins.** If any rule says DENY, the verdict is DENY, no
+   matter how many say ALLOW. File order does not decide security; neither does
+   a numeric priority, which always ends up misconfigured.
 
-3. **O motor decide, nao o modelo.** `decide()` e funcao pura de (contexto,
-   regras). Nao recebe texto do agente, nao chama LLM e nao aceita justificativa.
-   Um agente convencido por um comentario de PR ainda esbarra aqui.
+3. **The engine decides, not the model.** `decide()` is a pure function of
+   (context, rules). It takes no text from the agent, calls no LLM and accepts
+   no justification. An agent talked round by a PR comment still hits this wall.
 
-O teto de autonomia e ortogonal as regras: ele exprime "ate onde este projeto
-deixa o motor ir sozinho". Estourar o teto vira HUMAN_APPROVAL -- e nao DENY --
-porque o humano continua podendo autorizar. Quem nega de vez e a regra escrita.
+The autonomy ceiling is orthogonal to the rules: it expresses "how far this
+project lets the engine go on its own". Breaching the ceiling becomes
+HUMAN_APPROVAL -- not DENY -- because the human can still authorise it. What
+refuses outright is the written rule.
 """
 
 from __future__ import annotations
@@ -31,23 +32,23 @@ from typing import Any
 
 class AutonomyLevel(IntEnum):
     L0 = 0   # READ_ONLY
-    L1 = 1   # CODE       -- escreve no workspace isolado
-    L2 = 2   # PR         -- push e pull request
-    L3 = 3   # STAGING    -- merge e deploy em staging
-    L4 = 4   # PRODUCTION -- deploy em producao
+    L1 = 1   # CODE       -- writes in the isolated workspace
+    L2 = 2   # PR         -- push and pull request
+    L3 = 3   # STAGING    -- merge and deploy to staging
+    L4 = 4   # PRODUCTION -- deploy to production
 
     @classmethod
     def from_text(cls, value: str | int) -> AutonomyLevel:
         if isinstance(value, int):
             return cls(value)
         t = str(value).strip().upper()
-        apelidos = {
+        aliases = {
             "READ_ONLY": cls.L0, "READONLY": cls.L0,
             "CODE": cls.L1, "PR": cls.L2,
             "STAGING": cls.L3, "PRODUCTION": cls.L4, "PROD": cls.L4,
         }
-        if t in apelidos:
-            return apelidos[t]
+        if t in aliases:
+            return aliases[t]
         return cls[t]
 
 
@@ -57,12 +58,12 @@ class Effect(str):
     HUMAN_APPROVAL = "HUMAN_APPROVAL"
 
 
-#: Ordem de severidade. Usada para "vence o mais restritivo".
-_SEVERIDADE = {Effect.ALLOW: 0, Effect.HUMAN_APPROVAL: 1, Effect.DENY: 2}
+#: Severity order. Used for "the most restrictive wins".
+_SEVERITY = {Effect.ALLOW: 0, Effect.HUMAN_APPROVAL: 1, Effect.DENY: 2}
 
 
-#: Nivel minimo de autonomia que cada familia de acao exige. Chave e prefixo da
-#: acao, casada do mais especifico para o mais generico.
+#: Minimum autonomy level each action family requires. The key is the action
+#: prefix, matched from the most specific to the most generic.
 REQUIRED_LEVEL: dict[str, AutonomyLevel] = {
     "repo.read": AutonomyLevel.L0,
     "task.read": AutonomyLevel.L0,
@@ -100,16 +101,16 @@ REQUIRED_LEVEL: dict[str, AutonomyLevel] = {
 
 @dataclass(frozen=True, slots=True)
 class Action:
-    """O que um agente quer fazer no mundo.
+    """What an agent wants to do in the world.
 
-    `kind` e sempre `<capacidade>.<verbo>` -- 'repo.merge', 'deploy.production'.
-    O formato nao e estilo: e o que permite a policy raciocinar sobre familias de
-    acao sem conhecer nenhum adapter.
+    `kind` is always `<capability>.<verb>` -- 'repo.merge', 'deploy.production'.
+    The format is not style: it is what lets the policy reason about families of
+    actions without knowing any adapter.
     """
     kind: str
     resource: str = "*"
     environment: str = "local"
-    detalhes: dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,10 +146,10 @@ class Rule:
     reason: str = ""
 
     def matches(self, ctx: dict[str, str]) -> bool:
-        """Todo criterio declarado precisa casar. Criterio ausente e curinga."""
-        for field, esperado in self.match.items():
+        """Every declared criterion must match. An absent criterion is a wildcard."""
+        for field, expected in self.match.items():
             value = ctx.get(field, "")
-            patterns = esperado if isinstance(esperado, (list, tuple)) else [esperado]
+            patterns = expected if isinstance(expected, (list, tuple)) else [expected]
             if not any(_matches_one(value, str(p)) for p in patterns):
                 return False
         return True
@@ -168,9 +169,9 @@ class Decision:
     effect: str
     reason: str
     rule: str | None = None
-    #: Todas as regras que casaram, na ordem em que foram avaliadas. O dono
-    #: precisa ver por que uma acao foi barrada mesmo quando outra regra a
-    #: liberava -- sem isso, afrouxar uma policy vira tentativa e error.
+    #: Every rule that matched, in the order they were evaluated. The owner has
+    #: to see why an action was blocked even when another rule allowed it --
+    #: without that, loosening a policy turns into trial and error.
     matched: tuple[str, ...] = ()
 
     @property
@@ -183,67 +184,68 @@ class Decision:
 
 
 def required_level(kind: str) -> AutonomyLevel:
-    """Casa do prefixo mais especifico para o mais generico.
+    """Matches from the most specific prefix to the most generic one.
 
-    Acao desconhecida cai no teto maximo de proposito: capacidade nova nasce
-    exigindo o nivel mais alto, e alguem precisa baixa-la conscientemente.
+    An unknown action falls to the maximum ceiling on purpose: a new capability
+    is born demanding the highest level, and somebody has to lower it
+    deliberately.
     """
     best: AutonomyLevel | None = None
-    tamanho = -1
-    for prefixo, level in REQUIRED_LEVEL.items():
-        if (kind == prefixo or kind.startswith(prefixo + ".")) and len(prefixo) > tamanho:
-            best, tamanho = level, len(prefixo)
+    longest = -1
+    for prefix, level in REQUIRED_LEVEL.items():
+        if (kind == prefix or kind.startswith(prefix + ".")) and len(prefix) > longest:
+            best, longest = level, len(prefix)
     return best if best is not None else AutonomyLevel.L4
 
 
 @dataclass(slots=True)
 class PolicyEngine:
-    regras: tuple[Rule, ...] = ()
+    rules: tuple[Rule, ...] = ()
 
     @classmethod
-    def from_config(cls, brutas: list[dict[str, Any]] | None) -> PolicyEngine:
-        regras = []
-        for i, b in enumerate(brutas or []):
+    def from_config(cls, raw: list[dict[str, Any]] | None) -> PolicyEngine:
+        rules = []
+        for i, b in enumerate(raw or []):
             effect = str(b["effect"]).strip().upper()
-            if effect not in _SEVERIDADE:
-                raise ValueError(f"efeito desconhecido em policy: {effect!r}")
-            regras.append(Rule(
-                name=b.get("name") or f"regra_{i}",
+            if effect not in _SEVERITY:
+                raise ValueError(f"unknown effect in policy: {effect!r}")
+            rules.append(Rule(
+                name=b.get("name") or f"rule_{i}",
                 effect=effect,
                 match={k: v for k, v in (b.get("match") or {}).items()},
                 reason=b.get("reason", ""),
             ))
-        return cls(regras=tuple(regras))
+        return cls(rules=tuple(rules))
 
     def decide(self, ctx: PolicyContext) -> Decision:
         plan = ctx.as_dict()
-        matched = [r for r in self.regras if r.matches(plan)]
+        matched = [r for r in self.rules if r.matches(plan)]
 
         if not matched:
             return Decision(
                 effect=Effect.DENY,
-                reason=f"nenhuma regra permite '{ctx.action.kind}' em '{ctx.action.resource}'",
+                reason=f"no rule allows '{ctx.action.kind}' on '{ctx.action.resource}'",
                 matched=(),
             )
 
-        # Invariante 2: vence o mais restritivo, nao a primeira nem a ultima.
-        winner = max(matched, key=lambda r: _SEVERIDADE[r.effect])
-        nomes = tuple(r.name for r in matched)
+        # Invariant 2: the most restrictive wins, not the first nor the last.
+        winner = max(matched, key=lambda r: _SEVERITY[r.effect])
+        names = tuple(r.name for r in matched)
 
-        # Teto de autonomia so aperta: nunca transforma DENY em ALLOW.
-        exigido = required_level(ctx.action.kind)
-        if winner.effect == Effect.ALLOW and ctx.autonomy < exigido:
+        # The autonomy ceiling only tightens: it never turns DENY into ALLOW.
+        required = required_level(ctx.action.kind)
+        if winner.effect == Effect.ALLOW and ctx.autonomy < required:
             return Decision(
                 effect=Effect.HUMAN_APPROVAL,
-                reason=(f"'{ctx.action.kind}' exige autonomia {exigido.name} e "
-                        f"este escopo vai ate {ctx.autonomy.name}"),
-                rule="teto_de_autonomia",
-                matched=nomes,
+                reason=(f"'{ctx.action.kind}' requires autonomy {required.name} and "
+                        f"this scope only goes up to {ctx.autonomy.name}"),
+                rule="autonomy_ceiling",
+                matched=names,
             )
 
         return Decision(
             effect=winner.effect,
-            reason=winner.reason or f"regra '{winner.name}'",
+            reason=winner.reason or f"rule '{winner.name}'",
             rule=winner.name,
-            matched=nomes,
+            matched=names,
         )

@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Portas: as capacidades que o Core Engine conhece.
+"""Ports: the capabilities the Core Engine knows about.
 
-Regra que define a arquitetura inteira: **estas interfaces sao orientadas a
-capacidade, nunca a ferramenta.** `TaskProvider.transition()` existe porque todo
-sistema de trabalho tem estados; `jira_transition_id` nao existe em lugar nenhum
-daqui. Um nome de fornecedor nesta pasta e bug, e o teste de fronteira falha.
+The rule that defines the whole architecture: **these interfaces are oriented
+towards capability, never towards a tool.** `TaskProvider.transition()` exists
+because every work system has states; `jira_transition_id` appears nowhere in
+here. A provider name in this folder is a bug, and the boundary test fails.
 
-Falha de adapter nunca vira ausencia. Toda port levanta `AdapterErro` quando a
-operacao nao pode ser cumprida -- e proibido devolver lista vazia para dizer
-"nao consegui perguntar". Confundir as duas coisas ja custou tabelas com milhoes
-de linhas declaradas inexistentes.
+An adapter failure never becomes an absence. Every port raises `AdapterError`
+when the operation cannot be carried out -- returning an empty list to say "I
+could not ask" is forbidden. Confusing the two has already cost tables with
+millions of rows being declared non-existent.
 """
 
 from __future__ import annotations
@@ -20,11 +20,11 @@ from ..core.errors import RegenteError
 
 
 class AdapterError(RegenteError):
-    """A operacao nao pode ser cumprida. NAO significa 'nao existe'."""
+    """The operation could not be carried out. It does NOT mean 'does not exist'."""
 
 
 class ReadOnlyRefused(AdapterError):
-    """Adapter montado em modo leitura recusou uma escrita."""
+    """An adapter mounted in read-only mode refused a write."""
 
 
 class Capability(str, Enum):
@@ -43,19 +43,19 @@ class Capability(str, Enum):
 
 
 class Port:
-    """Base comum. Todo adapter se identifica e declara o que sabe fazer."""
+    """Common base. Every adapter identifies itself and declares what it can do."""
 
     capability: Capability
-    #: Nome do adapter no registro, ex.: 'jira', 'github', 'filesystem'.
-    name: str = "desconhecido"
+    #: Adapter name in the registry, e.g. 'jira', 'github', 'filesystem'.
+    name: str = "unknown"
 
     def describe(self) -> dict[str, str]:
         return {"capability": self.capability.value, "adapter": self.name}
 
     def verify(self) -> None:
-        """Prova que o adapter funciona de verdade. Usado por `regente doctor`.
+        """Proves the adapter genuinely works. Used by `regente doctor`.
 
-        Existe para que um error de credencial apareca no diagnostico, e nao no
-        meio de um despacho.
+        It exists so that a credential error shows up in the diagnosis, and not
+        in the middle of a dispatch.
         """
         return None

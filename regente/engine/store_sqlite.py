@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
-"""Store em SQLite. Unico modulo do motor que fala SQL.
+"""SQLite Store. The only module in the engine that speaks SQL.
 
-Escolhas que nao sao detalhe:
+Choices that are not incidental:
 
-- **WAL + `BEGIN IMMEDIATE`.** Um tick pode rodar enquanto a UI le. WAL permite
-  isso; `IMMEDIATE` na escrita garante que duas transicoes concorrentes da mesma
-  task nao se sobreponham -- e a transicao e onde um despacho duplicado nasce.
-- **Datas em texto ISO-8601 UTC.** SQLite nao tem kind de data. Guardar epoch
-  economiza nada e torna o banco ilegivel num momento em que ler o banco a mao e
-  exatamente o que se precisa fazer.
-- **`estado` guardado como texto do Enum.** Migrar um Enum e trivial; migrar um
-  inteiro cujo significado mudou e um day perdido.
-- **Evento nunca e apagado nem editado.** Estado e projecao; evento e o que
-  aconteceu. `recupera()` reconstroi a partir dos dois.
+- **WAL + `BEGIN IMMEDIATE`.** A tick may run while the UI reads. WAL allows
+  that; `IMMEDIATE` on writes guarantees that two concurrent transitions of the
+  same task do not overlap -- and the transition is where a duplicate dispatch
+  is born.
+- **Dates as ISO-8601 UTC text.** SQLite has no date type. Storing an epoch saves
+  nothing and makes the database unreadable at exactly the moment when reading it
+  by hand is what you need to do.
+- **`state` stored as the Enum's text.** Migrating an Enum is trivial; migrating
+  an integer whose meaning changed is a lost day.
+- **An event is never deleted or edited.** State is a projection; the event is
+  what happened. Recovery (`Orchestrator._recover`) rebuilds from the two.
 """
 
 from __future__ import annotations
@@ -57,12 +58,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   resources TEXT NOT NULL DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   data TEXT NOT NULL DEFAULT '{}');
--- Identidade externa e unica por workspace: o mesmo FAXINA-183 em dois clientes
--- sao duas tasks distintas, e nunca podem colidir.
-CREATE UNIQUE INDEX IF NOT EXISTS ix_tasks_externa
+-- The external identity is unique PER WORKSPACE: the same FAXINA-183 in two
+-- clients is two distinct tasks, and they can never collide.
+CREATE UNIQUE INDEX IF NOT EXISTS ix_tasks_external
   ON tasks(workspace_id, provider, external_key)
   WHERE provider IS NOT NULL;
-CREATE INDEX IF NOT EXISTS ix_tasks_estado ON tasks(workspace_id, state);
+CREATE INDEX IF NOT EXISTS ix_tasks_state ON tasks(workspace_id, state);
 
 CREATE TABLE IF NOT EXISTS deps (
   task_id TEXT NOT NULL, depends_on TEXT NOT NULL,
@@ -103,14 +104,14 @@ CREATE TABLE IF NOT EXISTS approvals (
   attempts TEXT NOT NULL DEFAULT '[]', options TEXT NOT NULL DEFAULT '[]',
   recommendation TEXT, created_at TEXT NOT NULL, decided_at TEXT,
   decided_by TEXT, choice TEXT, note TEXT NOT NULL DEFAULT '');
-CREATE INDEX IF NOT EXISTS ix_approvals_abertos ON approvals(workspace_id, state);
+CREATE INDEX IF NOT EXISTS ix_approvals_open ON approvals(workspace_id, state);
 
--- A trava e (workspace, resource), nunca so o recurso.
+-- The lock is (workspace, resource), never the resource alone.
 --
--- Dois clientes com um repositorio de MESMO NOME sao dois repositorios. Com o
--- resource nu como key, um cliente atrasaria o outro: conservador o bastante
--- para nunca corromper nada, e errado o bastante para ninguem descobrir por que
--- o motor do cliente B fica parado quando o cliente A trabalha.
+-- Two clients with a repository of the SAME NAME have two repositories. With
+-- the bare resource as the key, one client would hold up the other:
+-- conservative enough never to corrupt anything, and wrong enough that nobody
+-- would work out why client B's engine sits still while client A works.
 CREATE TABLE IF NOT EXISTS leases (
   workspace_id TEXT NOT NULL, resource TEXT NOT NULL, owner TEXT NOT NULL,
   expires_at TEXT NOT NULL, renewed_at TEXT NOT NULL,
@@ -149,22 +150,22 @@ CREATE TABLE IF NOT EXISTS counters (
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
-    """Lease deixa de ser global por key e passa a ser (workspace, resource).
+    """A lease stops being global per key and becomes (workspace, resource).
 
-    A tabela e recriada em vez de alterada: `ALTER TABLE` do SQLite nao muda
-    key primaria, e um lease e state EFEMERO por definicao -- ele expira
-    sozinho. O pior caso desta migracao e um worker vivo perder a trava, e esse
-    caso ja tem tratamento: o lease vence, a recuperacao devolve a task a fila e
-    o proximo tick retoma. Preservar linhas aqui daria trabalho para salvar dado
-    que o motor foi desenhado para descartar.
+    The table is recreated rather than altered: SQLite's `ALTER TABLE` does not
+    change a primary key, and a lease is EPHEMERAL state by definition -- it
+    expires on its own. The worst case of this migration is a live worker losing
+    its lock, and that case is already handled: the lease expires, recovery
+    returns the task to the queue and the next tick resumes. Preserving rows here
+    would be work spent saving data the engine was designed to discard.
     """
-    # `execute`, nunca `executescript`: este ultimo faz COMMIT implicito e
-    # mataria a transacao da migracao no meio, deixando o banco entre duas
-    # versoes -- o unico state que a escada existe para impedir.
+    # `execute`, never `executescript`: the latter does an implicit COMMIT and
+    # would kill the migration's transaction halfway through, leaving the
+    # database between two versions -- the one state the ladder exists to prevent.
     c.execute("DROP TABLE IF EXISTS leases")
     c.execute("""CREATE TABLE leases (
                    workspace_id TEXT NOT NULL, resource TEXT NOT NULL,
@@ -173,11 +174,11 @@ def _v1_to_v2(c: sqlite3.Connection) -> None:
                    PRIMARY KEY (workspace_id, resource))""")
 
 
-#: Escada de migracao: versao de source_state -> como chegar na proxima.
+#: Migration ladder: source_state version -> how to reach the next one.
 #:
-#: Existe porque a alternativa e pedir ao owner que apague o banco -- e o banco e
-#: exatamente onde vive o state que o motor promete nao perder. Um bump de
-#: esquema sem migracao transforma a promessa em pegadinha.
+#: It exists because the alternative is asking the owner to delete the database
+#: -- and the database is exactly where the state the engine promises not to lose
+#: lives. A schema bump without a migration turns that promise into a trap.
 def _v2_to_v3(c: sqlite3.Connection) -> None:
     """Column and table names go to en-US, project-wide.
 
@@ -192,8 +193,8 @@ def _v2_to_v3(c: sqlite3.Connection) -> None:
     def columns(table: str) -> set[str]:
         return {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
 
-    # `meta` primeiro: e nele que a propria versao do esquema esta guardada, e
-    # o resto da migracao precisa consegui-la ler.
+    # `meta` first: it is where the schema version itself is stored, and the
+    # rest of the migration needs to be able to read it.
     if has_table("meta") and "chave" in columns("meta"):
         c.execute('ALTER TABLE meta RENAME COLUMN "chave" TO "key"')
     if has_table("meta") and "valor" in columns("meta"):
@@ -237,12 +238,12 @@ def _v2_to_v3(c: sqlite3.Connection) -> None:
                    "expira_em": "expires_at", "renovado_em": "renewed_at"},
         "counters": {"dia": "day", "nome": "name", "valor": "value"},
     }
-    for table, mapa in renames.items():
+    for table, column_map in renames.items():
         if not has_table(table):
             continue
-        atuais = columns(table)
-        for old, new in mapa.items():
-            if old in atuais and new not in atuais:
+        existing = columns(table)
+        for old, new in column_map.items():
+            if old in existing and new not in existing:
                 c.execute(f'ALTER TABLE {table} RENAME COLUMN "{old}" TO "{new}"')
 
 
@@ -305,12 +306,118 @@ def _v5_to_v6(c: sqlite3.Connection) -> None:
     c.execute("DELETE FROM counters WHERE name='despachos'")
 
 
+def _v6_to_v7(c: sqlite3.Connection) -> None:
+    """Stored VALUES go to en-US, the way `_v2_to_v3` did for column names.
+
+    `_v2_to_v3` translated the schema and stopped there, so rows kept saying
+    `descoberta` and `situacao_externa` under English column names. This
+    finishes the job for the three places a Portuguese value was persisted:
+    event kinds, the JSON keys inside `tasks.data`, and the approval choice.
+
+    Rewritten in Python rather than SQL because `tasks.data` is a JSON blob and
+    SQLite's json1 is not guaranteed present in every build this has to run on.
+
+    The three pt-BR index names are dropped here rather than renamed; the schema
+    recreates them in en-US, so a migrated database does not end up carrying
+    both spellings.
+    """
+    for old in ("ix_tasks_externa", "ix_tasks_estado", "ix_approvals_abertos"):
+        c.execute(f"DROP INDEX IF EXISTS {old}")   # recreated in en-US by the schema
+
+    for old, new in _EVENT_KINDS.items():
+        c.execute("UPDATE events SET kind=? WHERE kind=?", (new, old))
+
+    for old, new in _APPROVAL_CHOICES.items():
+        c.execute("UPDATE approvals SET choice=? WHERE choice=?", (new, old))
+        c.execute("UPDATE approvals SET recommendation=? WHERE recommendation=?",
+                  (new, old))
+
+    rows = c.execute("SELECT id, data FROM tasks").fetchall()
+    for task_id, blob in rows:
+        try:
+            data = json.loads(blob or "{}")
+        except ValueError:
+            continue                      # unreadable blob: leave it, do not lose it
+        if not isinstance(data, dict):
+            continue
+        moved = False
+        for old, new in _TASK_DATA_KEYS.items():
+            if old in data and new not in data:
+                data[new] = data.pop(old)
+                moved = True
+        if data.get("blocked_by") == "origem":
+            data["blocked_by"] = "source"
+            moved = True
+        status = data.get("normalised_status")
+        if status in _EXTERNAL_STATUS:
+            data["normalised_status"] = _EXTERNAL_STATUS[status]
+            moved = True
+        if moved:
+            c.execute("UPDATE tasks SET data=? WHERE id=?",
+                      (json.dumps(data, ensure_ascii=False), task_id))
+
+    # Event payloads carry keys too. `changed_at_source` wrote `de`/`to_state`
+    # -- half-translated, so the pair no longer reads as a pair.
+    rows = c.execute("SELECT id, data FROM events").fetchall()
+    for event_id, blob in rows:
+        try:
+            data = json.loads(blob or "{}")
+        except ValueError:
+            continue                      # unreadable blob: leave it, do not lose it
+        if not isinstance(data, dict):
+            continue
+        moved = False
+        for old, new in _EVENT_DATA_KEYS.items():
+            if old in data and new not in data:
+                data[new] = data.pop(old)
+                moved = True
+        if moved:
+            c.execute("UPDATE events SET data=? WHERE id=?",
+                      (json.dumps(data, ensure_ascii=False), event_id))
+
+
+#: The pt-BR values `_v6_to_v7` rewrites. Kept as data so the migration and this
+#: file's writers cannot drift apart.
+_EVENT_KINDS = {
+    "descoberta": "discovered", "despachada": "dispatched", "transicao": "transition",
+    "escalou": "escalated", "decisao_humana": "human_decision",
+    "decisao_aplicada": "decision_applied",
+    "recuperada": "recovered", "adiada": "deferred", "falhou": "failed",
+    "implementada": "implemented", "mudou_na_origem": "changed_at_source",
+    "tick_inicio": "tick_start", "tick_fim": "tick_end",
+    "chamada_provedor": "provider_call",
+}
+_APPROVAL_CHOICES = {
+    "seguir": "follow", "investigar": "investigate",
+    "bloquear": "block", "cancelar": "cancel",
+}
+_EVENT_DATA_KEYS = {
+    "de": "from_state",
+}
+_TASK_DATA_KEYS = {
+    "situacao_externa": "normalised_status", "estado_externo": "raw_status",
+    "rotulos": "labels", "bloqueada_por": "blocked_by",
+    # Written by the adapters and by the risk assessment, not by the store.
+    "arquivo": "file", "sinais": "signals",
+    "tipo": "issue_type", "subtarefa": "subtask",
+    "categoria_status": "status_category", "atualizada_em": "updated_at",
+    "prioridade_externa": "external_priority",
+}
+_EXTERNAL_STATUS = {
+    "NAO_INICIADA": "NOT_STARTED", "EM_ANALISE": "IN_ANALYSIS",
+    "EM_EXECUCAO": "IN_PROGRESS", "EM_REVISAO": "IN_REVIEW",
+    "EM_VALIDACAO": "IN_VALIDATION", "CONCLUIDA": "COMPLETED",
+    "CANCELADA": "CANCELLED", "DESCONHECIDA": "UNKNOWN",
+}
+
+
 MIGRATIONS: dict[str, tuple[str, Any]] = {
     "1": ("2", _v1_to_v2),
     "2": ("3", _v2_to_v3),
     "3": ("4", _v3_to_v4),
     "4": ("5", _v4_to_v5),
     "5": ("6", _v5_to_v6),
+    "6": ("7", _v6_to_v7),
 }
 
 
@@ -347,26 +454,26 @@ class SqliteStore(Store):
         self._now = clock
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._con = sqlite3.connect(str(self.path), isolation_level=None,
+        self._conn = sqlite3.connect(str(self.path), isolation_level=None,
                                     check_same_thread=False)
-        self._con.row_factory = sqlite3.Row
-        self._con.execute("PRAGMA journal_mode=WAL")
-        self._con.execute("PRAGMA synchronous=NORMAL")
-        self._con.execute("PRAGMA foreign_keys=ON")
-        self._con.execute("PRAGMA busy_timeout=5000")
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA busy_timeout=5000")
 
     def close(self) -> None:
-        self._con.close()
+        self._conn.close()
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
-        self._con.execute("BEGIN IMMEDIATE")
+        self._conn.execute("BEGIN IMMEDIATE")
         try:
-            yield self._con
+            yield self._conn
         except Exception:
-            self._con.execute("ROLLBACK")
+            self._conn.execute("ROLLBACK")
             raise
-        self._con.execute("COMMIT")
+        self._conn.execute("COMMIT")
 
     # ---- esquema ---------------------------------------------------------
 
@@ -378,7 +485,7 @@ class SqliteStore(Store):
         would fail. The DDL is idempotent (`IF NOT EXISTS`), which makes running
         it loose safe; the version record comes after, inside a transaction.
         """
-        self._con.executescript(SCHEMA)
+        self._conn.executescript(SCHEMA)
         with self._tx() as c:
             # `meta` may predate the vocabulary standardisation, in which case
             # `CREATE TABLE IF NOT EXISTS` left the old column names in place and
@@ -390,6 +497,9 @@ class SqliteStore(Store):
                 row = c.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
                 found = row["value"] if row else None
             elif "valor" in cols:
+                # pt-BR on purpose, and the last of it: a pre-v3 database really
+                # does have `chave`/`valor` columns and a row keyed 'esquema'.
+                # Translating this is how you stop being able to read old state.
                 row = c.execute("SELECT valor FROM meta WHERE chave='esquema'").fetchone()
                 found = row[0] if row else None
             else:
@@ -422,9 +532,9 @@ class SqliteStore(Store):
                   (SCHEMA_VERSION,))
 
     def verify(self) -> None:
-        linha = self._con.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
-        if linha is None:
-            raise CorruptedState("banco sem versao de esquema: rode `regente init`")
+        line = self._conn.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
+        if line is None:
+            raise CorruptedState("database with no schema version: run `regente init`")
 
     # ---- tenancy ---------------------------------------------------------
 
@@ -442,12 +552,12 @@ class SqliteStore(Store):
                          max_autonomy=AutonomyLevel(r["autonomy"]), root=r["root"])
 
     def workspace(self, workspace_id: str) -> Workspace | None:
-        r = self._con.execute("SELECT * FROM workspaces WHERE id=?", (workspace_id,)).fetchone()
+        r = self._conn.execute("SELECT * FROM workspaces WHERE id=?", (workspace_id,)).fetchone()
         return self._workspace_row(r) if r else None
 
     def workspaces(self) -> list[Workspace]:
         return [self._workspace_row(r) for r in
-                self._con.execute("SELECT * FROM workspaces ORDER BY name")]
+                self._conn.execute("SELECT * FROM workspaces ORDER BY name")]
 
     def save_project(self, p: Project) -> None:
         with self._tx() as c:
@@ -463,7 +573,7 @@ class SqliteStore(Store):
                         default_environment=r["default_environment"],
                         max_autonomy=(AutonomyLevel(r["autonomy"])
                                           if r["autonomy"] is not None else None))
-                for r in self._con.execute(
+                for r in self._conn.execute(
                     "SELECT * FROM projects WHERE workspace_id=? ORDER BY name", (workspace_id,))]
 
     def save_repository(self, r: Repository) -> None:
@@ -477,11 +587,11 @@ class SqliteStore(Store):
     # ---- tasks -----------------------------------------------------------
 
     def _task_row(self, r: sqlite3.Row) -> Task:
-        externo = (ExternalRef(provider=r["provider"], key=r["external_key"], url=r["url"])
+        external = (ExternalRef(provider=r["provider"], key=r["external_key"], url=r["url"])
                    if r["provider"] else None)
         return Task(
             id=r["id"], workspace_id=r["workspace_id"], project_id=r["project_id"],
-            title=r["title"], state=TaskState(r["state"]), externo=externo,
+            title=r["title"], state=TaskState(r["state"]), external=external,
             description=r["description"], priority=r["priority"],
             risk=RiskLevel[r["risk"]] if r["risk"] else None,
             paused_at=TaskState(r["paused_at"]) if r["paused_at"] else None,
@@ -505,45 +615,45 @@ class SqliteStore(Store):
                        resources=excluded.resources, attempts=excluded.attempts,
                        updated_at=excluded.updated_at, data=excluded.data""",
                   (t.id, t.workspace_id, t.project_id, t.title, t.state.value, t.description,
-                   t.externo.provider if t.externo else None,
-                   t.externo.key if t.externo else None,
-                   t.externo.url if t.externo else None,
+                   t.external.provider if t.external else None,
+                   t.external.key if t.external else None,
+                   t.external.url if t.external else None,
                    t.priority, t.risk.name if t.risk else None,
                    t.paused_at.value if t.paused_at else None,
                    _j(list(t.resources)), t.attempts,
                    _iso(t.created_at), _iso(t.updated_at), _j(t.data)))
 
     def task(self, task_id: str) -> Task | None:
-        r = self._con.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        r = self._conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
         return self._task_row(r) if r else None
 
     def task_by_key(self, workspace_id: str, provider: str, key: str) -> Task | None:
-        r = self._con.execute(
+        r = self._conn.execute(
             "SELECT * FROM tasks WHERE workspace_id=? AND provider=? AND external_key=?",
             (workspace_id, provider, key)).fetchone()
         return self._task_row(r) if r else None
 
-    def tasks(self, workspace_id: str, estados: list[TaskState] | None = None) -> list[Task]:
-        if estados:
-            marks = ",".join("?" * len(estados))
+    def tasks(self, workspace_id: str, states: list[TaskState] | None = None) -> list[Task]:
+        if states:
+            marks = ",".join("?" * len(states))
             q = f"SELECT * FROM tasks WHERE workspace_id=? AND state IN ({marks})"
-            args = [workspace_id] + [e.value for e in estados]
+            args = [workspace_id] + [e.value for e in states]
         else:
             q, args = "SELECT * FROM tasks WHERE workspace_id=?", [workspace_id]
         q += " ORDER BY priority, external_key, id"
-        return [self._task_row(r) for r in self._con.execute(q, args)]
+        return [self._task_row(r) for r in self._conn.execute(q, args)]
 
     def transition(self, task_id: str, destination: TaskState, actor: str,
                     reason: str = "", data: dict | None = None) -> Task:
-        """Le, valida, grava e anota -- numa transacao so.
+        """Reads, validates, writes and records -- all in one transaction.
 
-        Ler dentro da transacao (e nao antes) e o que impede dois ticks
-        concorrentes de partirem do mesmo state e ambos despacharem.
+        Reading inside the transaction (and not before) is what stops two
+        concurrent ticks from starting off the same state and both dispatching.
         """
         with self._tx() as c:
             r = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
             if r is None:
-                raise CorruptedState(f"task {task_id} nao existe")
+                raise CorruptedState(f"task {task_id} does not exist")
             t = self._task_row(r)
             source = t.state
             require(source, destination, t.paused_at)
@@ -555,7 +665,7 @@ class SqliteStore(Store):
 
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, actor, summary, data)
                          VALUES(?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), t.workspace_id, _iso(self._now()), "transicao",
+                      (ids.new_id(ids.EVENT), t.workspace_id, _iso(self._now()), "transition",
                        t.id, actor, f"{source.value} -> {destination.value}",
                        _j({"from": source.value, "to": destination.value,
                            "reason": reason, **(data or {})})))
@@ -571,7 +681,7 @@ class SqliteStore(Store):
     def dependencies(self, workspace_id: str) -> list[Dependency]:
         return [Dependency(task_id=r["task_id"], depends_on=r["depends_on"],
                            kind=r["kind"], reason=r["reason"])
-                for r in self._con.execute(
+                for r in self._conn.execute(
                     """SELECT d.* FROM deps d JOIN tasks t ON t.id = d.task_id
                        WHERE t.workspace_id=?""", (workspace_id,))]
 
@@ -604,16 +714,16 @@ class SqliteStore(Store):
                        _j(r.data)))
 
     def run(self, run_id: str) -> Run | None:
-        r = self._con.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        r = self._conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
         return self._run_row(r) if r else None
 
     def active_runs(self, workspace_id: str) -> list[Run]:
-        return [self._run_row(r) for r in self._con.execute(
+        return [self._run_row(r) for r in self._conn.execute(
             "SELECT * FROM runs WHERE workspace_id=? AND state=? ORDER BY started_at",
             (workspace_id, RunState.RUNNING.value))]
 
     def task_runs(self, task_id: str) -> list[Run]:
-        return [self._run_row(r) for r in self._con.execute(
+        return [self._run_row(r) for r in self._conn.execute(
             "SELECT * FROM runs WHERE task_id=? ORDER BY started_at", (task_id,))]
 
     # ---- trilha ----------------------------------------------------------
@@ -636,7 +746,7 @@ class SqliteStore(Store):
         return [Event(id=r["id"], workspace_id=r["workspace_id"], kind=r["kind"],
                       ts=_dt(r["ts"]), task_id=r["task_id"], run_id=r["run_id"],
                       actor=r["actor"], summary=r["summary"], data=json.loads(r["data"]))
-                for r in self._con.execute(q, args)]
+                for r in self._conn.execute(q, args)]
 
     def record_action(self, a: ActionRecord) -> None:
         with self._tx() as c:
@@ -654,7 +764,7 @@ class SqliteStore(Store):
                              run_id=r["run_id"], rule=r["rule"], reason=r["reason"],
                              result=r["result"], duration_ms=r["duration_ms"],
                              cost_usd=r["cost_usd"], tokens=r["tokens"])
-                for r in self._con.execute(
+                for r in self._conn.execute(
                     "SELECT * FROM actions WHERE workspace_id=? ORDER BY ts DESC LIMIT ?",
                     (workspace_id, limit))]
 
@@ -682,74 +792,74 @@ class SqliteStore(Store):
                        a.recommendation, _iso(a.created_at)))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(self._now()), "escalou",
+                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(self._now()), "escalated",
                        a.task_id, a.run_id, "engine", a.what_happened,
                        _j({"approval_id": a.id, "risk": a.risk.name})))
 
     def open_approvals(self, workspace_id: str) -> list[Approval]:
-        return [self._approval_row(r) for r in self._con.execute(
+        return [self._approval_row(r) for r in self._conn.execute(
             "SELECT * FROM approvals WHERE workspace_id=? AND state=? ORDER BY risk DESC, created_at",
             (workspace_id, ApprovalState.OPEN.value))]
 
     def approval(self, approval_id: str) -> Approval | None:
-        r = self._con.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
+        r = self._conn.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
         return self._approval_row(r) if r else None
 
-    def decide_approval(self, approval_id: str, choice: str, per: str, note: str = "") -> Approval:
+    def decide_approval(self, approval_id: str, choice: str, by: str, note: str = "") -> Approval:
         with self._tx() as c:
             r = c.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
             if r is None:
-                raise CorruptedState(f"approval {approval_id} nao existe")
+                raise CorruptedState(f"approval {approval_id} does not exist")
             a = self._approval_row(r)
             if a.state is not ApprovalState.OPEN:
-                raise CorruptedState(f"approval {approval_id} ja foi decidido")
+                raise CorruptedState(f"approval {approval_id} has already been decided")
             valid = {o.id for o in a.options}
             if valid and choice not in valid:
                 raise CorruptedState(
                     f"choice '{choice}' is not among the options: {', '.join(sorted(valid))}")
-            a.state, a.choice, a.decided_by = ApprovalState.DECIDED, choice, per
+            a.state, a.choice, a.decided_by = ApprovalState.DECIDED, choice, by
             a.decided_at, a.note = self._now(), note
             c.execute("""UPDATE approvals SET state=?, choice=?, decided_by=?,
                            decided_at=?, note=? WHERE id=?""",
-                      (a.state.value, choice, per, _iso(a.decided_at), note, approval_id))
+                      (a.state.value, choice, by, _iso(a.decided_at), note, approval_id))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(self._now()), "decisao_humana",
-                       a.task_id, a.run_id, per, f"escolheu '{choice}'",
+                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(self._now()), "human_decision",
+                       a.task_id, a.run_id, by, f"chose '{choice}'",
                        _j({"approval_id": approval_id, "note": note})))
         return a
 
     # ---- leases ----------------------------------------------------------
 
     def acquire_lease(self, resource: str, owner: str, workspace_id: str,
-                      segundos: int, when: datetime | None = None) -> Lease | None:
-        """Concede se livre, vencido, ou ja do mesmo owner (renovacao).
+                      seconds: int, when: datetime | None = None) -> Lease | None:
+        """Grants if free, expired, or already held by the same owner (renewal).
 
-        `when` existe porque a recuperacao depende de lease vencido, e quem
-        pergunta "o que venceu?" precisa usar o MESMO relogio de quem carimbou o
-        vencimento. Sem isso os dois relogios divergem e nenhum lease vence
-        nunca: uma corrida longa deixou um run RUNNING com lease "vivo" por 103
-        ticks seguidos, quatro dias simulados, sem que nada acusasse.
+        `when` exists because recovery depends on an expired lease, and whoever
+        asks "what expired?" has to read the SAME clock as whoever stamped the
+        expiry. Without it the two clocks drift apart and no lease ever expires:
+        one long run left a RUNNING run holding a "live" lease for 103
+        consecutive ticks -- four simulated days -- with nothing to show it.
         """
         ts = when or self._now()
-        expira = ts + timedelta(seconds=segundos)
+        expires = ts + timedelta(seconds=seconds)
         with self._tx() as c:
             r = c.execute("SELECT * FROM leases WHERE workspace_id=? AND resource=?",
                           (workspace_id, resource)).fetchone()
             if r is not None:
-                vivo = _dt(r["expires_at"]) > ts
-                if vivo and r["owner"] != owner:
+                alive = _dt(r["expires_at"]) > ts
+                if alive and r["owner"] != owner:
                     return None
             c.execute("""INSERT INTO leases(workspace_id, resource, owner, expires_at, renewed_at)
                          VALUES(?,?,?,?,?)
                          ON CONFLICT(workspace_id, resource) DO UPDATE SET
                            owner=excluded.owner, expires_at=excluded.expires_at,
                            renewed_at=excluded.renewed_at""",
-                      (workspace_id, resource, owner, _iso(expira), _iso(ts)))
-        return Lease(resource=resource, owner=owner, expires_at=expira,
+                      (workspace_id, resource, owner, _iso(expires), _iso(ts)))
+        return Lease(resource=resource, owner=owner, expires_at=expires,
                      workspace_id=workspace_id, renewed_at=ts)
 
-    def renew_lease(self, resource: str, owner: str, segundos: int,
+    def renew_lease(self, resource: str, owner: str, seconds: int,
                      workspace_id: str | None = None,
                      when: datetime | None = None) -> bool:
         ts = when or self._now()
@@ -757,14 +867,14 @@ class SqliteStore(Store):
             if workspace_id:
                 cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
                                    WHERE workspace_id=? AND resource=? AND owner=?""",
-                                (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
+                                (_iso(ts + timedelta(seconds=seconds)), _iso(ts),
                                  workspace_id, resource, owner))
             else:
-                # Sem workspace, o owner do lease e o filtro. `dono` e um id de run,
-                # que ja e unico -- entao isto continua seguro, so menos explicito.
+                # With no workspace, the lease's owner is the filter. `owner` is a
+                # run id, already unique -- so this stays safe, just less explicit.
                 cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
                                    WHERE resource=? AND owner=?""",
-                                (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
+                                (_iso(ts + timedelta(seconds=seconds)), _iso(ts),
                                  resource, owner))
             return cur.rowcount > 0
 
@@ -780,7 +890,7 @@ class SqliteStore(Store):
         ts = when or self._now()
         return [Lease(resource=r["resource"], owner=r["owner"], expires_at=_dt(r["expires_at"]),
                       workspace_id=r["workspace_id"], renewed_at=_dt(r["renewed_at"]))
-                for r in self._con.execute(
+                for r in self._conn.execute(
                     "SELECT * FROM leases WHERE workspace_id=? AND expires_at < ?",
                     (workspace_id, _iso(ts)))]
 
@@ -854,7 +964,7 @@ class SqliteStore(Store):
                  "discovered_at": r["discovered_at"],
                  "confirmed_at": r["confirmed_at"],
                  "confirmations": r["confirmations"]}
-                for r in self._con.execute(q + " ORDER BY task_key", args)]
+                for r in self._conn.execute(q + " ORDER BY task_key", args)]
 
     # ---- deliveries: task -> run -> commit -> push -> PR -> CI ---------
 
@@ -913,7 +1023,7 @@ class SqliteStore(Store):
             q += " AND task_key=?"
             args.append(task_key)
         return [self._delivery(r)
-                for r in self._con.execute(q + " ORDER BY created_at DESC", args)]
+                for r in self._conn.execute(q + " ORDER BY created_at DESC", args)]
 
     def delivery_for_pr(self, workspace_id: str, provider: str, repo_key: str,
                         number: int) -> dict | None:
@@ -923,7 +1033,7 @@ class SqliteStore(Store):
         name, and a lookup that ignored tenancy would answer about the wrong
         one -- confidently.
         """
-        r = self._con.execute(
+        r = self._conn.execute(
             """SELECT * FROM deliveries WHERE workspace_id=? AND repo_provider=?
                  AND repo_key=? AND pr_number=?""",
             (workspace_id, provider, repo_key, int(number))).fetchone()
@@ -947,13 +1057,13 @@ class SqliteStore(Store):
         return [Lease(resource=r["resource"], owner=r["owner"],
                       expires_at=_dt(r["expires_at"]),
                       workspace_id=r["workspace_id"], renewed_at=_dt(r["renewed_at"]))
-                for r in self._con.execute(
+                for r in self._conn.execute(
                     "SELECT * FROM leases WHERE workspace_id=? ORDER BY expires_at",
                     (workspace_id,))]
 
     def runs_in_state(self, workspace_id: str, state: str,
                       limit: int = 500) -> list[Run]:
-        return [self._run_row(r) for r in self._con.execute(
+        return [self._run_row(r) for r in self._conn.execute(
             """SELECT * FROM runs WHERE workspace_id=? AND state=?
                ORDER BY started_at DESC LIMIT ?""",
             (workspace_id, state, limit))]
@@ -965,7 +1075,7 @@ class SqliteStore(Store):
         `updated_at` is written by every transition, so this measures how long a
         task has actually sat still -- not how long ago it was created.
         """
-        rows = self._con.execute(
+        rows = self._conn.execute(
             """SELECT * FROM tasks WHERE workspace_id=? AND updated_at < ?
                ORDER BY updated_at""",
             (workspace_id, _iso(before))).fetchall()
@@ -985,26 +1095,26 @@ class SqliteStore(Store):
         if until is not None:
             q += " AND ts < ?"
             args.append(_iso(until))
-        return {r["kind"]: r["n"] for r in self._con.execute(q + " GROUP BY kind",
+        return {r["kind"]: r["n"] for r in self._conn.execute(q + " GROUP BY kind",
                                                             args)}
 
     def table_counts(self, workspace_id: str | None = None) -> dict[str, int]:
         """Row counts per table, for growth. Scoped where a table has tenancy."""
         counts: dict[str, int] = {}
-        present = {r[0] for r in self._con.execute(
+        present = {r[0] for r in self._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         scoped = ("tasks", "runs", "events", "leases", "approvals", "actions",
                   "deliveries", "targets", "counters")
         for table in scoped:
             if table not in present:
                 continue
-            columns = {r[1] for r in self._con.execute(f"PRAGMA table_info({table})")}
+            columns = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
             if workspace_id and "workspace_id" in columns:
-                row = self._con.execute(
+                row = self._conn.execute(
                     f"SELECT COUNT(*) AS n FROM {table} WHERE workspace_id=?",
                     (workspace_id,)).fetchone()
             else:
-                row = self._con.execute(
+                row = self._conn.execute(
                     f"SELECT COUNT(*) AS n FROM {table}").fetchone()
             counts[table] = row["n"]
         return counts
@@ -1040,7 +1150,7 @@ class SqliteStore(Store):
         """
         before = self.database_bytes()
         try:
-            self._con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         except sqlite3.OperationalError:
             # A reader elsewhere can block a truncating checkpoint. That is not
             # an error: the log stays, and the next attempt will do it.
@@ -1059,20 +1169,20 @@ class SqliteStore(Store):
         a second copy of that fact -- free to drift, and it would drift towards
         applying a decision twice.
         """
-        return [self._approval_row(r) for r in self._con.execute(
+        return [self._approval_row(r) for r in self._conn.execute(
             """SELECT * FROM approvals WHERE workspace_id=? AND state=?
                ORDER BY decided_at DESC LIMIT ?""",
             (workspace_id, ApprovalState.DECIDED.value, limit))]
 
     def oldest_open_approval(self, workspace_id: str) -> datetime | None:
-        row = self._con.execute(
+        row = self._conn.execute(
             """SELECT MIN(created_at) AS oldest FROM approvals
                WHERE workspace_id=? AND state=?""",
             (workspace_id, ApprovalState.OPEN.value)).fetchone()
         return _dt(row["oldest"]) if row and row["oldest"] else None
 
     def dispatch_count(self, workspace_id: str, day: str) -> int:
-        r = self._con.execute(
+        r = self._conn.execute(
             "SELECT value FROM counters WHERE workspace_id=? AND day=? AND name='dispatches'",
             (workspace_id, day)).fetchone()
         return r["value"] if r else 0

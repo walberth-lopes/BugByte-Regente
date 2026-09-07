@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""WorkspaceProvider: onde o worker vive, e o que ele pode fazer la dentro."""
+"""WorkspaceProvider: where the worker lives, and what it may do in there."""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ from . import Capability, Port
 
 @dataclass(frozen=True, slots=True)
 class WorkArea:
-    """A area isolada de um worker.
+    """A worker's isolated area.
 
-    Um worker nunca escreve na area de outro. O isolamento e do provedor --
-    worktree, container, VM -- e o motor so precisa do caminho e do identificador
-    para conseguir limpar depois de um crash.
+    A worker never writes into another one's area. The isolation belongs to the
+    provider -- worktree, container, VM -- and the engine only needs the path
+    and the identifier to be able to clean up after a crash.
     """
     id: str
     path: str
@@ -31,20 +31,20 @@ class WorkspaceProvider(Port):
     @abstractmethod
     def prepare(self, key: str, repo: str | None = None,
                 branch: str | None = None, base: str | None = None) -> WorkArea:
-        """`chave` identifica a UNIDADE DE TRABALHO, nao a tentativa.
+        """`key` identifies the UNIT OF WORK, not the attempt.
 
-        Chamar duas vezes com a mesma chave devolve a mesma area, com o que ja
-        estava la. E isso que faz uma retomada apos crash reencontrar os commits
-        WIP em vez de recomecar do zero -- endereca-la pelo run jogaria fora
-        exatamente o trabalho que a recuperacao existe para salvar.
+        Calling it twice with the same key returns the same area, with whatever
+        was already there. That is what lets a resume after a crash find the WIP
+        commits again instead of starting from scratch -- addressing it by run
+        would throw away exactly the work recovery exists to save.
         """
 
     @abstractmethod
     def discard(self, area: WorkArea) -> None:
-        """Solta a area. Precisa ser seguro chamar em area ja perdida.
+        """Releases the area. Must be safe to call on an area already lost.
 
-        Limpeza acontece depois de crash, quando o processo que criou a area nao
-        existe mais -- entao 'ja nao esta la' e success, nao error.
+        Cleanup happens after a crash, when the process that created the area no
+        longer exists -- so 'it is not there any more' is success, not an error.
         """
 
     def list_areas(self) -> list[WorkArea]:

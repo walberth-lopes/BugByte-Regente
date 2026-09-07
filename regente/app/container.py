@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Raiz de composicao: configuracao -> motor montado.
+"""Composition root: configuration -> assembled engine.
 
-Este e o unico modulo que conhece ao mesmo tempo a configuracao, o registro de
-adapters e o Orchestrator. Todo o resto recebe suas dependencias prontas -- e por
-isso o Core Engine nunca precisa saber de onde elas vieram.
+This is the only module that knows the configuration, the adapter registry and
+the Orchestrator at the same time. Everything else receives its dependencies
+ready-made -- which is why the Core Engine never needs to know where they came
+from.
 """
 
 from __future__ import annotations
@@ -33,15 +34,24 @@ from ..ports.workspace import WorkspaceProvider
 from .config import Config, load_policies
 
 
-def _stable_id(prefixo: str, *partes: str) -> str:
-    """Id deterministico a partir do nome.
+#: Frozen on purpose, and the last pt-BR string in this file. It is the seed for
+#: the default project's stable id, so it is baked into every database already
+#: written. Translating it would mint a different id and orphan the tasks
+#: pointing at the old one. The project's *name* is free to be English; the seed
+#: is not.
+_DEFAULT_PROJECT_SEED = "padrao"
 
-    Reabrir o mesmo workspace precisa devolver o mesmo id, senao cada `regente
-    tick` cria um workspace novo e o estado anterior fica orfao no banco.
+
+def _stable_id(prefix: str, *parts: str) -> str:
+    """A deterministic id derived from the name.
+
+    Reopening the same workspace has to return the same id; otherwise every
+    `regente tick` creates a new workspace and the previous state is orphaned in
+    the database.
     """
     import hashlib
-    mark = hashlib.sha1("/".join(partes).encode("utf-8")).hexdigest()[:12]
-    return f"{prefixo}_{mark}"
+    mark = hashlib.sha1("/".join(parts).encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}_{mark}"
 
 
 @dataclass(slots=True)
@@ -51,7 +61,7 @@ class Engine:
     workspace: Workspace
     orchestrator: Orchestrator
     gate: Gate
-    #: Opcional: um workspace pode governar tasks sem governar codigo.
+    #: Optional: a workspace may govern tasks without governing code.
     repos: RepositoryProvider | None = None
     areas: object | None = None
     agent: object | None = None
@@ -161,7 +171,7 @@ class Engine:
 
 def build(cfg: Config) -> Engine:
     cfg.root.mkdir(parents=True, exist_ok=True)
-    store = SqliteStore(cfg.banco)
+    store = SqliteStore(cfg.database)
     store.migrate()
 
     org_id = _stable_id(ids.ORG, cfg.organization)
@@ -179,20 +189,21 @@ def build(cfg: Config) -> Engine:
             name=pr.name, default_environment=pr.default_environment,
             max_autonomy=pr.autonomy))
     project_id = (_stable_id(ids.PROJECT, ws.id, projects[0].name)
-                  if projects else _stable_id(ids.PROJECT, ws.id, "padrao"))
+                  if projects else _stable_id(ids.PROJECT, ws.id, _DEFAULT_PROJECT_SEED))
     if not projects:
-        store.save_project(Project(id=project_id, workspace_id=ws.id, name="padrao"))
+        store.save_project(Project(id=project_id, workspace_id=ws.id, name="default"))
 
-    # Segredos sao escopados ao workspace ANTES de qualquer adapter existir:
-    # nenhum adapter recebe um resolver que alcance outro cliente.
+    # Secrets are scoped to the workspace BEFORE any adapter exists: no adapter
+    # receives a resolver that reaches another client.
     secrets = registry.create(Capability.SECRETS, "scoped",
                              {"allowed": cfg.secrets, "workspace": ws.name})
 
-    # Observador: toda call a provedor externo vira evento, com tenancy.
-    # O adapter nao conhece o Store -- ele avisa, e quem escuta e o motor.
+    # Observer: every call to an external provider becomes an event, with
+    # tenancy. The adapter does not know the Store -- it announces, and the one
+    # listening is the engine.
     def observe(call) -> None:
         store.record_event(Event(
-            id=ids.new_id(ids.EVENT), workspace_id=ws.id, kind="chamada_provedor",
+            id=ids.new_id(ids.EVENT), workspace_id=ws.id, kind="provider_call",
             actor=cfg.providers["tasks"].name,
             summary=(f"{call.operation} {call.path} "
                     f"{'ok' if call.success else 'FALHOU'} {call.duration_ms}ms"),
@@ -219,9 +230,9 @@ def build(cfg: Config) -> Engine:
     areas: WorkspaceProvider = create(Capability.WORKSPACE, "workspace_provider",
                                     {"root": str(cfg.areas)})
     runner: AgentRunner = create(Capability.RUNNER, "runner")
-    notificador: NotificationProvider | None = None
+    notifier: NotificationProvider | None = None
     if "notification" in cfg.providers:
-        notificador = create(Capability.NOTIFICATION, "notification", {"journal": str(cfg.journal)})
+        notifier = create(Capability.NOTIFICATION, "notification", {"journal": str(cfg.journal)})
 
     # Writing to the hosted provider is a SEPARATE adapter from reading it.
     # Not configured means not possible: there is no flag that turns the read
@@ -239,10 +250,10 @@ def build(cfg: Config) -> Engine:
     risk = RiskEngine.from_config(list(cfg.risk_factors))
     gate = Gate(store=store, policy=policy, risk=risk)
 
-    orq = Orchestrator(
+    orch = Orchestrator(
         store=store, workspace=ws, tasks_provider=tasks, area_provider=areas,
         runner=runner, gate=gate, risk=risk, limits=cfg.limits,
-        budget=cfg.budget, notificador=notificador, project_id=project_id,
+        budget=cfg.budget, notifier=notifier, project_id=project_id,
         lease_seconds=cfg.lease_seconds)
 
     resolver = TargetResolver(
@@ -255,13 +266,13 @@ def build(cfg: Config) -> Engine:
         policy=policy, autonomy=cfg.autonomy,
         environment=(projects[0].default_environment if projects else "staging"))
 
-    return Engine(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate,
+    return Engine(config=cfg, store=store, workspace=ws, orchestrator=orch, gate=gate,
                   repos=repos, resolver=resolver, policy=policy, risk=risk,
                   areas=areas, agent=runner, delivery=delivery)
 
 
 def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
-    """Checagens do `regente doctor`. Cada aposta provada, nenhuma suposta."""
+    """The `regente doctor` checks. Every bet proved, none assumed."""
     output: list[tuple[str, bool, str]] = []
 
     def expect_prefix(name: str, fn) -> None:
@@ -270,15 +281,15 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
         except Exception as e:
             output.append((name, False, f"{type(e).__name__}: {e}"[:200]))
 
-    expect_prefix("raiz de estado", lambda: (cfg.root.mkdir(parents=True, exist_ok=True), str(cfg.root))[1])
+    expect_prefix("state root", lambda: (cfg.root.mkdir(parents=True, exist_ok=True), str(cfg.root))[1])
 
-    def banco() -> str:
-        s = SqliteStore(cfg.banco)
+    def database() -> str:
+        s = SqliteStore(cfg.database)
         s.migrate()
         s.verify()
         s.close()
-        return str(cfg.banco)
-    expect_prefix("banco", banco)
+        return str(cfg.database)
+    expect_prefix("database", database)
 
     for key, cap in (("tasks", Capability.TASKS),
                        ("repository", Capability.REPOSITORY),
@@ -289,7 +300,7 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
             continue
         conf = cfg.providers[key]
 
-        def prova(cap=cap, conf=conf, key=key) -> str:
+        def proof(cap=cap, conf=conf, key=key) -> str:
             extras: dict = {}
             if cap is Capability.WORKSPACE:
                 extras = {"root": str(cfg.areas)}
@@ -303,15 +314,15 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
             port = registry.create(cap, conf.name, {**conf.options, **extras})
             port.verify()
             return conf.name
-        expect_prefix(f"provider {key}", prova)
+        expect_prefix(f"provider {key}", proof)
 
-    expect_prefix("policies", lambda: f"{len(load_policies(cfg.policies))} regra(s)")
+    expect_prefix("policies", lambda: f"{len(load_policies(cfg.policies))} rule(s)")
 
-    # Seis eixos, um por linha. Reportar "falta a variavel X" seria conselho
-    # errado para quem autentica o agente de outra forma -- e a maioria dos
-    # clientes autentica de outra forma.
+    # Six axes, one per line. Reporting "variable X is missing" would be the
+    # wrong advice for anyone who authenticates the agent some other way -- and
+    # most clients authenticate some other way.
     if "runner" in cfg.providers:
-        def prontidao() -> str:
+        def agent_readiness() -> str:
             conf = cfg.providers["runner"]
             agent = registry.create(Capability.RUNNER, conf.name, {
                 **conf.options,
@@ -328,7 +339,7 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
                 return f"READY ({state.auth_mode.value})"
             raise AdapterError(
                 f"{state.readiness.value} -- {state.blocking_reason()}")
-        expect_prefix("prontidao do agente", prontidao)
+        expect_prefix("agent readiness", agent_readiness)
 
-    output.append(("modo", True, "sombra" if cfg.shadow else "VALENDO"))
+    output.append(("mode", True, "shadow" if cfg.shadow else "LIVE"))
     return output

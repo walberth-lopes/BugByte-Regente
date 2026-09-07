@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-"""O dominio. Nenhum tipo aqui sabe o que e Jira, GitHub, GCloud ou SQLite.
+"""The domain. No type here knows what Jira, GitHub, GCloud or SQLite are.
 
-Duas escolhas estruturais que sustentam o resto do motor:
+Two structural choices that hold up the rest of the engine:
 
-**A espinha de multi-tenancy esta em todo objeto que persiste.** Organization ->
-Client -> Workspace -> Project -> Repository nao e hierarquia decorativa: cada
-Task, Run e Event carrega `workspace_id`. Enfiar tenancy depois exige migrar
-todas as tabelas e revisar toda consulta -- e a consulta esquecida e justamente a
-que vaza dado do cliente A para o cliente B.
+**The multi-tenancy spine is in every object that persists.** Organization ->
+Client -> Workspace -> Project -> Repository is not a decorative hierarchy: every
+Task, Run and Event carries a `workspace_id`. Bolting tenancy on later means
+migrating every table and reviewing every query -- and the forgotten query is
+precisely the one that leaks client A's data to client B.
 
-**`ExternalRef` separa o id do motor do id do fornecedor.** A task existe no
-motor mesmo que o fornecedor mude de ferramenta; e a mesma task pode ser vista
-por dois provedores diferentes (a issue no Jira, o PR no GitHub) sem duplicar.
+**`ExternalRef` separates the engine's id from the provider's id.** The task
+exists in the engine even if the provider changes tool; and the same task can be
+seen by two different providers (the Jira issue, the GitHub PR) without
+duplication.
 """
 
 from __future__ import annotations
@@ -27,12 +28,12 @@ from .states import TaskState
 
 
 def now() -> datetime:
-    """UTC, sempre. Horario local so aparece na superficie de apresentacao."""
+    """UTC, always. Local time only ever appears at the presentation surface."""
     return datetime.now(timezone.utc)
 
 
 # --------------------------------------------------------------------------
-# Espinha de tenancy
+# Tenancy spine
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
@@ -50,10 +51,11 @@ class Client:
 
 @dataclass(frozen=True, slots=True)
 class Workspace:
-    """A unidade de configuracao: um conjunto de adapters, policies e limites.
+    """The unit of configuration: a set of adapters, policies and limits.
 
-    E o workspace -- nao o projeto -- que carrega credencial e autonomia, porque
-    e nele que a fronteira entre clientes precisa ser inviolavel.
+    It is the workspace -- not the project -- that carries credentials and
+    autonomy, because the workspace is where the boundary between clients has to
+    be inviolable.
     """
     id: str
     client_id: str
@@ -68,7 +70,7 @@ class Project:
     workspace_id: str
     name: str
     default_environment: str = "staging"
-    max_autonomy: AutonomyLevel | None = None  # None = herda do workspace
+    max_autonomy: AutonomyLevel | None = None  # None = inherits from the workspace
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,14 +83,14 @@ class Repository:
 
 
 # --------------------------------------------------------------------------
-# Trabalho
+# Work
 # --------------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
 class ExternalRef:
-    """De onde a task veio, no vocabulario de quem a emitiu."""
-    provider: str          # nome do adapter, ex.: "filesystem", "jira"
-    key: str               # chave no fornecedor, ex.: "FAXINA-183"
+    """Where the task came from, in the vocabulary of whoever issued it."""
+    provider: str          # adapter name, e.g. "filesystem", "jira"
+    key: str               # key at the provider, e.g. "FAXINA-183"
     url: str | None = None
 
 
@@ -99,15 +101,15 @@ class Task:
     project_id: str
     title: str
     state: TaskState = TaskState.DISCOVERED
-    externo: ExternalRef | None = None
+    external: ExternalRef | None = None
     description: str = ""
-    priority: int = 100                       # menor roda antes
+    priority: int = 100                       # lower runs first
     risk: RiskLevel | None = None
-    #: Estado em que a task estava quando pausou para decisao humana.
+    #: The state the task was in when it paused for a human decision.
     paused_at: TaskState | None = None
-    #: Chaves de recurso que esta task toca em exclusividade. O scheduler usa
-    #: isto para NAO paralelizar dois workers sobre a mesma migration ou o mesmo
-    #: arquivo. Ex.: "repo:acme/api", "migration:acme/api", "file:src/auth.py".
+    #: Resource keys this task touches exclusively. The scheduler uses this to
+    #: NOT parallelise two workers over the same migration or the same file.
+    #: E.g. "repo:acme/api", "migration:acme/api", "file:src/auth.py".
     resources: tuple[str, ...] = ()
     attempts: int = 0
     created_at: datetime = field(default_factory=now)
@@ -116,15 +118,15 @@ class Task:
 
     @property
     def key(self) -> str:
-        """Como a task aparece para um humano."""
-        return self.externo.key if self.externo else self.id
+        """How the task appears to a human."""
+        return self.external.key if self.external else self.id
 
 
 @dataclass(frozen=True, slots=True)
 class Dependency:
     task_id: str
     depends_on: str
-    kind: str = "blocks"     # blocks | subtask | conflito
+    kind: str = "blocks"     # blocks | subtask | conflict
     reason: str = ""
 
 
@@ -132,17 +134,17 @@ class RunState(str, Enum):
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
-    INTERRUPTED = "INTERRUPTED"   # worker morreu; lease venceu
-    ABORTED = "ABORTED"           # o motor parou de proposito (loop, orcamento)
+    INTERRUPTED = "INTERRUPTED"   # the worker died; the lease expired
+    ABORTED = "ABORTED"           # the engine stopped on purpose (loop, budget)
 
 
 @dataclass(slots=True)
 class Run:
-    """Uma tentativa de execucao de uma task por um agente.
+    """One attempt at executing a task by an agent.
 
-    Task tem estado de longo prazo; Run tem estado de tentativa. Separar os dois
-    e o que permite retentar sem perder o historico -- e o que faz "o worker
-    morreu" ser diferente de "a task falhou".
+    A Task has long-term state; a Run has attempt state. Separating the two is
+    what allows retrying without losing the history -- and what makes "the
+    worker died" different from "the task failed".
     """
     id: str
     task_id: str
@@ -164,10 +166,10 @@ class Run:
 
 @dataclass(frozen=True, slots=True)
 class Event:
-    """Registro append-only. Fonte de verdade da timeline e da auditoria.
+    """Append-only record. Source of truth for the timeline and the audit trail.
 
-    O motor nunca apaga nem edita evento. Estado e uma projecao conveniente;
-    o evento e o que aconteceu.
+    The engine never deletes or edits an event. State is a convenient
+    projection; the event is what happened.
     """
     id: str
     workspace_id: str
@@ -195,11 +197,11 @@ class Option:
 
 @dataclass(slots=True)
 class Approval:
-    """Um item da fila NEEDS ME.
+    """An item in the NEEDS ME queue.
 
-    Os campos sao os do briefing exigido: o que aconteceu, por que importa, o que
-    o agente tentou, opcoes, recomendacao, risco. Log gigante nao entra aqui --
-    fica nos eventos, sob demanda.
+    The fields are those of the required briefing: what happened, why it
+    matters, what the agent tried, options, recommendation, risk. A giant log
+    does not belong here -- it stays in the events, on demand.
     """
     id: str
     workspace_id: str
@@ -221,10 +223,10 @@ class Approval:
 
 @dataclass(frozen=True, slots=True)
 class ActionRecord:
-    """Toda requisicao de tool, com o veredito da policy. Nada fica de fora.
+    """Every tool request, with the policy verdict. Nothing is left out.
 
-    Registra-se tambem o que foi NEGADO: uma negativa e o registro mais valioso
-    que o motor produz, porque e ela que prova que o portao esta vivo.
+    What was DENIED is recorded too: a refusal is the most valuable record the
+    engine produces, because it is what proves the gate is alive.
     """
     id: str
     workspace_id: str
@@ -238,7 +240,7 @@ class ActionRecord:
     run_id: str | None = None
     rule: str | None = None
     reason: str = ""
-    resultado: str = ""
+    result: str = ""
     duration_ms: int = 0
     cost_usd: float = 0.0
     tokens: int = 0
@@ -246,11 +248,11 @@ class ActionRecord:
 
 @dataclass(frozen=True, slots=True)
 class Lease:
-    """Trava cooperativa com batimento.
+    """Cooperative lock with a heartbeat.
 
-    Nao existe trava sem expiracao neste motor: o worker que morre sem soltar a
-    trava e o caso normal, nao o excepcional. Lease vencido e o sinal que a
-    recuperacao usa para devolver a task a fila.
+    There is no lock without expiry in this engine: the worker that dies without
+    releasing the lock is the normal case, not the exceptional one. An expired
+    lease is the signal recovery uses to return the task to the queue.
     """
     resource: str
     owner: str

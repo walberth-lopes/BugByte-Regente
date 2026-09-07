@@ -1,40 +1,40 @@
 # Roadmap
 
-Regra: cada marco entrega **capacidade funcionando**, não estrutura para depois.
-Marco não fecha sem prova em disco.
+Rule: every milestone delivers **working capability**, not structure for later.
+A milestone does not close without proof on disk.
 
-| # | Marco | Fecha quando |
+| # | Milestone | Closes when |
 |---|---|---|
-| **1** | **Core, estado, policy, scheduler** ✅ | tick descobre, monta grafo, despacha em paralelo, sobrevive a `kill -9` e escala ao humano |
-| 2 | Mission Control (UI local) | as 4 perguntas na tela; decidir um item da fila pelo navegador |
-| **3** | **TaskProvider real** ✅ | adapter real lendo o board de verdade em sombra; contrato passa em dois provedores; zero mutacao |
-| **4** | **RepositoryProvider** ✅ | dois provedores reais em sombra; identidade dentro da tenancy; contrato de escrita declarado, nada implementado |
-| **5** | **AgentRunner + validation loop** ✅ | missão selecionada, alvo resolvido, clone isolado, agente executado, teste com linha de base, veredito e commit — DECLARED e DISCOVERED provados ponta a ponta |
-| **6** | **CI + PR** ⚠ | caminho completo implementado e testado em contrato; **prova remota real bloqueada em `NEEDS_HUMAN`** por ausencia de task elegivel |
-| **7** | **AgentRunner real** ⚠ | motor observa o mundo por conta propria e nao acredita no agente; sandbox sem execucao de comando; **modelo real bloqueado** por falta de credencial que o motor possa resolver |
-| **8** | **Operacao continua sob falha** ✅ | 1000 ticks, 43 reinicios sem fechamento limpo, 13 mortes de worker e 13 recuperacoes, 142 quedas de provider, zero violacao de invariante |
-| 9 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
-| 10 | CloudProvider | leitura de recursos, logs e métricas |
-| 11 | Deploy em staging | deploy governado + smoke, com rollback |
-| 12 | Workers paralelos de verdade | 2+ workers reais simultâneos sem colisão |
-| 13 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
-| 14 | **Segundo cliente** | outro conjunto de provedores rodando **sem tocar em `core/` nem `engine/`** |
+| **1** | **Core, state, policy, scheduler** ✅ | a tick discovers, builds the graph, dispatches in parallel, survives `kill -9` and escalates to the human |
+| 2 | Mission Control (local UI) | the 4 questions on screen; deciding a queue item from the browser |
+| **3** | **Real TaskProvider** ✅ | a real adapter reading the real board in shadow; the contract passes on two providers; zero mutation |
+| **4** | **RepositoryProvider** ✅ | two real providers in shadow; identity within the tenancy; write contract declared, nothing implemented |
+| **5** | **AgentRunner + validation loop** ✅ | mission selected, target resolved, clone isolated, agent run, test with a baseline, verdict and commit -- DECLARED and DISCOVERED proved end to end |
+| **6** | **CI + PR** ⚠ | the full path implemented and tested against the contract; **real remote proof blocked at `NEEDS_HUMAN`** for want of an eligible task |
+| **7** | **Real AgentRunner** ⚠ | the engine observes the world for itself and does not believe the agent; sandbox with no command execution; **real model blocked** for want of a credential the engine can resolve |
+| **8** | **Continuous operation under failure** ✅ | 1000 ticks, 43 restarts with no clean shutdown, 13 worker deaths and 13 recoveries, 142 provider outages, zero invariant violations |
+| 9 | ReviewerAgent | a review pinned to the SHA reviewed, with a second pass on high risk |
+| 10 | CloudProvider | reading resources, logs and metrics |
+| 11 | Deploy to staging | governed deploy + smoke, with rollback |
+| 12 | Genuinely parallel workers | 2+ real workers at once with no collision |
+| 13 | Mature escalation | notification outside the terminal; a one-click decision |
+| 14 | **Second client** | another set of providers running **without touching `core/` or `engine/`** |
 
-O marco do segundo cliente é o único teste honesto da arquitetura. Todos os
-outros podem passar com um motor secretamente acoplado ao primeiro cliente.
+The second-client milestone is the only honest test of the architecture. Every
+other one can pass with an engine secretly coupled to the first client.
 
-⚠ = capacidade pronta e provada em contrato, com a integracao real bloqueada por
-uma dependencia externa nomeada. Ver `CAPABILITIES.md`: suite verde nunca
-substitui prova real.
+⚠ = capability finished and proved against the contract, with the real
+integration blocked by a named external dependency. See `CAPABILITIES.md`: a
+green suite never substitutes for real proof.
 
-## Ordem das apostas
+## The order of the bets
 
-Adapter real (3, 4) vem **antes** de agente que escreve código (5). Motivo: um
-agente escrevendo código contra provider falso não prova nada, e é o mais caro de
-refazer se a abstração estiver errada.
+A real adapter (3, 4) comes **before** an agent that writes code (5). The reason:
+an agent writing code against a fake provider proves nothing, and it is the most
+expensive thing to redo if the abstraction turns out to be wrong.
 
-## Freios, em toda fase
+## Brakes, in every phase
 
-`sombra: true` nasce ligado. Desligar é decisão explícita, depois de o dono ler o
-que o motor teria feito e responder sim à pergunta: *eu assinaria isso com meu
+`shadow: true` is born on. Turning it off is an explicit decision, after the
+owner has read what the engine would have done and answered yes to the question:
 nome?*

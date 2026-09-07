@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Isolamento entre clientes. A fronteira que nao pode vazar nunca.
+"""Isolation between clients. The boundary that must never leak.
 
-Um vazamento aqui nao aparece como error: aparece como o motor do cliente A
-trabalhando com dado do cliente B, em silencio, ate o dia em que sai num log ou
-num PR. Por isso cada propriedade e testada explicitamente, e nao presumida da
-existencia da coluna `workspace_id`.
+A leak here does not show up as an error: it shows up as client A's engine
+working with client B's data, silently, until the day it comes out in a log or a
+PR. That is why every property is tested explicitly, and not assumed from the
+existence of the `workspace_id` column.
 """
 
 from __future__ import annotations
@@ -54,15 +54,15 @@ def _engine(store: SqliteStore, ws_id: str, name: str, provider, tmp_path: Path)
         runner=ScriptedAgent(),
         gate=Gate(store=store, policy=PolicyEngine.from_config([]), risk=risk),
         risk=risk, limits=Limits(max_workers=2),
-        notificador=Console(journal=tmp_path / f"{name}.log"))
+        notifier=Console(journal=tmp_path / f"{name}.log"))
 
 
 # ---------------------------------------------------------------------------
-# Tenancy no estado
+# Tenancy in the state
 # ---------------------------------------------------------------------------
 
-def test_two_clientes_in_same_database_not_if_see(tmp_path):
-    """O caso barato de errar: um banco compartilhado e uma consulta sem escopo."""
+def test_two_clients_in_one_database_cannot_see_each_other(tmp_path):
+    """The cheap way to get it wrong: a shared database and an unscoped query."""
     store = SqliteStore(tmp_path / "compartilhado.db")
     store.migrate()
 
@@ -71,15 +71,15 @@ def test_two_clientes_in_same_database_not_if_see(tmp_path):
     a.tick(); a.tick()
     b.tick(); b.tick()
 
-    chaves_a = {t.key for t in store.tasks("wks_a")}
-    chaves_b = {t.key for t in store.tasks("wks_b")}
-    assert chaves_a == {"A-1", "A-2"}
-    assert chaves_b == {"B-1"}
-    assert not (chaves_a & chaves_b)
+    keys_a = {t.key for t in store.tasks("wks_a")}
+    keys_b = {t.key for t in store.tasks("wks_b")}
+    assert keys_a == {"A-1", "A-2"}
+    assert keys_b == {"B-1"}
+    assert not (keys_a & keys_b)
 
 
-def test_same_key_externa_in_two_clientes_sao_tasks_distinct(tmp_path):
-    """SG-1 do cliente A e SG-1 do cliente B nao podem colidir no indice."""
+def test_the_same_external_key_in_two_clients_is_two_tasks(tmp_path):
+    """Client A's SG-1 and client B's SG-1 must not collide in the index."""
     store = SqliteStore(tmp_path / "c.db")
     store.migrate()
     a = _engine(store, "wks_a", "A", _yaml_tasks(tmp_path / "a", ["SG-1"]), tmp_path)
@@ -89,10 +89,10 @@ def test_same_key_externa_in_two_clientes_sao_tasks_distinct(tmp_path):
     ta = store.task_by_key("wks_a", "filesystem", "SG-1")
     tb = store.task_by_key("wks_b", "filesystem", "SG-1")
     assert ta and tb
-    assert ta.id != tb.id, "a mesma chave externa virou uma task so"
+    assert ta.id != tb.id, "the same external key became a single task"
 
 
-def test_events_is_actions_sao_scoped(tmp_path):
+def test_events_and_actions_are_scoped(tmp_path):
     store = SqliteStore(tmp_path / "c.db")
     store.migrate()
     a = _engine(store, "wks_a", "A", _yaml_tasks(tmp_path / "a", ["A-1"]), tmp_path)
@@ -115,18 +115,18 @@ def test_plan_of_a_client_ignores_work_of_other(tmp_path):
     a._analyze(type("R", (), {"analyzed": 0})())
     b._analyze(type("R", (), {"analyzed": 0})())
 
-    chaves = {store.task(i).key for i in a.plan().dispatch}
-    assert chaves <= {"A-1", "A-2"}
+    keys = {store.task(i).key for i in a.plan().dispatch}
+    assert keys <= {"A-1", "A-2"}
 
 
 def test_lease_of_a_client_not_blocks_the_other(tmp_path):
-    """Recurso homonimo em dois clientes sao dois recursos DIFERENTES.
+    """A resource of the same name in two clients is two DIFFERENT resources.
 
-    Dois clientes podem ter um repositorio de mesmo nome -- e no board real isso
-    ja acontece com `scamchecker`, cujo diretorio local sequer bate com o nome
-    remoto. Com a trava por chave nua, um cliente atrasaria o outro: conservador
-    o bastante para nunca corromper nada, e errado o bastante para ninguem
-    descobrir por que o motor do cliente B fica parado.
+    Two clients can have a repository of the same name -- and on the real board
+    that already happens with `scamchecker`, whose local directory does not even
+    match the remote name. With a lock on the bare key, one client would hold up
+    the other: conservative enough never to corrupt anything, and wrong enough
+    that nobody would work out why client B's engine is stopped.
     """
     store = SqliteStore(tmp_path / "c.db")
     store.migrate()
@@ -135,8 +135,8 @@ def test_lease_of_a_client_not_blocks_the_other(tmp_path):
 
     assert store.acquire_lease("repo:api", "run_a", "wks_a", 60) is not None
     assert store.acquire_lease("repo:api", "run_b", "wks_b", 60) is not None, (
-        "clientes diferentes competindo pela mesma trava")
-    # E dentro do MESMO cliente a exclusao continua valendo.
+        "different clients competing for the same lock")
+    # And within the SAME client the exclusion still holds.
     assert store.acquire_lease("repo:api", "run_a2", "wks_a", 60) is None
 
 
@@ -149,9 +149,9 @@ def test_releasing_lease_of_a_client_not_releases_the_of_other(tmp_path):
     store.acquire_lease("repo:api", "run_x", "wks_b", 60)
 
     store.release_lease("repo:api", "run_x", workspace_id="wks_a")
-    assert store.acquire_lease("repo:api", "outro", "wks_a", 60) is not None
-    assert store.acquire_lease("repo:api", "outro", "wks_b", 60) is None, (
-        "soltar a trava de um cliente soltou a do outro")
+    assert store.acquire_lease("repo:api", "another", "wks_a", 60) is not None
+    assert store.acquire_lease("repo:api", "another", "wks_b", 60) is None, (
+        "releasing one client's lock released the other's")
 
 
 def test_lease_expired_is_listed_only_to_the_owner_of_scope(tmp_path):
@@ -161,27 +161,27 @@ def test_lease_expired_is_listed_only_to_the_owner_of_scope(tmp_path):
     store.save_workspace(Workspace(id="wks_b", client_id="b", name="B"))
     store.acquire_lease("repo:api", "run_a", "wks_a", 60)
     store.acquire_lease("repo:api", "run_b", "wks_b", 60)
-    store._con.execute("UPDATE leases SET expires_at='2000-01-01T00:00:00.000000Z'")
+    store._conn.execute("UPDATE leases SET expires_at='2000-01-01T00:00:00.000000Z'")
 
     assert [l.owner for l in store.expired_leases("wks_a")] == ["run_a"]
     assert [l.owner for l in store.expired_leases("wks_b")] == ["run_b"]
 
 
 # ---------------------------------------------------------------------------
-# Tenancy nos segredos
+# Tenancy in the secrets
 # ---------------------------------------------------------------------------
 
 def test_workspace_not_reaches_secret_that_not_declared():
-    """A fronteira mais cara de furar: credencial de um cliente noutro adapter."""
+    """The most expensive boundary to breach: one client's credential in another adapter."""
     a = ScopedSecrets(allowed_from=frozenset({"env:A_TOKEN"}), workspace="A")
     with pytest.raises(SecretOutOfScope):
         a.resolve("env:B_TOKEN")
 
 
 def test_reference_declared_resolves(monkeypatch):
-    monkeypatch.setenv("A_TOKEN", "valor-de-teste")
+    monkeypatch.setenv("A_TOKEN", "test-value")
     a = ScopedSecrets(allowed_from=frozenset({"env:A_TOKEN"}), workspace="A")
-    assert a.resolve("env:A_TOKEN") == "valor-de-teste"
+    assert a.resolve("env:A_TOKEN") == "test-value"
 
 
 def test_reference_declared_but_missing_is_error_clear():
@@ -192,9 +192,9 @@ def test_reference_declared_but_missing_is_error_clear():
 
 
 def test_not_exists_secret_literal():
-    """Se `literal:` existisse, o primeiro token de producao entraria num YAML."""
+    """If `literal:` existed, the first production token would end up in a YAML."""
     a = ScopedSecrets(allowed_from=frozenset({"literal:abc123"}), workspace="A")
-    with pytest.raises(SecretMissing, match="esquema"):
+    with pytest.raises(SecretMissing, match="scheme"):
         a.resolve("literal:abc123")
 
 
@@ -205,11 +205,11 @@ def test_workspace_without_secrets_not_reaches_nothing():
 
 
 # ---------------------------------------------------------------------------
-# Dois provedores DIFERENTES no mesmo motor
+# Two DIFFERENT providers in the same engine
 # ---------------------------------------------------------------------------
 
-def test_clientes_with_providers_different_coexist(tmp_path):
-    """Cliente A em YAML, cliente B em Jira -- mesmo Core, mesmo banco."""
+def test_clients_with_different_providers_coexist(tmp_path):
+    """Client A on YAML, client B on Jira -- same Core, same database."""
     store = SqliteStore(tmp_path / "c.db")
     store.migrate()
     a = _engine(store, "wks_a", "A", _yaml_tasks(tmp_path / "a", ["A-1"]), tmp_path)
@@ -221,75 +221,75 @@ def test_clientes_with_providers_different_coexist(tmp_path):
     assert {t.key for t in store.tasks("wks_a")} == {"A-1"}
     do_b = store.tasks("wks_b")
     assert do_b and all(t.key.startswith("SG-") for t in do_b)
-    # E a identidade guarda de QUAL provedor cada task veio.
-    assert {t.externo.provider for t in store.tasks("wks_a")} == {"filesystem"}
-    assert {t.externo.provider for t in do_b} == {"jira"}
+    # And the identity records WHICH provider each task came from.
+    assert {t.external.provider for t in store.tasks("wks_a")} == {"filesystem"}
+    assert {t.external.provider for t in do_b} == {"jira"}
 
 
 # ---------------------------------------------------------------------------
-# Identidade de repositorio dentro da tenancy
+# Repository identity within the tenancy
 # ---------------------------------------------------------------------------
 
-def test_repos_same_named_in_clientes_different_sao_resources_different():
-    """Dois clientes podem ter um repositorio chamado `api`. Sao dois."""
+def test_same_named_repos_in_different_clients_are_different_resources():
+    """Two clients can have a repository called `api`. They are two."""
     from regente.ports.repository import RepoRef
     a = RepoRef(provider="github", key="clienteA/api")
     b = RepoRef(provider="github", key="clienteB/api")
 
-    # Chaves diferentes: recursos diferentes, obviamente.
+    # Different keys: different resources, obviously.
     assert a.resource("wks_1") != b.resource("wks_1")
-    # MESMA chave em workspaces diferentes: tambem recursos diferentes.
+    # The SAME key in different workspaces: also different resources.
     assert a.resource("wks_1") != a.resource("wks_2")
-    # E o mesmo repositorio visto por dois provedores nao colide.
+    # And the same repository seen by two providers does not collide.
     assert (RepoRef(provider="git-local", key="clienteA/api").resource("wks_1")
             != a.resource("wks_1"))
 
 
-def test_two_clientes_with_repo_of_same_name_not_compete_lock(tmp_path):
-    """O cenario completo: identidade -> recurso -> lease, entre clientes."""
+def test_two_clients_with_a_same_named_repo_do_not_contend_for_a_lock(tmp_path):
+    """The full scenario: identity -> resource -> lease, across clients."""
     from regente.ports.repository import RepoRef
     store = SqliteStore(tmp_path / "c.db")
     store.migrate()
     store.save_workspace(Workspace(id="wks_a", client_id="a", name="A"))
     store.save_workspace(Workspace(id="wks_b", client_id="b", name="B"))
 
-    # Coincidencia total: mesmo provider, mesma chave, clientes diferentes.
+    # Total coincidence: same provider, same key, different clients.
     ref = RepoRef(provider="github", key="acme/api")
     ra, rb = ref.resource("wks_a"), ref.resource("wks_b")
 
     assert store.acquire_lease(ra, "run_a", "wks_a", 60) is not None
     assert store.acquire_lease(rb, "run_b", "wks_b", 60) is not None, (
-        "o cliente B ficou esperando a trava do cliente A")
-    # Dentro do mesmo cliente, a exclusao continua valendo.
+        "client B ended up waiting for client A's lock")
+    # Within the same client, the exclusion still holds.
     assert store.acquire_lease(ra, "run_a2", "wks_a", 60) is None
 
 
 def test_providers_of_repo_different_coexist(tmp_path):
-    """Cliente A le clones locais, cliente B le a hospedagem -- mesmo Core."""
+    """Client A reads local clones, client B reads the hosting -- same Core."""
     import subprocess
     from regente.adapters.repos.git_local import GitLocal
 
-    def repo(root, name, remoto):
+    def repo(root, name, remote):
         p = root / name
         p.mkdir(parents=True)
         for args in (["init", "-q", "-b", "main"],
-                     ["config", "user.email", "t@e.invalido"],
+                     ["config", "user.email", "t@e.invalid"],
                      ["config", "user.name", "T"]):
             subprocess.run(["git", *args], cwd=str(p), check=True, capture_output=True)
         (p / "a.txt").write_text("x", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=str(p), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-q", "-m", "i"], cwd=str(p), check=True,
                        capture_output=True)
-        subprocess.run(["git", "remote", "add", "origin", remoto], cwd=str(p),
+        subprocess.run(["git", "remote", "add", "origin", remote], cwd=str(p),
                        check=True, capture_output=True)
         return p
 
     a = tmp_path / "a"; b = tmp_path / "b"
-    repo(a, "api", "https://github.com/clienteA/api.git")
-    repo(b, "api", "https://github.com/clienteB/api.git")
+    repo(a, "api", "https://github.com/clientA/api.git")
+    repo(b, "api", "https://github.com/clientB/api.git")
 
     pa, pb = GitLocal(root=a), GitLocal(root=b)
     ka = pa.list_repositories()[0].ref
     kb = pb.list_repositories()[0].ref
-    assert ka.key == "clienteA/api" and kb.key == "clienteB/api"
+    assert ka.key == "clientA/api" and kb.key == "clientB/api"
     assert ka.resource("wks_a") != kb.resource("wks_b")

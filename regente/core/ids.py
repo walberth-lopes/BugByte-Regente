@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Identificadores internos.
+"""Internal identifiers.
 
-O prefixo nao e enfeite: ele deixa obvio, num log ou numa mensagem de error, se
-alguem passou um id de run onde se esperava um id de task. Esse tipo de troca e
-silencioso quando tudo e string opaca.
+The prefix is not decoration: in a log or an error message it makes it obvious
+when someone passed a run id where a task id was expected. That kind of mix-up
+is silent when everything is an opaque string.
 """
 
 from __future__ import annotations
@@ -23,18 +23,18 @@ ACTION = "act"
 DELIVERY = "dlv"
 
 
-def new_id(prefixo: str) -> str:
-    return f"{prefixo}_{uuid.uuid4().hex[:12]}"
+def new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
-def prefix_of(identificador: str) -> str:
-    return identificador.split("_", 1)[0] if "_" in identificador else ""
+def prefix_of(identifier: str) -> str:
+    return identifier.split("_", 1)[0] if "_" in identifier else ""
 
 
-def expect_prefix(identificador: str, prefixo_esperado: str) -> str:
-    obtido = prefix_of(identificador)
-    if obtido != prefixo_esperado:
+def expect_prefix(identifier: str, expected_prefix: str) -> str:
+    got = prefix_of(identifier)
+    if got != expected_prefix:
         raise ValueError(
-            f"esperava id de '{prefixo_esperado}' e recebi '{obtido}': {identificador}"
+            f"expected a '{expected_prefix}' id and got '{got}': {identifier}"
         )
-    return identificador
+    return identifier

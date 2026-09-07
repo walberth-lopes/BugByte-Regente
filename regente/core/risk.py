@@ -1,21 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Risk Engine: mede o risco de uma acao proposta.
+"""Risk Engine: measures the risk of a proposed action.
 
-**Risco e rigor, nao fila de espera.** Esta e a distincao que define o motor:
+**Risk is rigour, not a waiting queue.** This is the distinction that defines the
+engine:
 
-- A *policy* decide **autoridade**: quem pode fazer. Merge em producao exige
-  humano porque a organizacao decidiu assim, e nenhum grau de confianca do
-  modelo muda isso.
-- O *risco* decide **rigor**: quanta prova a acao exige antes de acontecer.
-  Risco alto compra leitura adversarial, segunda passada, teste extra --
-  compra *trabalho*, nao espera.
+- The *policy* decides **authority**: who may act. A merge into production
+  requires a human because the organisation decided so, and no degree of model
+  confidence changes that.
+- The *risk* decides **rigour**: how much proof the action demands before it
+  happens. High risk buys adversarial reading, a second pass, an extra test --
+  it buys *work*, not waiting.
 
-Se risco alto virasse "espera o humano assinar", o motor devolveria ao dono
-exatamente o gargalo que ele existe para eliminar: trabalho bom parado numa fila.
-Quem para o trabalho e a policy, e ela para por regra escrita, nao por hesitacao.
+If high risk became "wait for a human to sign", the engine would hand the owner
+back exactly the bottleneck it exists to remove: good work stalled in a queue.
+What stops work is the policy, and it stops it by written rule, not by hesitation.
 
-O Risk Engine e uma funcao pura de sinais declarados. Ele nao chama LLM: um
-julgamento de risco que depende do modelo nao serve de portao contra o modelo.
+The Risk Engine is a pure function of declared signals. It calls no LLM: a risk
+judgement that depends on the model is no gate against the model.
 """
 
 from __future__ import annotations
@@ -35,10 +36,10 @@ class RiskLevel(IntEnum):
 
 @dataclass(frozen=True, slots=True)
 class Signal:
-    """Um fator de risco que disparou, com a evidencia que o disparou.
+    """A risk factor that fired, with the evidence that fired it.
 
-    A evidencia e obrigatoria porque um risco sem evidencia nao e auditavel --
-    e sem auditoria o dono nao consegue afrouxar uma regra com seguranca.
+    The evidence is mandatory because a risk without evidence is not auditable
+    -- and without an audit trail the owner cannot loosen a rule safely.
     """
     name: str
     level: RiskLevel
@@ -52,7 +53,7 @@ class RiskAssessment:
 
     @property
     def requires_second_pass(self) -> bool:
-        """HIGH e CRITICAL nao esperam humano: eles exigem releitura adversarial."""
+        """HIGH and CRITICAL do not wait for a human: they demand an adversarial re-read."""
         return self.level >= RiskLevel.HIGH
 
     @property
@@ -62,10 +63,10 @@ class RiskAssessment:
 
 @dataclass(frozen=True, slots=True)
 class Factor:
-    """Regra declarativa de risco, vinda de configuracao.
+    """A declarative risk rule, coming from configuration.
 
-    `campo` e lido do contexto da acao; `casa` e uma lista de padroes glob
-    (para texto) ou um limiar numerico (para `maior_que`).
+    `field` is read from the action context; `matches` is a list of glob
+    patterns (for text) or a numeric threshold (for `greater_than`).
     """
     name: str
     level: RiskLevel
@@ -75,31 +76,32 @@ class Factor:
     equal_to: Any = None
 
 
-#: Base minima que vale para qualquer cliente. O arquivo de configuracao SOMA
-#: fatores; ele nao substitui estes, porque sao os que descrevem dano fisico ao
-#: mundo (producao, dado, credencial) e nao preferencia de time.
+#: Minimum base that holds for any client. The configuration file ADDS factors;
+#: it does not replace these, because these are the ones describing physical
+#: damage to the world (production, data, credentials) and not team preference.
+#: The `producao` MATCH VALUE stays: it catches an environment spelled that way.
 BASE_FACTORS: tuple[Factor, ...] = (
-    Factor("producao", RiskLevel.HIGH, "environment", ("prod", "production", "producao")),
-    Factor("destrutivo", RiskLevel.CRITICAL, "action",
+    Factor("production", RiskLevel.HIGH, "environment", ("prod", "production", "producao")),
+    Factor("destructive", RiskLevel.CRITICAL, "action",
           ("*.delete", "*.drop", "*.destroy", "*.purge", "*.truncate", "*.rollback")),
     Factor("migration", RiskLevel.HIGH, "paths",
           ("*migrations/*", "*alembic/*", "*.sql", "*schema*")),
-    Factor("infraestrutura", RiskLevel.HIGH, "paths",
+    Factor("infrastructure", RiskLevel.HIGH, "paths",
           ("*terraform/*", "*dockerfile*", "*workflows/*", "*pipelines/*",
            "*deploy/*", "*infra/*", "*chart/*")),
-    Factor("credencial", RiskLevel.CRITICAL, "paths",
+    Factor("credential", RiskLevel.CRITICAL, "paths",
           ("*secret*", "*credential*", "*.env*", "*iam*", "*token*")),
-    Factor("autenticacao", RiskLevel.HIGH, "paths", ("*auth*", "*login*", "*session*", "*permission*")),
-    Factor("pagamento", RiskLevel.HIGH, "paths", ("*payment*", "*billing*", "*invoice*", "*checkout*")),
-    Factor("api_publica", RiskLevel.MEDIUM, "paths", ("*api/*", "*routes/*", "*openapi*", "*proto*")),
-    Factor("diff_grande", RiskLevel.MEDIUM, "lines", greater_than=600),
-    Factor("muitos_arquivos", RiskLevel.MEDIUM, "files", greater_than=25),
-    Factor("banco", RiskLevel.HIGH, "category", ("database",)),
+    Factor("authentication", RiskLevel.HIGH, "paths", ("*auth*", "*login*", "*session*", "*permission*")),
+    Factor("payment", RiskLevel.HIGH, "paths", ("*payment*", "*billing*", "*invoice*", "*checkout*")),
+    Factor("public_api", RiskLevel.MEDIUM, "paths", ("*api/*", "*routes/*", "*openapi*", "*proto*")),
+    Factor("large_diff", RiskLevel.MEDIUM, "lines", greater_than=600),
+    Factor("many_files", RiskLevel.MEDIUM, "files", greater_than=25),
+    Factor("database", RiskLevel.HIGH, "category", ("database",)),
 )
 
 
-def _values_for(contexto: dict[str, Any], field: str) -> list[str]:
-    v = contexto.get(field)
+def _values_for(context: dict[str, Any], field: str) -> list[str]:
+    v = context.get(field)
     if v is None:
         return []
     if isinstance(v, (list, tuple, set)):
@@ -107,28 +109,28 @@ def _values_for(contexto: dict[str, Any], field: str) -> list[str]:
     return [str(v)]
 
 
-def _fires(fator: Factor, contexto: dict[str, Any]) -> str | None:
-    """Devolve a evidencia se o fator disparou, ou None."""
-    if fator.greater_than is not None:
-        raw = contexto.get(fator.field)
+def _fires(factor: Factor, context: dict[str, Any]) -> str | None:
+    """Returns the evidence if the factor fired, or None."""
+    if factor.greater_than is not None:
+        raw = context.get(factor.field)
         try:
             n = float(raw)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
-        return f"{fator.field}={raw} > {fator.greater_than:g}" if n > fator.greater_than else None
+        return f"{factor.field}={raw} > {factor.greater_than:g}" if n > factor.greater_than else None
 
-    if fator.equal_to is not None:
-        return f"{fator.field}={fator.equal_to}" if contexto.get(fator.field) == fator.equal_to else None
+    if factor.equal_to is not None:
+        return f"{factor.field}={factor.equal_to}" if context.get(factor.field) == factor.equal_to else None
 
-    for value in _values_for(contexto, fator.field):
+    for value in _values_for(context, factor.field):
         target = value.lower()
-        for default_value in fator.matches:
+        for default_value in factor.matches:
             p = default_value.lower()
-            # Padrao sem curinga casa por substring: 'auth' precisa pegar
-            # 'src/auth/handler.py' sem que cada regra vire '*auth*'.
-            bateu = fnmatch.fnmatch(target, p) if ("*" in p or "?" in p) else (p in target)
-            if bateu:
-                return f"{fator.field}={value}"
+            # A pattern without a wildcard matches by substring: 'auth' has to
+            # catch 'src/auth/handler.py' without every rule becoming '*auth*'.
+            matched = fnmatch.fnmatch(target, p) if ("*" in p or "?" in p) else (p in target)
+            if matched:
+                return f"{factor.field}={value}"
     return None
 
 
@@ -139,10 +141,10 @@ class RiskEngine:
 
     @classmethod
     def from_config(cls, extras: list[dict[str, Any]] | None = None) -> RiskEngine:
-        """Fatores do cliente SOMAM aos da base -- nunca a substituem."""
-        adicionais: list[Factor] = []
+        """Client factors ADD to the base ones -- they never replace them."""
+        extra: list[Factor] = []
         for raw in extras or []:
-            adicionais.append(Factor(
+            extra.append(Factor(
                 name=raw["name"],
                 level=RiskLevel[str(raw.get("level", "MEDIUM")).upper()],
                 field=raw.get("field", "paths"),
@@ -150,20 +152,20 @@ class RiskEngine:
                 greater_than=raw.get("greater_than"),
                 equal_to=raw.get("equal_to"),
             ))
-        return cls(factors=BASE_FACTORS + tuple(adicionais))
+        return cls(factors=BASE_FACTORS + tuple(extra))
 
-    def assess(self, contexto: dict[str, Any]) -> RiskAssessment:
-        """`contexto` traz: acao, ambiente, categoria, caminhos, linhas, arquivos.
+    def assess(self, context: dict[str, Any]) -> RiskAssessment:
+        """`context` carries: action, environment, category, paths, lines, files.
 
-        Ausencia de informacao nunca reduz risco -- ela so nao aumenta. Quem
-        chama e responsavel por preencher `caminhos`; um snapshot truncado deve
-        ser declarado como sinal proprio por quem o produziu.
+        Missing information never lowers risk -- it merely fails to raise it.
+        The caller is responsible for filling in `paths`; a truncated snapshot
+        must be declared as a signal of its own by whoever produced it.
         """
         signals: list[Signal] = []
-        for fator in self.factors:
-            evidence = _fires(fator, contexto)
+        for factor in self.factors:
+            evidence = _fires(factor, context)
             if evidence:
-                signals.append(Signal(fator.name, fator.level, evidence))
+                signals.append(Signal(factor.name, factor.level, evidence))
 
         level = max((s.level for s in signals), default=self.floor)
         return RiskAssessment(level=level, signals=tuple(signals))

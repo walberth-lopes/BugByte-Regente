@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-"""Orchestrator: o cerebro operacional. Um tick de ponta a ponta.
+"""Orchestrator: the operational brain. One tick from end to end.
 
-    recupera -> descobre -> analisa -> planeja -> despacha -> colhe
+    recover -> discover -> analyse -> plan -> dispatch -> collect
 
-Cada fase e independente e idempotente. Isso nao e elegancia: e o que faz o motor
-sobreviver a interrupcao. Matar o processo entre duas fases deixa o estado
-consistente, e o proximo tick continua de onde parou -- o proprio tick recorrente
-e o mecanismo de retentativa, sem codigo de retry no meio do fluxo.
+Each phase is independent and idempotent. That is not elegance: it is what makes
+the engine survive interruption. Killing the process between two phases leaves
+the state consistent, and the next tick carries on from where it stopped -- the
+recurring tick is itself the retry mechanism, with no retry code inside the flow.
 
-**Baseline na primeira passada.** A primeira descoberta de um workspace registra
-o backlog e nao despacha nada. Sem isso, ligar o motor num board com dezenas de
-tasks abertas dispara uma tempestade de workers -- e o primeiro contato do dono
-com o produto vira um incidente.
+**Baseline on the first pass.** The first discovery of a workspace records the
+backlog and dispatches nothing. Without that, switching the engine on against a
+board with dozens of open tasks sets off a storm of workers -- and the owner's
+first contact with the product becomes an incident.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from ..core.model import (Dependency, Event, ExternalRef, Run, RunState, Task, W
 from ..core.policy import AutonomyLevel
 from ..core.risk import RiskEngine, RiskLevel
 from ..core.scheduling import Candidate, Limits, Plan, plan
-from ..core.states import (_AVANCOS, TaskState, engine_can_advance,
+from ..core.states import (_ADVANCES, TaskState, engine_can_advance,
                            is_terminus, resumable_from)
 from ..ports import AdapterError
 from ..ports.support import NotificationProvider
@@ -41,19 +41,19 @@ from .gate import Scope, Gate
 
 
 def _sanitize(key: str) -> str:
-    """Chave de task -> nome de diretorio seguro.
+    """Task key -> safe directory name.
 
-    Chave de fornecedor aceita coisas que caminho nao aceita (barra, dois
-    pontos, espaco). Sem sanear, a area de uma task some no meio de uma
-    arvore inesperada -- ou, pior, escapa da raiz.
+    A provider key accepts things a path does not (slash, colon, space). Without
+    sanitising, a task's area vanishes somewhere in an unexpected tree -- or,
+    worse, escapes the root.
     """
-    limpo = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in key)
-    return limpo.strip("-.") or "sem-chave"
+    cleaned = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in key)
+    return cleaned.strip("-.") or "no-key"
 
 
 @dataclass(slots=True)
 class TickReport:
-    """O que o tick fez. Curto de proposito: e o que o dono le."""
+    """What the tick did. Deliberately short: this is what the owner reads."""
     workspace: str
     discovered: int = 0
     analyzed: int = 0
@@ -65,34 +65,34 @@ class TickReport:
     cycles: tuple[str, ...] = ()
     baseline: bool = False
     errors: tuple[str, ...] = ()
-    #: O que veio torto da origem. Reportado, nunca corrigido em silencio.
+    #: What arrived crooked from the source. Reported, never silently fixed.
     anomalies: tuple[str, ...] = ()
-    #: Tasks que mudaram de situacao na origem desde a ultima passada.
+    #: Tasks whose status at the source changed since the last pass.
     changes: tuple[tuple[str, str, str], ...] = ()
-    #: Estavam bloqueadas pela origem e voltaram a fila.
+    #: Were blocked by the source and have come back to the queue.
     unblocked_tasks: tuple[str, ...] = ()
 
     def summary(self) -> str:
         if self.baseline:
-            return f"{self.workspace}: baseline com {self.discovered} tasks; nada despachado"
-        partes = []
+            return f"{self.workspace}: baseline with {self.discovered} tasks; nothing dispatched"
+        parts = []
         if self.recovered:
-            partes.append(f"{len(self.recovered)} recuperada(s)")
+            parts.append(f"{len(self.recovered)} recovered")
         if self.discovered:
-            partes.append(f"{self.discovered} nova(s)")
+            parts.append(f"{self.discovered} new")
         if self.dispatched:
-            partes.append(f"{len(self.dispatched)} despachada(s)")
+            parts.append(f"{len(self.dispatched)} dispatched")
         if self.completed:
-            partes.append(f"{len(self.completed)} concluida(s)")
+            parts.append(f"{len(self.completed)} completed")
         if self.changes:
-            partes.append(f"{len(self.changes)} mudaram na origem")
+            parts.append(f"{len(self.changes)} changed at the source")
         if self.unblocked_tasks:
-            partes.append(f"{len(self.unblocked_tasks)} liberada(s)")
+            parts.append(f"{len(self.unblocked_tasks)} released")
         if self.escalated:
-            partes.append(f"{len(self.escalated)} precisam de voce")
+            parts.append(f"{len(self.escalated)} need you")
         if self.errors:
-            partes.append(f"{len(self.errors)} error(s)")
-        return f"{self.workspace}: " + (", ".join(partes) if partes else "nada a fazer")
+            parts.append(f"{len(self.errors)} error(s)")
+        return f"{self.workspace}: " + (", ".join(parts) if parts else "nothing to do")
 
 
 @dataclass(slots=True)
@@ -110,41 +110,41 @@ class Orchestrator:
     clock: Callable[[], datetime] = now
     limits: Limits = field(default_factory=Limits)
     budget: supervisor.Budget = field(default_factory=supervisor.Budget)
-    notificador: NotificationProvider | None = None
+    notifier: NotificationProvider | None = None
     project_id: str = "prj_default"
-    #: Segundos de vida de um lease. O worker renova; se morrer, vence e a
-    #: recuperacao devolve a task a fila.
+    #: Lifetime of a lease in seconds. The worker renews it; if it dies, the
+    #: lease expires and recovery returns the task to the queue.
     lease_seconds: int = 900
 
     # ------------------------------------------------------------------
     def tick(self) -> TickReport:
         rel = TickReport(workspace=self.workspace.name)
-        self._record("tick_inicio", summary="tick iniciado")
+        self._record("tick_start", summary="tick started")
         try:
             self._recover(rel)
             self._resume_decided(rel)
             first_pass = self._discover(rel)
             if first_pass:
                 rel.baseline = True
-                self._record("baseline", summary=f"{rel.discovered} tasks registradas sem despacho")
+                self._record("baseline", summary=f"{rel.discovered} tasks recorded without dispatch")
                 return rel
             self._analyze(rel)
             self._dispatch(rel)
         except AdapterError as e:
-            # Falha de adapter nunca vira "nao havia trabalho". O tick termina
-            # com error declarado e o proximo tenta de novo.
+            # An adapter failure never becomes "there was no work". The tick ends
+            # with a declared error and the next one tries again.
             rel.errors += (f"adapter: {e}",)
             self._record("error", summary=str(e)[:300])
-        self._record("tick_fim", summary=rel.summary())
+        self._record("tick_end", summary=rel.summary())
         return rel
 
-    # ---- 1. recuperacao -------------------------------------------------
+    # ---- 1. recovery ----------------------------------------------------
     def _recover(self, rel: TickReport) -> None:
-        """Devolve a fila o trabalho de workers que morreram.
+        """Returns to the queue the work of workers that died.
 
-        A prova de que um worker morreu e o lease vencido, nao a ausencia de
-        processo: o motor pode estar rodando noutra maquina, e 'nao vejo o
-        processo' e um teste que so funciona por acaso.
+        The proof that a worker died is the expired lease, not the absence of a
+        process: the engine may be running on another machine, and 'I cannot see
+        the process' is a test that only works by accident.
         """
         expired = {l.owner: l
                    for l in self.store.expired_leases(self.workspace.id,
@@ -155,7 +155,7 @@ class Orchestrator:
             task = self.store.task(run.task_id)
             run.state = RunState.INTERRUPTED
             run.ended_at = self.clock()
-            run.reason = "lease vencido: worker nao renovou"
+            run.reason = "lease expired: the worker did not renew"
             self.store.save_run(run)
             self.store.release_lease(run.id, run.id, self.workspace.id)
             for resource in (task.resources if task else ()):
@@ -166,10 +166,10 @@ class Orchestrator:
             destination = supervisor.resume_state(task.state)
             if destination is not task.state:
                 self.store.transition(task.id, destination, actor="supervisor",
-                                       reason="worker interrompido")
+                                       reason="worker interrupted")
             rel.recovered += (task.key,)
-            self._record("recuperada", task_id=task.id, run_id=run.id,
-                        summary=f"worker morto; task volta como {destination.value}")
+            self._record("recovered", task_id=task.id, run_id=run.id,
+                        summary=f"worker dead; task comes back as {destination.value}")
 
     def _resume_decided(self, rel: TickReport) -> None:
         """Act on decisions a person already made.
@@ -186,11 +186,11 @@ class Orchestrator:
 
         Where a task goes is decided by the option chosen, not by guessing:
 
-          seguir      -> onward if the engine has a stage; otherwise BLOCKED,
+          follow      -> onward if the engine has a stage; otherwise BLOCKED,
                          which is honest where DONE would be a lie
-          investigar  -> back to be worked again
-          bloquear    -> out of the queue until someone unblocks it
-          cancelar    -> closed
+          investigate -> back to be worked again
+          block       -> out of the queue until someone unblocks it
+          cancel      -> closed
 
         Every destination is checked against `resumable_from(paused_at)` before
         it is used. See `DECISION_ROUTES`.
@@ -204,10 +204,10 @@ class Orchestrator:
             if destination is None:
                 continue
             self.store.transition(task.id, destination,
-                                   actor=approval.decided_by or "humano",
+                                   actor=approval.decided_by or "human",
                                    reason=why)
             rel.unblocked_tasks += (task.key,)
-            self._record("decisao_aplicada", task_id=task.id,
+            self._record("decision_applied", task_id=task.id,
                         run_id=approval.run_id,
                         summary=f"{approval.choice} -> {destination.value}",
                         approval_id=approval.id, choice=approval.choice)
@@ -252,121 +252,122 @@ class Orchestrator:
         # defect this whole path exists to fix.
         if engine_can_advance(paused) and paused in allowed:
             return paused, f"retomada em {paused.value} por {who}"
-        for candidate in _AVANCOS.get(paused, frozenset()):
+        for candidate in _ADVANCES.get(paused, frozenset()):
             if candidate in allowed and engine_can_advance(candidate):
-                return candidate, (f"seguir por {who}: {paused.value} -> "
+                return candidate, (f"follow, by {who}: {paused.value} -> "
                                    f"{candidate.value}")
         if TaskState.BLOCKED in allowed:
             return (TaskState.BLOCKED,
-                    f"parada por {who}: o trabalho chegou a {paused.value} e "
-                    f"este motor nao tem etapa seguinte. Fica fora da fila, com "
-                    f"motivo, ate existir a etapa ou alguem destravar")
+                    f"stopped by {who}: the work reached {paused.value} and this "
+                    f"engine has no next stage. It stays out of the queue, with a "
+                    f"reason, until the stage exists or somebody unblocks it")
         return None, ""
 
-    # ---- 2. descoberta --------------------------------------------------
+    # ---- 2. discovery ---------------------------------------------------
     def _discover(self, rel: TickReport) -> bool:
-        """Devolve True quando esta foi a primeira passada (baseline)."""
-        ja_tinha = bool(self.store.tasks(self.workspace.id))
+        """Returns True when this was the first pass (baseline)."""
+        had_any = bool(self.store.tasks(self.workspace.id))
         external_items = self.tasks_provider.list_tasks()
 
-        chaves: dict[str, str] = {}   # chave externa -> task_id
+        keys: dict[str, str] = {}   # external key -> task_id
         for e in external_items:
             if e.status.finished:
-                # Trabalho terminado na origem nao vira trabalho aqui.
+                # Work finished at the source does not become work here.
                 continue
             task = self.store.task_by_key(self.workspace.id, self.tasks_provider.name, e.key)
             if task is None:
                 task = self._create_task(e)
                 rel.discovered += 1
-                self._record("descoberta", task_id=task.id,
+                self._record("discovered", task_id=task.id,
                             summary=f"{e.key}: {e.title}"[:200],
                             status=e.status.value, anomalies=list(e.anomalies))
             else:
                 self._refresh(task, e, rel)
-            chaves[e.key] = task.id
+            keys[e.key] = task.id
             if e.anomalies:
                 rel.anomalies += tuple(f"{e.key}: {a}" for a in e.anomalies)
 
-        # Vinculos so podem ser ligados depois que todas as tasks existem: o
-        # bloqueador pode aparecer depois do bloqueado na mesma lista.
+        # Links can only be wired once every task exists: the blocker may show
+        # up after the blocked one in the same list.
         #
-        # **So vinculo BLOQUEANTE vira aresta.** Hierarquia e relacionamento sao
-        # informacao, nao ordem de execucao: uma subtarefa nao espera a mae
-        # terminar, ela e parte do que a mae e. Tratar os tres como iguais trava
-        # o board inteiro -- e num board real hierarquia e relacionamento sao
-        # muito mais comuns que bloqueio de verdade.
+        # **Only a BLOCKING link becomes an edge.** Hierarchy and relatedness are
+        # information, not execution order: a subtask does not wait for its parent
+        # to finish, it is part of what the parent is. Treating the three as equal
+        # locks the whole board -- and on a real board hierarchy and relatedness
+        # are far more common than actual blocking.
         for e in external_items:
             for v in e.links:
                 if not v.blocking:
                     continue
-                target = chaves.get(v.key)
-                if target and target != chaves[e.key]:
+                target = keys.get(v.key)
+                if target and target != keys[e.key]:
                     self.store.link_dependency(Dependency(
-                        task_id=chaves[e.key], depends_on=target, kind=v.kind,
-                        reason=f"declarado por {self.tasks_provider.name}"))
-        return not ja_tinha
+                        task_id=keys[e.key], depends_on=target, kind=v.kind,
+                        reason=f"declared by {self.tasks_provider.name}"))
+        return not had_any
 
     def _refresh(self, task: Task, e: ExternalTask, rel: TickReport) -> None:
-        """Rele o que mudou na origem. O motor NAO herda estado dela.
+        """Re-reads what changed at the source. The engine does NOT inherit its state.
 
-        A origem manda no que e dela -- titulo, prioridade, quem esta na task.
-        O estado do motor e do motor: se a pessoa moveu a issue no board, isso
-        muda a *relevancia* do trabalho, nao a etapa em que o worker parou.
+        The source owns what is its own -- title, priority, who is on the task.
+        The engine's state belongs to the engine: if a person moved the issue on
+        the board, that changes the *relevance* of the work, not the stage the
+        worker stopped at.
         """
-        before = task.data.get("situacao_externa")
+        before = task.data.get("normalised_status")
         current_status = e.status.value
         task.title = e.title
         task.priority = e.priority
-        task.data.update({"situacao_externa": current_status,
-                           "estado_externo": e.external_status,
-                           "rotulos": list(e.labels)})
+        task.data.update({"normalised_status": current_status,
+                           "raw_status": e.external_status,
+                           "labels": list(e.labels)})
         task.updated_at = self.clock()
         self.store.save_task(task)
         if before and before != current_status:
             rel.changes += ((task.key, before, current_status),)
-            self._record("mudou_na_origem", task_id=task.id,
+            self._record("changed_at_source", task_id=task.id,
                         summary=f"{before} -> {current_status} ({e.external_status})",
-                        de=before, to_state=current_status)
+                        from_state=before, to_state=current_status)
 
     def _create_task(self, e: ExternalTask) -> Task:
         t = Task(
             id=ids.new_id(ids.TASK), workspace_id=self.workspace.id,
             project_id=e.project or self.project_id, title=e.title,
             state=TaskState.DISCOVERED,
-            externo=ExternalRef(provider=self.tasks_provider.name, key=e.key, url=e.url),
+            external=ExternalRef(provider=self.tasks_provider.name, key=e.key, url=e.url),
             description=e.description, priority=e.priority,
             resources=tuple(e.resources),
-            data={**dict(e.data), "situacao_externa": e.status.value,
-                   "estado_externo": e.external_status,
-                   "rotulos": list(e.labels)})
+            data={**dict(e.data), "normalised_status": e.status.value,
+                   "raw_status": e.external_status,
+                   "labels": list(e.labels)})
         self.store.save_task(t)
         return t
 
-    # ---- 3. analise -----------------------------------------------------
+    # ---- 3. analysis ----------------------------------------------------
     def _analyze(self, rel: TickReport) -> None:
-        """DISCOVERED -> ANALYZING -> READY, calculando risco e recursos.
+        """DISCOVERED -> ANALYZING -> READY, computing risk and resources.
 
-        A analise deste milestone e deterministica: risco por sinais declarados e
-        recursos por convencao. Um PlannerAgent entra aqui depois, pelo mesmo
-        ponto -- ele enriquece `recursos` e `dependencias`, e o resto do motor nao
+        The analysis in this milestone is deterministic: risk from declared
+        signals and resources by convention. A PlannerAgent slots in here later,
+        at the same point -- it enriches `resources` and `dependencies`, and the
         muda.
         """
-        # Trabalho que a origem diz estar bloqueado por terceiros pode voltar a
-        # fila quando a origem mudar de ideia. Este e o unico caminho de volta:
-        # task bloqueada por FALHA nao e desbloqueada por status externo.
+        # Work the source says is blocked by third parties can come back to the
+        # queue when the source changes its mind. This is the only way back: a
+        # task blocked by FAILURE is not unblocked by an external status.
         for t in self.store.tasks(self.workspace.id, [TaskState.BLOCKED]):
-            if t.data.get("bloqueada_por") != "origem":
+            if t.data.get("blocked_by") != "source":
                 continue
             if self._status_of(t).available:
-                t.data.pop("bloqueada_por", None)
+                t.data.pop("blocked_by", None)
                 self.store.save_task(t)
                 self.store.transition(t.id, TaskState.READY, actor="planner",
-                                       reason="a origem liberou o trabalho")
+                                       reason="the source released the work")
                 rel.unblocked_tasks += (t.key,)
 
         for t in self.store.tasks(self.workspace.id, [TaskState.DISCOVERED]):
             self.store.transition(t.id, TaskState.ANALYZING, actor="planner",
-                                   reason="analise inicial")
+                                   reason="initial analysis")
             assessment = self.risk.assess({
                 "action": "task.analyze",
                 "environment": "local",
@@ -376,34 +377,34 @@ class Orchestrator:
             t = self.store.task(t.id)
             t.risk = assessment.level
             if not t.resources:
-                # Sem informacao melhor, a task segura o projeto inteiro. Errar
-                # para o lado de nao paralelizar e barato; errar para o outro
-                # produz dois workers no mesmo arquivo.
+                # With no better information, the task holds the whole project.
+                # Erring on the side of not parallelising is cheap; erring the
+                # other way produces two workers in the same file.
                 t.resources = (f"project:{t.project_id}",)
-            # **A origem decide se o trabalho esta disponivel.**
+            # **The source decides whether the work is available.**
             #
-            # Sem esta guarda o motor despacha um worker sobre uma task que ja
-            # tem gente nela -- medido contra o board real: duas issues em CODING
-            # foram despachadas no primeiro tick. Um agente por cima de uma
-            # pessoa e o pior defeito que este marco poderia deixar passar, e
-            # nenhum teste com dado inventado o teria encontrado.
+            # Without this guard the engine dispatches a worker onto a task that
+            # already has people on it -- measured against the real board: two
+            # issues in CODING were dispatched on the first tick. An agent on top
+            # of a person is the worst defect this milestone could have let
+            # through, and no test with invented data would have found it.
             status = self._status_of(t)
             if not status.available:
-                t.data["bloqueada_por"] = "origem"
+                t.data["blocked_by"] = "source"
                 self.store.save_task(t)
                 self.store.transition(
                     t.id, TaskState.BLOCKED, actor="planner",
-                    reason=f"a origem diz {t.data.get('estado_externo') or status.value}")
+                    reason=f"the source says {t.data.get('raw_status') or status.value}")
                 rel.analyzed += 1
                 continue
 
             self.store.save_task(t)
             self.store.transition(t.id, TaskState.READY, actor="planner",
-                                   reason=f"risco {assessment.level.name}",
-                                   data={"sinais": list(assessment.reasons)})
+                                   reason=f"risk {assessment.level.name}",
+                                   data={"signals": list(assessment.reasons)})
             rel.analyzed += 1
 
-    # ---- 4/5. plano e despacho ------------------------------------------
+    # ---- 4/5. plan and dispatch -----------------------------------------
     def _graph(self) -> DependencyGraph:
         g = DependencyGraph()
         for t in self.store.tasks(self.workspace.id):
@@ -413,24 +414,24 @@ class Orchestrator:
         return g
 
     def plan(self) -> Plan:
-        """Exposto para que a UI e os testes vejam a decisao sem executa-la."""
-        todas = self.store.tasks(self.workspace.id)
-        completed = {t.id for t in todas if t.state is TaskState.DONE}
-        ativos = self.store.active_runs(self.workspace.id)
-        por_id = {t.id: t for t in todas}
+        """Exposed so the UI and the tests can see the decision without running it."""
+        all_tasks = self.store.tasks(self.workspace.id)
+        completed = {t.id for t in all_tasks if t.state is TaskState.DONE}
+        active = self.store.active_runs(self.workspace.id)
+        by_id = {t.id: t for t in all_tasks}
         running_now = {
-            r.task_id: frozenset(por_id[r.task_id].resources)
-            for r in ativos if r.task_id in por_id
+            r.task_id: frozenset(by_id[r.task_id].resources)
+            for r in active if r.task_id in by_id
         }
         candidates = [
             Candidate(task_id=t.id, priority=t.priority,
                       resources=frozenset(t.resources), key=t.key)
-            for t in todas if t.state is TaskState.READY
+            for t in all_tasks if t.state is TaskState.READY
         ]
-        hoje = self.clock().strftime("%Y-%m-%d")
+        today = self.clock().strftime("%Y-%m-%d")
         return plan(candidates, self._graph(), completed, running_now,
-                       self.limits, self.store.dispatch_count(self.workspace.id, hoje),
-                       nomes={t.id: t.key for t in todas})
+                       self.limits, self.store.dispatch_count(self.workspace.id, today),
+                       names={t.id: t.key for t in all_tasks})
 
     def _dispatch(self, rel: TickReport) -> None:
         p = self.plan()
@@ -443,7 +444,7 @@ class Orchestrator:
         for task_id in p.dispatch:
             try:
                 self._run_one(task_id, rel)
-            except Exception as e:   # noqa: BLE001 - um worker nao derruba o tick
+            except Exception as e:   # noqa: BLE001 - one worker does not bring the tick down
                 rel.errors += (f"{task_id}: {type(e).__name__}: {e}"[:200],)
                 self._record("error", task_id=task_id, summary=str(e)[:300])
 
@@ -452,8 +453,8 @@ class Orchestrator:
         run = Run(id=ids.new_id(ids.RUN), task_id=task.id, workspace_id=self.workspace.id,
                   agent="coder", state=RunState.RUNNING, started_at=self.clock())
 
-        # Travar ANTES de transicionar: se a trava falhar, a task nao pode ter
-        # saido de READY -- caso contrario ela fica ASSIGNED sem dono.
+        # Lock BEFORE transitioning: if the lock fails, the task must not have
+        # left READY -- otherwise it sits in ASSIGNED with no owner.
         held: list[str] = []
         for resource in task.resources:
             if self.store.acquire_lease(resource, run.id, self.workspace.id,
@@ -461,8 +462,8 @@ class Orchestrator:
                                         when=self.clock()) is None:
                 for r in held:
                     self.store.release_lease(r, run.id, self.workspace.id)
-                self._record("adiada", task_id=task.id,
-                            summary=f"recurso {resource} ficou ocupado entre o plano e o despacho")
+                self._record("deferred", task_id=task.id,
+                            summary=f"resource {resource} became busy between the plan and the dispatch")
                 return
             held.append(resource)
 
@@ -475,10 +476,10 @@ class Orchestrator:
         self.store.mark_dispatch(self.workspace.id,
                                  self.clock().strftime("%Y-%m-%d"))
         self.store.transition(task.id, TaskState.IMPLEMENTING, actor=run.agent,
-                               reason="worker iniciou")
+                               reason="worker started")
         rel.dispatched += (task.key,)
-        self._record("despachada", task_id=task.id, run_id=run.id,
-                    summary=f"{run.agent} em {area.path}")
+        self._record("dispatched", task_id=task.id, run_id=run.id,
+                    summary=f"{run.agent} in {area.path}")
 
         request = Mission(
             workspace_id=self.workspace.id, workspace_name=self.workspace.name,
@@ -498,45 +499,45 @@ class Orchestrator:
                 max_process_seconds=self.budget.max_seconds))
 
         try:
-            resultado = self.runner.run(request)
+            result = self.runner.run(request)
         except Exception as e:   # noqa: BLE001
-            resultado = None
+            result = None
             run.reason = f"{type(e).__name__}: {e}"[:300]
 
-        self._collect(task.id, run, resultado, held, rel)
+        self._collect(task.id, run, result, held, rel)
 
-    # ---- 6. colheita ----------------------------------------------------
-    def _collect(self, task_id: str, run: Run, resultado, held: list[str],
+    # ---- 6. collection --------------------------------------------------
+    def _collect(self, task_id: str, run: Run, result, held: list[str],
                rel: TickReport) -> None:
         for r in held:
             self.store.release_lease(r, run.id, self.workspace.id)
         run.ended_at = self.clock()
 
-        if resultado is None:
-            self._failed(task_id, run, run.reason or "worker levantou excecao", rel)
+        if result is None:
+            self._failed(task_id, run, run.reason or "the worker raised an exception", rel)
             return
 
-        run.cost_usd, run.tokens = resultado.cost_usd, resultado.tokens
-        run.tool_calls, run.iterations = resultado.tool_calls, 1
+        run.cost_usd, run.tokens = result.cost_usd, result.tokens
+        run.tool_calls, run.iterations = result.tool_calls, 1
 
-        if (resultado.status is ProcessStatus.NEEDS_HUMAN
-                or resultado.escalation_requested):
-            run.state, run.reason = RunState.ABORTED, resultado.summary
+        if (result.status is ProcessStatus.NEEDS_HUMAN
+                or result.escalation_requested):
+            run.state, run.reason = RunState.ABORTED, result.summary
             self.store.save_run(run)
             self.store.transition(task_id, TaskState.WAITING_HUMAN, actor=run.agent,
-                                   reason=resultado.summary)
-            self._escalate(task_id, run, resultado, rel)
+                                   reason=result.summary)
+            self._escalate(task_id, run, result, rel)
             return
 
-        if resultado.status is ProcessStatus.FINISHED:
-            run.state, run.reason = RunState.SUCCEEDED, resultado.summary
+        if result.status is ProcessStatus.FINISHED:
+            run.state, run.reason = RunState.SUCCEEDED, result.summary
             self.store.save_run(run)
             task = self.store.task(task_id)
             self.store.transition(task.id, TaskState.TESTING, actor=run.agent,
-                                   reason=resultado.summary)
+                                   reason=result.summary)
             rel.completed += (task.key,)
-            self._record("implementada", task_id=task.id, run_id=run.id,
-                        summary=resultado.summary[:200])
+            self._record("implemented", task_id=task.id, run_id=run.id,
+                        summary=result.summary[:200])
             # The process finished. Nothing in this engine advances a task out
             # of TESTING yet -- the stages that would are later milestones. So
             # the task is handed to a person instead of being left to look busy
@@ -546,8 +547,8 @@ class Orchestrator:
             self._park_or_escalate(task, run, rel)
             return
 
-        self._failed(task_id, run, resultado.summary, rel,
-                     outcome=resultado.status.value)
+        self._failed(task_id, run, result.summary, rel,
+                     outcome=result.status.value)
 
     def _park_or_escalate(self, task: Task, run: Run, rel: TickReport) -> None:
         """Refuse to leave a task where no tick can pick it up again.
@@ -580,7 +581,7 @@ class Orchestrator:
                     summary=reason[:200], state=current.state.value)
 
     def _failed(self, task_id: str, run: Run, reason: str, rel: TickReport,
-                outcome: str = "error") -> None:
+                outcome: str = "ERROR") -> None:
         run.state, run.reason = RunState.FAILED, reason
         self.store.save_run(run)
 
@@ -588,35 +589,35 @@ class Orchestrator:
         task.attempts += 1
         self.store.save_task(task)
 
-        # A task passa por FAILED antes de qualquer recuperacao. Pular esse
-        # degrau economizaria uma linha e apagaria da timeline o fato de que
-        # houve falha -- que e exatamente o que alguem procura quando a mesma
-        # task volta pela terceira vez.
+        # The task passes through FAILED before any recovery. Skipping that rung
+        # would save one line and erase from the timeline the fact that a failure
+        # happened -- which is exactly what somebody looks for when the same task
+        # comes back for the third time.
         self.store.transition(task.id, TaskState.FAILED, actor=run.agent, reason=reason)
 
         step_name = supervisor.next_recovery_step(task, self.budget)
         if supervisor.no_progress(task, self.store.task_runs(task.id)).stop:
-            step_name = "escalar"
+            step_name = "escalate"
 
-        if step_name == "escalar":
+        if step_name == "escalate":
             self.store.transition(task.id, TaskState.WAITING_HUMAN, actor="supervisor",
                                    reason=reason)
             self._escalate_failure(task, run, reason, step_name, rel)
         else:
             self.store.transition(task.id, TaskState.READY, actor="supervisor",
-                                   reason=f"{step_name} apos falha: {reason}"[:300])
-            self._record("falhou", task_id=task.id, run_id=run.id,
+                                   reason=f"{step_name} after failure: {reason}"[:300])
+            self._record("failed", task_id=task.id, run_id=run.id,
                         summary=f"{reason[:160]} -> {step_name}")
 
-    # ---- escalonamento ---------------------------------------------------
-    def _escalate(self, task_id: str, run: Run, resultado, rel: TickReport) -> None:
+    # ---- escalation ------------------------------------------------------
+    def _escalate(self, task_id: str, run: Run, result, rel: TickReport) -> None:
         task = self.store.task(task_id)
         approval = escalation.build(
             task=task,
-            what_happened=resultado.summary,
-            why_it_matters=(resultado.escalation_reason
-                            or "o agente parou sem conseguir decidir sozinho"),
-            attempts=tuple(resultado.questions),
+            what_happened=result.summary,
+            why_it_matters=(result.escalation_reason
+                            or "the agent stopped without being able to decide on its own"),
+            attempts=tuple(result.questions),
             recommendation=escalation.FOLLOW.id,
             risk=task.risk or RiskLevel.MEDIUM,
             run_id=run.id)
@@ -629,8 +630,8 @@ class Orchestrator:
             for r in self.store.task_runs(task.id)[-3:])
         approval = escalation.build(
             task=task,
-            what_happened=f"{task.attempts} tentativas falharam. Ultima: {reason}"[:400],
-            why_it_matters="a escada de recuperacao acabou; sem decisao sua a task nao sai do lugar",
+            what_happened=f"{task.attempts} attempts failed. Last one: {reason}"[:400],
+            why_it_matters="the recovery ladder ran out; without your decision the task does not move",
             attempts=attempts,
             recommendation=escalation.INVESTIGATE.id,
             risk=task.risk or RiskLevel.MEDIUM,
@@ -638,15 +639,15 @@ class Orchestrator:
         self._publish(approval, task, rel)
 
     def _escalate_cycle(self, p: Plan, rel: TickReport) -> None:
-        chaves = [self.store.task(i).key for i in p.in_cycle]
+        keys = [self.store.task(i).key for i in p.in_cycle]
         task = self.store.task(p.in_cycle[0])
         if any(a.task_id == task.id for a in self.store.open_approvals(self.workspace.id)):
-            return   # ja perguntei; nao repito a cada tick
+            return   # already asked; do not repeat it every tick
         approval = escalation.build(
             task=task,
-            what_happened=f"dependencias circulares entre {', '.join(chaves)}",
-            why_it_matters="nenhuma dessas tasks pode comecar enquanto o ciclo existir",
-            attempts=("montei o grafo a partir dos vinculos declarados na origem",),
+            what_happened=f"circular dependencies between {', '.join(keys)}",
+            why_it_matters="none of these tasks can start while the cycle exists",
+            attempts=("built the graph from the links declared at the source",),
             recommendation=escalation.INVESTIGATE.id,
             risk=RiskLevel.MEDIUM)
         self._publish(approval, task, rel)
@@ -654,12 +655,12 @@ class Orchestrator:
     def _publish(self, approval, task: Task, rel: TickReport) -> None:
         self.store.open_approval(approval)
         rel.escalated += (task.key,)
-        if self.notificador:
+        if self.notifier:
             b = escalation.briefing(approval, task)
-            self.notificador.notify(f"{task.key} precisa de voce", b.what_happened,
-                                    urgency="alta" if approval.risk >= RiskLevel.HIGH else "normal")
+            self.notifier.notify(f"{task.key} needs you", b.what_happened,
+                                    urgency="high" if approval.risk >= RiskLevel.HIGH else "normal")
 
-    # ---- utilidades ------------------------------------------------------
+    # ---- utilities -------------------------------------------------------
     def _record(self, kind: str, summary: str = "", task_id: str | None = None,
                run_id: str | None = None, **data: Any) -> None:
         self.store.record_event(Event(
@@ -667,19 +668,19 @@ class Orchestrator:
             task_id=task_id, run_id=run_id, summary=summary, data=data))
 
     def _status_of(self, t: Task) -> ExternalStatus:
-        """A situacao na origem, reconstruida do que foi persistido.
+        """The status at the source, rebuilt from what was persisted.
 
-        Provedor sem nocao de situacao devolve DESCONHECIDA -- que NAO e
-        disponivel. Conservador de proposito: nao saber se alguem esta na task
-        precisa custar um adiamento, nunca um atropelo.
+        A provider with no notion of status returns UNKNOWN -- which is NOT
+        available. Deliberately conservative: not knowing whether somebody is on
+        the task has to cost a deferral, never a collision.
         """
-        raw = t.data.get("situacao_externa")
+        raw = t.data.get("normalised_status")
         try:
             return ExternalStatus(raw)
         except ValueError:
             return ExternalStatus.UNKNOWN
 
-    def escopo(self, agent: str = "engine", task_id: str | None = None,
+    def scope(self, agent: str = "engine", task_id: str | None = None,
                run_id: str | None = None, project: str = "*") -> Scope:
         return Scope(workspace_id=self.workspace.id, workspace=self.workspace.name,
                       project=project, autonomy=self.workspace.max_autonomy,

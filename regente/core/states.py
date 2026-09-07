@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-"""A maquina de estados da unidade de trabalho.
+"""The state machine of the work unit.
 
-Duas regras que valem para o arquivo inteiro:
+Two rules that hold for the whole file:
 
-1. **A tabela e explicita.** Nao existe "qualquer estado vai para qualquer
-   estado". Transicao fora da tabela levanta `TransicaoInvalida` -- isso e o que
-   transforma um bug de orquestracao em error alto, em vez de virar uma task
-   perdida num estado que ninguem sabe interpretar.
+1. **The table is explicit.** There is no "any state goes to any state". A
+   transition outside the table raises `InvalidTransition` -- that is what turns
+   an orchestration bug into a loud error, instead of a task stranded in a state
+   nobody knows how to interpret.
 
-2. **`WAITING_HUMAN` guarda de onde veio.** Ele nao e um destino: e uma pausa. A
-   task volta para o estado de origem quando o humano decide, e por isso a
-   transicao de saida e validada contra `retomaveis()`, nao contra uma lista
-   fixa. Sem isso, uma aprovacao de deploy devolveria a task para o comeco.
+2. **`WAITING_HUMAN` remembers where it came from.** It is not a destination: it
+   is a pause. The task returns to its state of origin once the human decides,
+   which is why the exit transition is validated against `resumable_from()` and
+   not against a fixed list. Without that, approving a deploy would send the
+   task back to the beginning.
 """
 
 from __future__ import annotations
@@ -44,56 +45,61 @@ class TaskState(str, Enum):
 
 S = TaskState
 
-#: Estados dos quais nada mais sai. Trabalho aqui nao volta a ser agendado.
+#: States nothing leaves. Work that lands here is never scheduled again.
 TERMINAL: frozenset[TaskState] = frozenset({S.DONE, S.CANCELLED})
 
-#: Estados em que existe um worker vivo (ou deveria existir). Sao os que a
-#: recuperacao pos-crash precisa varrer.
+#: States in which a live worker exists (or ought to). These are the ones
+#: post-crash recovery has to sweep.
 ACTIVE: frozenset[TaskState] = frozenset({
     S.ASSIGNED, S.IMPLEMENTING, S.TESTING, S.CI_RUNNING,
     S.AI_REVIEW, S.MERGING, S.DEPLOYING,
 })
 
-#: Saidas de emergencia disponiveis a partir de qualquer estado nao-terminal.
-#: `WAITING_HUMAN` esta aqui porque escalar e sempre legitimo -- o motor nunca
-#: fica sem a opcao de parar e perguntar.
+#: Emergency exits available from any non-terminal state. `WAITING_HUMAN` is
+#: here because escalating is always legitimate -- the engine is never left
+#: without the option of stopping to ask.
 _ESCAPES: frozenset[TaskState] = frozenset({
     S.BLOCKED, S.FAILED, S.CANCELLED, S.WAITING_HUMAN,
 })
 
-#: Devolucao a fila: o worker sumiu e o trabalho volta a ser agendavel.
+#: Return to the queue: the worker vanished and the work becomes schedulable
+#: again.
 #:
-#: Sem esta transicao, a task recuperada de um crash fica num estado ativo que
-#: nenhum tick agenda -- viva no papel e parada de verdade. E o pior modo de
-#: falha possivel para um motor que promete retomar sozinho, porque nada acusa:
-#: nao ha error, nao ha fila, so uma task que nunca mais anda.
-_DEVOLVEM_A_FILA: frozenset[TaskState] = ACTIVE
+#: Without this transition, a task recovered from a crash sits in an active
+#: state that no tick ever schedules -- alive on paper and stopped in practice.
+#: It is the worst possible failure mode for an engine that promises to resume
+#: on its own, because nothing flags it: no error, no queue, just a task that
+#: never moves again.
+_RETURN_TO_QUEUE: frozenset[TaskState] = ACTIVE
 
-#: Transicoes de progresso. As saidas de emergencia sao somadas depois.
-_AVANCOS: dict[TaskState, frozenset[TaskState]] = {
+#: Progress transitions. The emergency exits are added on top afterwards.
+_ADVANCES: dict[TaskState, frozenset[TaskState]] = {
     S.DISCOVERED:    frozenset({S.ANALYZING}),
     S.ANALYZING:     frozenset({S.READY}),
     S.READY:         frozenset({S.ASSIGNED}),
-    # ASSIGNED volta a READY quando o worker morre antes de comecar: a task
-    # perde o dono e volta para a fila, sem passar por FAILED.
+    # ASSIGNED goes back to READY when the worker dies before starting: the task
+    # loses its owner and returns to the queue without passing through FAILED.
     S.ASSIGNED:      frozenset({S.IMPLEMENTING, S.READY}),
     S.IMPLEMENTING:  frozenset({S.TESTING}),
-    # TESTING volta a IMPLEMENTING no ciclo normal de correcao: teste vermelho
-    # nao e falha do motor, e trabalho.
+    # TESTING goes back to IMPLEMENTING in the normal fix cycle: a red test is
+    # not an engine failure, it is work.
     S.TESTING:       frozenset({S.PR_CREATED, S.IMPLEMENTING}),
     S.PR_CREATED:    frozenset({S.CI_RUNNING, S.AI_REVIEW}),
     S.CI_RUNNING:    frozenset({S.AI_REVIEW, S.IMPLEMENTING}),
     S.AI_REVIEW:     frozenset({S.APPROVED, S.IMPLEMENTING}),
     S.APPROVED:      frozenset({S.MERGING}),
-    # MERGING pode ir direto a DONE em projeto sem deploy governado pelo motor.
+    # MERGING can go straight to DONE on a project whose deploy the engine does
+    # not govern.
     S.MERGING:       frozenset({S.DEPLOYING, S.DONE}),
     S.DEPLOYING:     frozenset({S.QA_STAGING, S.DONE}),
-    # QA reprovada devolve a task ao codigo -- o caminho mais caro e o mais comum.
+    # A failed QA sends the task back to code -- the most expensive path is also
+    # the most common one.
     S.QA_STAGING:    frozenset({S.DONE, S.IMPLEMENTING}),
-    # Desbloquear/retentar reentra pela analise: o mundo mudou desde que parou.
+    # Unblocking/retrying re-enters through analysis: the world moved on while
+    # the task was stopped.
     S.BLOCKED:       frozenset({S.READY, S.ANALYZING}),
     S.FAILED:        frozenset({S.READY, S.ANALYZING}),
-    S.WAITING_HUMAN: frozenset(),   # saida e calculada, ver `retomaveis()`
+    S.WAITING_HUMAN: frozenset(),   # the exit is computed, see `resumable_from()`
     S.DONE:          frozenset(),
     S.CANCELLED:     frozenset(),
 }
@@ -101,7 +107,7 @@ _AVANCOS: dict[TaskState, frozenset[TaskState]] = {
 
 #: States this engine currently has code to move a task OUT of.
 #:
-#: Not the same thing as `_AVANCOS`, which says which transitions are *legal*.
+#: Not the same thing as `_ADVANCES`, which says which transitions are *legal*.
 #: A transition can be perfectly legal and have nobody who performs it, and that
 #: gap is invisible: the task sits in a busy-looking state, the scheduler skips
 #: it because it appears to be in progress, and the engine reports quiet, clean
@@ -135,55 +141,56 @@ def is_terminus(state: TaskState) -> bool:
 
 
 def allowed_from(source: TaskState) -> frozenset[TaskState]:
-    """Todos os destinos legais a partir de `origem`."""
+    """Every legal destination reachable from `source`."""
     if source in TERMINAL:
         return frozenset()
-    output = _AVANCOS[source] | (_ESCAPES - {source})
-    if source in _DEVOLVEM_A_FILA:
+    output = _ADVANCES[source] | (_ESCAPES - {source})
+    if source in _RETURN_TO_QUEUE:
         output |= {S.READY}
     return output
 
 
-def resumable_from(pausado_em: TaskState) -> frozenset[TaskState]:
-    """Destinos legais ao sair de WAITING_HUMAN, dado o estado em que pausou.
+def resumable_from(paused_at: TaskState) -> frozenset[TaskState]:
+    """Legal destinations when leaving WAITING_HUMAN, given where it paused.
 
-    O humano pode: mandar seguir (o proprio estado de origem), mandar refazer
-    (o que aquele estado ja alcancava), devolver a fila ou encerrar. Ele nao pode
-    teletransportar a task para um estado que ela nao alcancaria sozinha --
-    aprovar um deploy nao e o mesmo que declarar a task pronta.
+    The human can: say carry on (the state of origin itself), say redo it (what
+    that state could already reach), send it back to the queue, or close it out.
+    They cannot teleport the task into a state it could not reach on its own --
+    approving a deploy is not the same as declaring the task finished.
 
-    A devolucao a fila estava faltando aqui, e a falta era ao contrario do que a
-    propria regra diz: `allowed_from` ja deixa qualquer estado ativo voltar a
-    READY, entao escalar uma task REDUZIA as opcoes do humano abaixo das que o
-    motor tinha sozinho. Na pratica isso fechava o unico caminho util depois de
-    uma escalada -- mandar refazer -- e a decisao morria com InvalidTransition.
-    Achado por uma corrida longa, nao por leitura.
+    Returning to the queue was missing here, and the omission ran against what
+    the rule itself says: `allowed_from` already lets any active state go back
+    to READY, so escalating a task REDUCED the human's options below the ones
+    the engine had on its own. In practice that closed the only useful path
+    after an escalation -- saying redo it -- and the decision died with
+    InvalidTransition. Found by a long run, not by reading.
     """
-    if pausado_em in TERMINAL:
+    if paused_at in TERMINAL:
         return frozenset()
-    saidas = (frozenset({pausado_em}) | _AVANCOS[pausado_em]
-              | (_ESCAPES - {S.WAITING_HUMAN}))
-    if pausado_em in _DEVOLVEM_A_FILA:
-        saidas |= {S.READY}
-    return saidas
+    exits = (frozenset({paused_at}) | _ADVANCES[paused_at]
+             | (_ESCAPES - {S.WAITING_HUMAN}))
+    if paused_at in _RETURN_TO_QUEUE:
+        exits |= {S.READY}
+    return exits
 
 
-def can(source: TaskState, destination: TaskState, pausado_em: TaskState | None = None) -> bool:
+def can(source: TaskState, destination: TaskState, paused_at: TaskState | None = None) -> bool:
     if source is S.WAITING_HUMAN:
-        if pausado_em is None:
-            # Sem memoria de onde pausou, so restam as saidas que nao dependem
-            # dela. Devolver a task ao fluxo exigiria adivinhar.
+        if paused_at is None:
+            # With no memory of where it paused, only the exits that do not
+            # depend on it remain. Returning the task to the flow would mean
+            # guessing.
             return destination in (_ESCAPES - {S.WAITING_HUMAN})
-        return destination in resumable_from(pausado_em)
+        return destination in resumable_from(paused_at)
     return destination in allowed_from(source)
 
 
-def require(source: TaskState, destination: TaskState, pausado_em: TaskState | None = None) -> None:
-    """Valida ou levanta. Unico ponto por onde uma transicao entra no motor."""
-    if not can(source, destination, pausado_em):
-        contexto = f" (pausada em {pausado_em.value})" if pausado_em else ""
+def require(source: TaskState, destination: TaskState, paused_at: TaskState | None = None) -> None:
+    """Validate or raise. The only door through which a transition enters the engine."""
+    if not can(source, destination, paused_at):
+        context = f" (paused at {paused_at.value})" if paused_at else ""
         raise InvalidTransition(
-            f"{source.value} -> {destination.value} nao e uma transicao valida{contexto}"
+            f"{source.value} -> {destination.value} is not a valid transition{context}"
         )
 
 

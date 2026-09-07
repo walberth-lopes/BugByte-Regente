@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Registro de adapters: nome na configuracao -> fabrica.
+"""Adapter registry: name in the configuration -> factory.
 
-Este e o **unico** modulo do motor que importa adapters, e ele fica fora do Core
-e do Engine de proposito. Adicionar um provedor novo e adicionar uma entrada
-aqui; se algum dia for preciso mexer em `core/` ou `engine/` para isso, a
-abstracao falhou -- e o teste de fronteira acusa.
+This is the **only** module in the engine that imports adapters, and it sits
+outside the Core and the Engine on purpose. Adding a new provider means adding an
+entry here; if it ever becomes necessary to touch `core/` or `engine/` to do
+that, the abstraction has failed -- and the boundary test says so.
 
-O import e tardio (dentro da fabrica) para que um adapter com dependencia pesada
-nao seja exigido de quem nao o usa: o motor precisa subir num ambiente sem SDK
-de nuvem nenhum.
+The import is late (inside the factory) so that an adapter with a heavy
+dependency is not imposed on those who do not use it: the engine has to start in
+an environment with no cloud SDK at all.
 """
 
 from __future__ import annotations
@@ -17,33 +17,33 @@ from typing import Any, Callable
 
 from ..ports import Capability, Port
 
-Fabrica = Callable[[dict[str, Any]], Port]
-_REGISTRO: dict[tuple[Capability, str], Fabrica] = {}
+Factory = Callable[[dict[str, Any]], Port]
+_REGISTRY: dict[tuple[Capability, str], Factory] = {}
 
 
-def register(cap: Capability, name: str, fabrica: Fabrica) -> None:
-    _REGISTRO[(cap, name)] = fabrica
+def register(cap: Capability, name: str, factory: Factory) -> None:
+    _REGISTRY[(cap, name)] = factory
 
 
 def create(cap: Capability, name: str, options: dict[str, Any] | None = None) -> Port:
     key = (cap, name)
-    if key not in _REGISTRO:
-        available = sorted(n for (c, n) in _REGISTRO if c == cap)
+    if key not in _REGISTRY:
+        available = sorted(n for (c, n) in _REGISTRY if c == cap)
         raise KeyError(
-            f"nao existe adapter '{name}' para {cap.value}. "
-            f"Disponiveis: {', '.join(available) or 'nenhum'}")
-    return _REGISTRO[key](options or {})
+            f"there is no adapter '{name}' for {cap.value}. "
+            f"Available: {', '.join(available) or 'none'}")
+    return _REGISTRY[key](options or {})
 
 
 def available(cap: Capability | None = None) -> dict[str, list[str]]:
     output: dict[str, list[str]] = {}
-    for (c, n) in sorted(_REGISTRO, key=lambda k: (k[0].value, k[1])):
+    for (c, n) in sorted(_REGISTRY, key=lambda k: (k[0].value, k[1])):
         if cap is None or c == cap:
             output.setdefault(c.value, []).append(n)
     return output
 
 
-# ---- fabricas embutidas -------------------------------------------------
+# ---- built-in factories -------------------------------------------------
 
 def _tasks_filesystem(o: dict[str, Any]) -> Port:
     from .tasks.filesystem import FilesystemTasks
@@ -61,35 +61,35 @@ def _workspace_worktree(o: dict[str, Any]) -> Port:
 
 
 def _tasks_jira(o: dict[str, Any]) -> Port:
-    """Jira Cloud, somente leitura.
+    """Jira Cloud, read only.
 
-    Dois transportes pelo mesmo adapter: `http` fala com o site de verdade,
-    `instantaneo` reproduz respostas reais gravadas. O adapter e identico nos
-    dois casos -- e por isso o teste de contrato exercita o mesmo codigo que
-    roda contra a rede.
+    Two transports behind one adapter: `http` talks to the real site,
+    `snapshot` replays real responses already captured. The adapter is identical
+    in both cases -- which is why the contract test exercises the same code that
+    runs against the network.
     """
     from .tasks.jira import JiraTasks
     from .tasks.transport import HttpTransport, SnapshotTransport
 
     observer = o.get("observer")
-    modo = o.get("transport", "http")
-    if modo == "instantaneo":
+    mode = o.get("transport", "http")
+    if mode == "snapshot":
         from pathlib import Path
         transport = SnapshotTransport(
             directory=Path(o["snapshots"]), observer=observer)
-    elif modo == "http":
+    elif mode == "http":
         site = o["site"].rstrip("/")
-        secrets = o["segredos"]           # SecretProvider, injetado pela composicao
-        ref_usuario = o.get("user_ref") or "env:JIRA_EMAIL"
+        secrets = o["secrets"]            # SecretProvider, injected by the composition
+        ref_user = o.get("user_ref") or "env:JIRA_EMAIL"
         ref_token = o.get("token_ref") or "env:JIRA_API_TOKEN"
         transport = HttpTransport(
             base_url=site,
-            credencial=lambda: (secrets.resolve(ref_usuario), secrets.resolve(ref_token)),
+            credential=lambda: (secrets.resolve(ref_user), secrets.resolve(ref_token)),
             timeout=int(o.get("timeout", 30)),
-            max_attempts=int(o.get("max_tentativas", 3)),
+            max_attempts=int(o.get("max_attempts", 3)),
             observer=observer)
     else:
-        raise KeyError(f"transport desconhecido para jira: {modo!r}. Use http ou instantaneo")
+        raise KeyError(f"unknown transport for jira: {mode!r}. Use http or snapshot")
 
     return JiraTasks(
         transport=transport,

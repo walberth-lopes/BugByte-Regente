@@ -163,7 +163,7 @@ def test_a_dead_worker_is_detected_by_its_lease_and_the_task_returns(tmp_path):
         # again, so reading the state at the end sees the NEXT thing that
         # happened and would fail while the engine is behaving correctly.
         recovered = [e for e in s.store.events(s.workspace_id, limit=200)
-                     if e.kind == "recuperada"]
+                     if e.kind == "recovered"]
         assert recovered, "the recovery must be on the record"
         assert "READY" in recovered[0].summary, (
             "the task must go back where the scheduler can pick it up")
@@ -363,23 +363,23 @@ def test_a_decision_actually_moves_the_task(soak):
                if t.state is TaskState.WAITING_HUMAN]
     assert waiting, "something should be waiting for a person by now"
 
-    assert soak.decide_everything(choice="investigar") == len(waiting)
+    assert soak.decide_everything(choice="investigate") == len(waiting)
     assert not soak.store.open_approvals(soak.workspace_id)
 
     resumed = soak.tick(99)
     applied = [e for e in soak.store.events(soak.workspace_id, limit=400)
-               if e.kind == "decisao_aplicada"]
+               if e.kind == "decision_applied"]
     assert len(applied) == len(waiting), (
         "every decision must be acted on by the next tick")
-    assert all("investigar" in e.summary for e in applied)
+    assert all("investigate" in e.summary for e in applied)
 
     # The tick then dispatched them again, which is the point: the queue moved.
     assert resumed.dispatched == len(waiting)
 
 
 @pytest.mark.parametrize("choice,expected", [
-    ("cancelar", TaskState.CANCELLED),
-    ("bloquear", TaskState.BLOCKED),
+    ("cancel", TaskState.CANCELLED),
+    ("block", TaskState.BLOCKED),
 ])
 def test_every_decision_option_has_a_destination(soak, choice, expected):
     for n in range(1, 5):
@@ -408,8 +408,8 @@ def test_an_unrecognised_decision_still_moves_the_task(soak):
         # Options are validated by the store, so reach past it to produce the
         # condition a future option would produce.
         soak.store.decide_approval(approval.id, approval.options[0].id,
-                                   per="tester")
-        soak.store._con.execute("UPDATE approvals SET choice='algo_novo' WHERE id=?",
+                                   by="tester")
+        soak.store._conn.execute("UPDATE approvals SET choice='algo_novo' WHERE id=?",
                                 (approval.id,))
     soak.tick(60)
     for task in waiting:

@@ -410,7 +410,7 @@ def _provider_failures(store, workspace_id, at) -> Signal:
                    if any(mark in kind for mark in PROVIDER_TROUBLE))
     if failures == 0:
         return Signal("provider_failures", Level.OK, "none in the last 24h")
-    ticks = recent.get("tick_inicio", 0)
+    ticks = recent.get("tick_start", 0)
     detail = f"{failures} provider failure(s) in the last 24h"
     if ticks:
         detail += f" across {ticks} tick(s)"

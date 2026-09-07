@@ -1,341 +1,347 @@
-# Arquitetura
+# Architecture
 
-Regente é um **sistema operacional para agentes de engenharia de software**. O
-agente trabalha, o Orchestrator coordena, as ferramentas executam, as policies
-protegem, e a fila chama o humano só quando a resposta não existe dentro do
-sistema.
+Regente is an **operating system for software engineering agents**. The agent
+works, the Orchestrator coordinates, the tools execute, the policies protect, and
+the queue calls the human only when the answer does not exist inside the system.
 
-## As camadas
+## The layers
 
 ```
-                    cli / ui          superfície
+                    cli / ui          surface
                        │
-                   app/              raiz de composição — o único lugar
-                       │             que conhece config + adapters + motor
+                   app/              composition root — the only place
+                       │             that knows config + adapters + engine
         ┌──────────────┴──────────────┐
      engine/                      adapters/
    orchestrator                jira, github, gcloud…
-   scheduler                   (todo nome de ferramenta vive aqui)
+   scheduler                   (every tool name lives here)
    store, gate                        │
    supervisor                         │
         └──────────────┬──────────────┘
-                    ports/            contratos de capacidade
+                    ports/            capability contracts
                        │
-                    core/             domínio puro: sem I/O, sem fornecedor
+                    core/             pure domain: no I/O, no provider
 ```
 
-A dependência aponta sempre para dentro. `core/` não importa nada; `engine/` fala
-só com `ports/`; adapters implementam portas; `app/` amarra tudo.
+The dependency always points inwards. `core/` imports nothing; `engine/` talks
+only to `ports/`; adapters implement ports; `app/` ties it all together.
 
-**Isso não é convenção — é testado.** `tests/test_fronteiras.py` lê o código-fonte
-e falha se `core/` importar I/O, se `engine/` importar adapter, ou se um nome de
-ferramenta aparecer em código (não em docstring) dentro de `core/`, `engine/` ou
-`ports/`. A regra quebra em CI, não em revisão de código.
+**This is not a convention — it is tested.** `tests/test_boundaries.py` reads the
+source and fails if `core/` imports I/O, if `engine/` imports an adapter, or if a
+tool's name appears in code (not in a docstring) inside `core/`, `engine/` or
+`ports/`. The rule breaks in CI, not in code review.
 
-## As três invariantes
+## The three invariants
 
-**1. Estado por diferença, no disco.** O motor nunca depende do contexto de
-conversa de um agente para saber onde o trabalho parou. Task, Run, Event,
-Approval e Lease vivem em SQLite. Matar o processo no meio de um despacho é
-operação suportada: o lease vence, o run vira `INTERRUPTED`, a task volta para a
-fila e o próximo tick continua. O tick recorrente **é** o mecanismo de retry — não
-existe código de retry no meio do fluxo.
+**1. State by difference, on disk.** The engine never depends on an agent's
+conversation context to know where the work stopped. Task, Run, Event, Approval
+and Lease live in SQLite. Killing the process in the middle of a dispatch is a
+supported operation: the lease expires, the run becomes `INTERRUPTED`, the task
+returns to the queue and the next tick carries on. The recurring tick **is** the
+retry mechanism — there is no retry code in the middle of the flow.
 
-**2. Nenhuma ação crítica depende do julgamento do LLM.** Todo pedido de
-ferramenta atravessa o portão:
+**2. No critical action depends on the LLM's judgement.** Every tool request
+crosses the gate:
 
 ```
-Agent → ToolRequest → [risco] → [policy] → ALLOW / DENY / HUMAN_APPROVAL → Tool
+Agent → ToolRequest → [risk] → [policy] → ALLOW / DENY / HUMAN_APPROVAL → Tool
 ```
 
-O portão refaz o julgamento do zero. Não aceita risco pré-calculado, nem
-justificativa, nem veredito de quem chama. Um agente convencido por um comentário
-de PR ainda esbarra nele — porque quem decide não lê opinião.
+The gate redoes the judgement from scratch. It accepts no pre-computed risk, no
+justification and no verdict from the caller. An agent talked round by a PR
+comment still runs into it — because what decides does not read opinion.
 
-**3. Conteúdo externo é dado, nunca ordem.** Título de task, descrição,
-comentário, diff: tudo é texto escrito por terceiros. Tentativa de manipulação
-vira achado, não instrução.
+**3. External content is data, never an order.** Task title, description,
+comment, diff: all of it is text written by third parties. An attempt at
+manipulation becomes a finding, not an instruction.
 
-## Risco e policy decidem coisas diferentes
+## Risk and policy decide different things
 
-Esta é a distinção que define o produto, e é a que faz o dono não virar gargalo.
+This is the distinction that defines the product, and the one that keeps the
+owner from becoming the bottleneck.
 
-| | pergunta que responde | efeito de "alto" |
+| | question it answers | effect of "high" |
 |---|---|---|
-| **Policy** | *quem pode fazer isso?* | `HUMAN_APPROVAL` — a organização decidiu que essa assinatura tem dono |
-| **Risco** | *quanta prova essa ação exige?* | segunda passada adversarial — compra **trabalho**, não espera |
+| **Policy** | *who may do this?* | `HUMAN_APPROVAL` — the organisation decided this signature has an owner |
+| **Risk** | *how much proof does this action demand?* | an adversarial second pass — it buys **work**, not waiting |
 
-Se risco alto virasse fila de espera, todo PR bom ficaria parado aguardando
-assinatura — exatamente o custo que o motor existe para eliminar. Quem para o
-trabalho é a regra escrita, não a hesitação do modelo.
+If high risk became a waiting queue, every good PR would sit waiting for a
+signature — exactly the cost the engine exists to remove. What stops work is the
+written rule, not the model's hesitation.
 
-Ortogonal aos dois: o **teto de autonomia** (L0 leitura → L4 produção) por
-workspace e projeto. Estourar o teto vira `HUMAN_APPROVAL`, nunca `DENY` — o
-humano continua podendo autorizar. Quem nega de vez é a regra.
+Orthogonal to both: the **autonomy ceiling** (L0 read → L4 production) per
+workspace and project. Breaching the ceiling becomes `HUMAN_APPROVAL`, never
+`DENY` — the human can still authorise it. What refuses outright is the rule.
 
-O Policy Engine é **default deny**: ação sem regra que a permita não acontece. E
-**vence o mais restritivo**: um `DENY` não é anulado por nenhum `ALLOW`, porque
-ordem de arquivo não pode decidir segurança.
+The Policy Engine is **default deny**: an action with no rule allowing it does
+not happen. And **the most restrictive wins**: a `DENY` is not cancelled by any
+`ALLOW`, because file order must not decide security.
 
-## Paralelismo sem atropelo
+## Parallelism without collisions
 
-O Orchestrator monta um grafo de dependências e o scheduler escolhe o que roda
-agora. Antes de abrir dois slots ele verifica quatro coisas: dependências
-concluídas, conflito de recurso, ciclo, e limites (slots, teto diário).
+The Orchestrator builds a dependency graph and the scheduler picks what runs now.
+Before opening two slots it checks four things: dependencies completed, resource
+conflict, cycle, and limits (slots, daily cap).
 
-Conflito é **declarado**, não adivinhado. Cada task diz quais chaves de recurso
-toca em exclusividade — `repo:api`, `migration:worker`, `file:src/auth.py` — e
-qualquer interseção é exclusão mútua. Detectar conflito semântico de verdade
-exige ler o código: isso é trabalho de um agente de análise, que alimenta essa
-lista. O scheduler nunca conclui sozinho que dois diffs "provavelmente" convivem.
+A conflict is **declared**, not guessed. Each task states which resource keys it
+touches exclusively — `repo:api`, `migration:worker`, `file:src/auth.py` — and
+any intersection is mutual exclusion. Detecting a genuine semantic conflict
+requires reading the code: that is the job of an analysis agent, which feeds this
+list. The scheduler never concludes on its own that two diffs "probably" coexist.
 
-Reserva acontece dentro do próprio plano: duas candidatas do mesmo tick que
-compartilham recurso não saem juntas. Esquecer isso é o jeito clássico de
-despachar dois workers para a mesma migration.
+Reservation happens inside the plan itself: two candidates from the same tick
+that share a resource do not go out together. Forgetting this is the classic way
+to dispatch two workers onto the same migration.
 
-## A máquina de estados
+## The state machine
 
-Dezoito estados, tabela explícita, transição fora dela levanta erro. Três
-propriedades que não são óbvias:
+Eighteen states, an explicit table, and a transition outside it raises an error.
+Three properties that are not obvious:
 
-- **`WAITING_HUMAN` guarda de onde pausou.** Não é destino, é pausa. O humano
-  manda seguir, refazer ou encerrar — mas não teletransporta a task: aprovar um
-  deploy não é declarar o trabalho pronto.
-- **Escalar é sempre possível.** De qualquer estado não-terminal existe caminho
-  para `WAITING_HUMAN`. O motor nunca fica sem a opção de parar e perguntar.
-- **Estado ativo devolve à fila.** Worker morto → `READY`. Manter a task no
-  estado ativo "para preservar o progresso" não preserva nada: o progresso vive
-  na área de trabalho e na branch, não no rótulo. A task ficaria viva no papel e
-  parada de verdade — o pior modo de falha possível, porque nada acusa.
+- **`WAITING_HUMAN` remembers where it paused.** It is not a destination, it is a
+  pause. The human says carry on, redo, or close out — but does not teleport the
+  task: approving a deploy is not declaring the work finished.
+- **Escalating is always possible.** From any non-terminal state there is a path
+  to `WAITING_HUMAN`. The engine is never left without the option of stopping to
+  ask.
+- **An active state returns to the queue.** Dead worker → `READY`. Keeping the
+  task in the active state "to preserve the progress" preserves nothing: the
+  progress lives in the work area and in the branch, not in the label. The task
+  would be alive on paper and stopped in practice — the worst possible failure
+  mode, because nothing flags it.
 
-O que preserva o trabalho parcial é a **área ser endereçada pela task, não pela
-tentativa**: a retomada reabre a mesma árvore, com os commits WIP.
+What preserves the partial work is the **area being addressed by the task, not by
+the attempt**: the resumption reopens the same tree, with the WIP commits.
 
-## Escada de recuperação
+## Recovery ladder
 
 ```
-falhou → retenta → troca de estratégia → escala ao humano
+failed → retry → change of strategy → escalate to the human
 ```
 
-Finita de propósito, e cada degrau precisa ser *diferente* do anterior. Retentar
-idêntico depois de um erro determinístico é gastar dinheiro mais devagar. Além
-disso, todo agente tem teto de iterações, tool calls, custo e tempo, e um detector
-de não-progresso que acusa quatro padrões: mesmo erro, mesmo arquivo, mesmo teste,
-mesma decisão.
+Finite on purpose, and each rung has to be *different* from the previous one.
+Retrying identically after a deterministic error is spending money more slowly.
+On top of that, every agent has a ceiling on iterations, tool calls, cost and
+time, and a non-progress detector that flags four patterns: same error, same
+file, same test, same decision.
 
-## O que entra na fila NEEDS ME
+## What enters the NEEDS ME queue
 
-Critério estreito, porque encher a fila é o jeito garantido de fazer o dono parar
-de lê-la. Entra só o que **não tem resposta dentro do sistema**: autoridade humana
-exigida por policy, contrato ambíguo que leitura extra não resolve, escada de
-recuperação esgotada, ou backlog em ciclo.
+A narrow criterion, because filling the queue is the guaranteed way to make the
+owner stop reading it. Only what **has no answer inside the system** gets in:
+human authority required by policy, an ambiguous contract that extra reading does
+not resolve, an exhausted recovery ladder, or a backlog in a cycle.
 
-**Não entra:** risco alto (compra segunda passada), teste vermelho (é trabalho),
-erro transitório (é retentativa).
+**What does not get in:** high risk (it buys a second pass), a red test (it is
+work), a transient error (it is a retry).
 
-Cada item carrega decisão, não diagnóstico: o que aconteceu, por que importa, o
-que o agente já tentou, opções, recomendação, risco. Log fica no evento, sob
-demanda.
+Each item carries a decision, not a diagnosis: what happened, why it matters,
+what the agent already tried, options, recommendation, risk. Logs stay in the
+event, on demand.
 
-## Operacao continua: tempo, falha e volta
+## Continuous operation: time, failure and the way back
 
-O motor existe para trabalhar sem alguem olhando. Ate o marco 8 isso era uma
-premissa, nao um fato -- toda prova anterior era uma invocacao supervisionada.
+The engine exists to work with nobody watching. Until milestone 8 that was an
+assumption, not a fact -- every earlier proof was a supervised invocation.
 
-### Um relogio, nao dois
+### One clock, not two
 
-Toda a recuperacao deste motor e comparacao de timestamp: lease vencido prova
-que o worker morreu, `updated_at` diz ha quanto tempo a task nao anda, o dia
-decide quando o orcamento reinicia. Se quem carimba e quem pergunta usam
-relogios diferentes, nada disso funciona -- e nao falha ruidosamente, falha em
-silencio.
+All of this engine's recovery is timestamp comparison: an expired lease proves
+the worker died, `updated_at` says how long the task has not moved, the day
+decides when the budget resets. If whoever stamps and whoever asks read
+different clocks, none of it works -- and it does not fail loudly, it fails
+silently.
 
-Foi o que aconteceu: lease carimbado por um relogio, verificado contra outro,
-run carimbado por um terceiro. Um run ficou `RUNNING` com lease "vivo" por 103
-ticks seguidos -- quatro dias simulados -- e o health respondeu OK o tempo todo.
+Which is what happened: a lease stamped by one clock, checked against another, a
+run stamped by a third. One run stayed `RUNNING` with a "live" lease for 103
+consecutive ticks -- four simulated days -- and health answered OK throughout.
 
-Agora `SqliteStore` e `Orchestrator` recebem o mesmo `clock`. Producao nao passa
-nada e recebe o relogio real, como antes.
+`SqliteStore` and `Orchestrator` now receive the same `clock`. Production passes
+nothing and gets the real clock, as before.
 
-### O motor nunca estaciona uma task
+### The engine never parks a task
 
-Transicao legal e transicao que alguem executa sao coisas diferentes, e a
-diferenca e invisivel: a task fica num estado que parece ocupado, o scheduler a
-ignora porque parece ocupada, e os ticks seguintes voltam limpos para sempre.
+A legal transition and a transition somebody actually performs are different
+things, and the difference is invisible: the task sits in a state that looks
+busy, the scheduler skips it because it looks busy, and every later tick comes
+back clean forever.
 
-`ENGINE_ADVANCES` diz de quais estados este motor tem codigo para sair.
-`is_terminus()` acusa estado ativo do qual ele nao sai. Ao chegar num terminus, a
-task vai para uma pessoa -- com motivo escrito -- em vez de ficar parecendo
-ocupada. Quando um marco futuro adicionar a etapa, adiciona o estado la.
+`ENGINE_ADVANCES` says which states this engine has code to leave.
+`is_terminus()` flags an active state it cannot leave. On reaching a terminus the
+task goes to a person -- with a written reason -- instead of sitting there
+looking busy. When a future milestone adds the stage, it adds the state there.
 
-### A porta de volta
+### The door back
 
-Escalar so serve se der para voltar. `regente decide` gravava a escolha e
-imprimia que o proximo tick retomaria a task; nenhum tick lia de volta. Todo
-escalonamento era porta de mao unica.
+Escalating is only useful if there is a way back. `regente decide` recorded the
+choice and printed that the next tick would resume the task; no tick ever read it
+back. Every escalation was a one-way door.
 
-O tick agora consome decisoes. O destino sai da propria maquina de estados --
-`resumable_from(paused_at)` -- nunca de uma lista escrita de memoria. Decisao que
-o motor nao reconhece tambem move a task: escolha nao interpretavel que nao move
-nada e a fila parando em silencio outra vez.
+The tick now consumes decisions. The destination comes from the state machine
+itself -- `resumable_from(paused_at)` -- never from a list written from memory. A
+decision the engine does not recognise moves the task too: an uninterpretable
+choice that moves nothing is the queue stopping silently all over again.
 
 ### `regente health`
 
-Doze perguntas respondidas **do disco**. Se o motor morrer as tres da manha,
-`regente health` as nove ainda responde -- relatorio montado da memoria de um
-processo vivo estaria vazio exatamente quando importa, e relatorio vazio parece
-saudavel.
+Twelve questions answered **from disk**. If the engine dies at three in the
+morning, `regente health` at nine still answers -- a report assembled from a live
+process's memory would be empty exactly when it matters, and an empty report
+looks healthy.
 
-Quatro niveis, e a ordem importa: `OK < ATTENTION < UNKNOWN < STUCK`. `UNKNOWN`
-fica acima de `ATTENTION` de proposito -- o que o motor nao consegue ver e mais
-perigoso do que o que ele ve e nao gosta. `UNKNOWN` nunca e saudavel.
+Four levels, and the order matters: `OK < ATTENTION < UNKNOWN < STUCK`.
+`UNKNOWN` sits above `ATTENTION` on purpose -- what the engine cannot see is more
+dangerous than what it sees and dislikes. `UNKNOWN` is never healthy.
 
-Codigo de saida: 0 saudavel, 1 atencao ou nao examinado, 2 travado. Cron le sem
-interpretar prosa.
+Exit code: 0 healthy, 1 attention or not examined, 2 stuck. Cron reads it without
+interpreting prose.
 
-### Crescimento: medido, com o log separado do dado
+### Growth: measured, with the log kept apart from the data
 
-O write-ahead log e churn, nao crescimento: um checkpoint o dobra para dentro do
-arquivo e ele encolhe. Reportar os dois juntos mediria ruido -- uma corrida
-mostrou "3,4MB de banco" para 108 eventos, sendo 200KB de dado e o resto log.
+The write-ahead log is churn, not growth: a checkpoint folds it back into the
+file and it shrinks. Reporting the two together would measure noise -- one run
+showed "3.4MB of database" for 108 events, of which 200KB was data and the rest
+log.
 
-`checkpoint()` e politica explicita de manutencao e MOVE paginas ja
-comprometidas; nada e apagado. Nao existe retencao que delete linha.
+`checkpoint()` is explicit maintenance policy and MOVES pages already committed;
+nothing is deleted. There is no retention that deletes a row.
 
-Medido em mil ticks: crescimento linear, 4,20 eventos/tick na primeira metade e
-4,18 na segunda; runs, leases e aprovacoes limitados, sem acumular.
+Measured over a thousand ticks: linear growth, 4.20 events/tick in the first half
+and 4.18 in the second; runs, leases and approvals bounded, not accumulating.
 
-### Injecao de falha
+### Fault injection
 
-Os faults **embrulham** providers reais em vez de substitui-los. Mock devolvendo
-falha enlatada testa a ideia que o mock tem de falha; wrapper que deixa o adapter
-real rodar e entao interrompe testa o motor. E o cronograma e deterministico:
-corrida que falha diferente a cada vez nao serve para provar conserto.
+The faults **wrap** real providers instead of replacing them. A mock returning
+canned failure tests the mock's idea of failure; a wrapper that lets the real
+adapter run and then interrupts it tests the engine. And the schedule is
+deterministic: a run that fails differently every time is no use for proving a
+fix.
 
-Morte de worker nao levanta excecao. Excecao e um relatorio, e worker morto nao
-relata nada -- o run fica RUNNING, o lease fica preso ate vencer, e a
-recuperacao tem que descobrir sozinha, pelo disco.
+A worker dying raises no exception. An exception is a report, and a dead worker
+reports nothing -- the run stays RUNNING, the lease stays held until it expires,
+and recovery has to work it out for itself, from disk.
 
-## O agente e um executor, nunca uma autoridade
+## The agent is an executor, never an authority
 
-O contrato responde quatro perguntas e recusa cinco.
+The contract answers four questions and refuses five.
 
 ```
-Responde:                          Nao responde:
-  Posso executar este agente?        Este agente e confiavel?
-  Como executo?                      Ele pode commitar?
-  Que capacidades ele expoe?         Ele pode dar push?
-  O que aconteceu quando rodou?      Ele pode abrir PR?
-                                     Ele pode fazer deploy?
+Answers:                           Does not answer:
+  May I run this agent?              Is this agent trustworthy?
+  How do I run it?                   May it commit?
+  What capabilities does it expose?  May it push?
+  What happened when it ran?         May it open a PR?
+                                     May it deploy?
 ```
 
-As cinco da direita continuam sendo do Engine e da Policy. Nenhum campo do
-adapter fala sobre elas, e um teste estrutural garante isso -- campo com nome de
-autoridade num tipo do adapter seria o fornecedor votando na propria permissao.
+The five on the right remain the Engine's and the Policy's. No adapter field
+speaks about them, and a structural test enforces it -- a field with an
+authority name on an adapter type would be the vendor voting on its own
+permission.
 
-### Prontidao: seis eixos, duas autoridades
+### Readiness: six axes, two authorities
 
 ```
 adapter -> executable | protocol | authentication | agent
 engine  -> policy | budget
 ```
 
-Os quatro primeiros so o adapter sabe. Os dois ultimos so o motor pode decidir --
-adapter que preenchesse o proprio `policy=ALLOW` seria fornecedor se autorizando.
-Consequencia: **adapter sozinho nunca fica READY**.
+Only the adapter knows the first four. Only the engine may decide the last two
+-- an adapter that filled in its own `policy=ALLOW` would be a vendor
+authorising itself. Consequence: **an adapter alone never becomes READY**.
 
-`UNKNOWN` bloqueia. "Nao deu para checar" nunca vira "esta tudo bem", e o
-primeiro eixo que falha e o reportado: consertar um eixo posterior enquanto um
-anterior esta quebrado nao resolve nada.
+`UNKNOWN` blocks. "Could not check" never turns into "everything is fine", and
+the first axis that fails is the one reported: fixing a later axis while an
+earlier one is broken solves nothing.
 
-### Autenticacao e assunto do adapter
+### Authentication is the adapter's business
 
-Cinco formatos de troca, nenhum preferido:
+Five exchange formats, none preferred:
 
-| Modo | Quem guarda a credencial |
+| Mode | Who holds the credential |
 |---|---|
-| `SESSION` | a propria ferramenta (assinatura corporativa, login de CLI, SSO) |
-| `RESOLVED_SECRET` | o motor, escopado ao workspace |
-| `GATEWAY` | o motor, para um intermediario |
-| `DELEGATED` | um processo hospedeiro; nunca presumido, reportado `UNKNOWN` |
-| `NONE` | ninguem |
+| `SESSION` | the tool itself (corporate subscription, CLI login, SSO) |
+| `RESOLVED_SECRET` | the engine, scoped to the workspace |
+| `GATEWAY` | the engine, for an intermediary |
+| `DELEGATED` | a host process; never assumed, reported as `UNKNOWN` |
+| `NONE` | nobody |
 
-Sao formatos, nao produtos -- e por isso podem viver na port. Diagnostico que
-dissesse "falta a variavel X" daria conselho errado para todo cliente que
-autentica de outra forma, que e a maioria deles.
+They are formats, not products -- which is why they can live in the port. A
+diagnosis that said "variable X is missing" would give the wrong advice to every
+client that authenticates some other way, which is most of them.
 
-### Vendors nao se conhecem
+### Vendors do not know each other
 
 ```
 core/ | ports/ | engine/
         v
   agent contract
         v
-adapters/runner/            <- base e infraestrutura compartilhada
-adapters/runner/vendors/    <- um modulo por fornecedor
+adapters/runner/            <- shared base and infrastructure
+adapters/runner/vendors/    <- one module per vendor
 ```
 
-Modulo em `vendors/` nunca importa outro modulo em `vendors/`. Regra estrutural,
-verificada por AST, e existe porque a violacao aconteceu aqui: o segundo perfil
-importou um helper do primeiro, nada quebrou, a suite ficou verde, e a
-propriedade que este marco afirma -- trocar de agente e um arquivo -- tinha
-deixado de ser verdade em silencio.
+A module in `vendors/` never imports another module in `vendors/`. A structural
+rule, verified by AST, and it exists because the violation happened right here:
+the second profile imported a helper from the first, nothing broke, the suite
+stayed green, and the property this milestone asserts -- swapping agents is one
+file -- had silently stopped being true.
 
-Trabalho compartilhado sobe um nivel. O que um segundo fornecedor ia querer nao
-e, por definicao, especifico de fornecedor.
+Shared work moves up a level. What a second vendor would want is not, by
+definition, vendor-specific.
 
-### A restricao mora fora do modelo
+### The constraint lives outside the model
 
-O agente recebe leitura e edicao. Nao recebe nenhuma ferramenta que execute
-comando. `git push`, `gh pr create`, `gcloud`, `terraform` e toda rota de
-escalonamento que ninguem pensou ainda sao variacoes de uma capacidade so, e
-negar essa capacidade fecha todas de uma vez.
+The agent gets read and edit. It gets no tool that executes a command.
+`git push`, `gh pr create`, `gcloud`, `terraform` and every escalation route
+nobody has thought of yet are variations on a single capability, and denying
+that capability closes all of them at once.
 
-Duas rotas indiretas ficaram, e ambas estao fechadas:
+Two indirect routes remained, and both are closed:
 
-- **`.git/config`.** O agente so edita arquivos, mas reescrever o remote
-  converte um push recusado em permitido. `git status` nao ve nada dentro de
-  `.git/`, entao a guarda e impressao digital, nao diff.
-- **A suite de testes.** O agente escreve arquivos, testes sao arquivos, e o
-  motor executa a suite para chegar a um veredito -- entao um agente que nao
-  executa nada podia fazer o MOTOR executar por ele. Escrever teste e trabalho
-  que queremos; dar carteira a esse codigo nao e. O ambiente da verificacao e
-  composto do zero, igual ao do agente.
+- **`.git/config`.** The agent only edits files, but rewriting the remote turns
+  a refused push into a permitted one. `git status` sees nothing inside `.git/`,
+  so the guard is a fingerprint, not a diff.
+- **The test suite.** The agent writes files, tests are files, and the engine
+  runs the suite to reach a verdict -- so an agent that executes nothing could
+  make the ENGINE execute for it. Writing tests is work we want; giving that
+  code a badge is not. The verification environment is composed from scratch,
+  the same as the agent's.
 
-### Capacidade nao e permissao
+### Capability is not permission
 
-`AgentCapabilities.runs_commands` diz o que a ferramenta CONSEGUE fazer.
-`Permissions.run_commands` diz o que o motor permite. De fora parecem iguais e
-pedem respostas opostas: a primeira e uma configuracao com a qual conviver, a
-segunda e uma fronteira a fazer valer.
+`AgentCapabilities.runs_commands` says what the tool CAN do.
+`Permissions.run_commands` says what the engine allows. From outside they look
+alike and demand opposite answers: the first is a configuration to live with,
+the second is a boundary to enforce.
 
 ## Multi-tenancy
 
-`Organization → Client → Workspace → Project → Repository`, presente desde a
-primeira tabela. Cada Task, Run e Event carrega `workspace_id`, e a identidade
-externa é única *por workspace* — o mesmo `FAXINA-183` em dois clientes são duas
-tasks, e nunca colidem. Enfiar tenancy depois exigiria migrar todas as tabelas e
-revisar toda consulta; a consulta esquecida é justamente a que vaza dado do
-cliente A para o cliente B.
+`Organization → Client → Workspace → Project → Repository`, present from the very
+first table. Every Task, Run and Event carries a `workspace_id`, and the external
+identity is unique *per workspace* — the same `FAXINA-183` in two clients is two
+tasks, and they never collide. Bolting tenancy on later would mean migrating
+every table and reviewing every query; the forgotten query is precisely the one
+that leaks client A's data to client B.
 
-Credencial e autonomia moram no **workspace**, não no projeto — é ali que a
-fronteira entre clientes precisa ser inviolável.
+Credentials and autonomy live in the **workspace**, not in the project — that is
+where the boundary between clients has to be inviolable.
 
-## Decisões tomadas, e por quê
+## Decisions taken, and why
 
-| decisão | escolha | motivo |
+| decision | choice | reason |
 |---|---|---|
-| linguagem | Python 3.13 | ecossistema de agentes e de ferramentas do ambiente |
-| persistência | SQLite + WAL atrás da porta `Store` | zero-ops, transacional, legível à mão; Postgres entra sem tocar no Core |
-| atomicidade | `BEGIN IMMEDIATE` em transição e lease | são os dois pontos onde um despacho duplicado nasce |
-| isolamento | porta `WorkspaceProvider`; diretório agora, worktree para código | worktree é nativo do git; container é peso desnecessário hoje |
-| execução do agente | porta `AgentRunner` | mantém o Core agnóstico a harness; runner é trocável sem tocar no motor |
-| config | YAML + policies em arquivo separado | policy precisa ser revisável e diferente sem mexer no resto |
-| sombra | `true` por padrão | modo vivo é decisão explícita do dono, nunca default |
+| language | Python 3.13 | the agent and tooling ecosystem of the environment |
+| persistence | SQLite + WAL behind the `Store` port | zero-ops, transactional, readable by hand; Postgres enters without touching the Core |
+| atomicity | `BEGIN IMMEDIATE` on transition and lease | these are the two points where a duplicate dispatch is born |
+| isolation | `WorkspaceProvider` port; a directory now, a worktree for code | worktree is native to git; a container is unnecessary weight today |
+| agent execution | `AgentRunner` port | keeps the Core agnostic to the harness; the runner is swappable without touching the engine |
+| config | YAML + policies in a separate file | a policy has to be reviewable and diffable without touching the rest |
+| shadow | `true` by default | live mode is the owner's explicit decision, never a default |
 
-## O que ainda não existe
+## What does not exist yet
 
-Deliberadamente: UI, adapters de fornecedor real, agente que escreve código,
-LLMProvider implementado, detecção semântica de conflito, deploy. As **portas**
-desses existem e são estáveis; as implementações vêm nos marcos 2–9 do
+Deliberately: UI, real provider adapters, an agent that writes code, an
+implemented LLMProvider, semantic conflict detection, deploy. The **ports** for
+those exist and are stable; the implementations come in milestones 2–9 of the
 [ROADMAP](ROADMAP.md).

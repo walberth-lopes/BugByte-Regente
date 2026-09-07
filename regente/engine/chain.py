@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
-"""A cadeia de execucao, em sombra: da task real ao candidato a execucao.
+"""The execution chain, in shadow: from the real task to an execution candidate.
 
-    task -> repositorio candidato -> contexto -> branch base
-         -> recursos/isolamento -> risco/policy -> candidato a execucao
+    task -> candidate repository -> context -> base branch
+         -> resources/isolation -> risk/policy -> execution candidate
 
-Cada elo pode reprovar, e reprovar e um desfecho normal -- nao uma falha. O valor
-deste modulo esta em dizer **em qual elo** o trabalho parou: "nao ha o que fazer"
-e "nao sei onde fazer" e "nao posso fazer" exigem acoes completamente diferentes
-do dono, e um numero unico as esconderia.
+Every link can reject, and rejecting is a normal outcome -- not a failure. The
+value of this module lies in saying **at which link** the work stopped: "there is
+nothing to do", "I do not know where to do it" and "I may not do it" demand
+completely different actions from the owner, and a single number would hide them.
 
-Nada aqui muta o mundo. Nada aqui grava estado. A cadeia e recalculavel a partir
-do zero a qualquer momento, e e isso que a torna segura de rodar a vontade.
+Nothing here mutates the world. Nothing here writes state. The chain is
+recomputable from scratch at any moment, and that is what makes it safe to run at
+will.
 """
 
 from __future__ import annotations
@@ -27,25 +28,29 @@ from .target import Target, Confidence, TargetResolver
 
 
 class Stage(str, Enum):
-    """Onde a cadeia parou. Vocabulario fechado: cada valor pede uma acao."""
-    SEM_TRABALHO = "SEM_TRABALHO"          # a origem diz que nao esta disponivel
-    SEM_ALVO = "SEM_ALVO"                  # ninguem sabe em que repositorio roda
-    ALVO_AMBIGUO = "ALVO_AMBIGUO"          # mais de um candidato empatado
-    REPO_INUTILIZAVEL = "REPO_INUTILIZAVEL"  # arquivado, ou sem branch base
-    SEM_CAPACIDADE = "SEM_CAPACIDADE"      # o adapter nao faz o que seria preciso
-    BARRADO_POR_POLICY = "BARRADO_POR_POLICY"
-    PRECISA_HUMANO = "PRECISA_HUMANO"
-    CANDIDATO = "CANDIDATO"                # passou por tudo
+    """Where the chain stopped. A closed vocabulary: each value demands an action.
+
+    Nothing persists or parses these -- they are reported and counted -- so the
+    member and its value are kept identical.
+    """
+    NO_WORK = "NO_WORK"                      # the source says it is not available
+    NO_TARGET = "NO_TARGET"                  # nobody knows which repository it runs in
+    AMBIGUOUS_TARGET = "AMBIGUOUS_TARGET"    # more than one candidate, tied
+    REPO_UNUSABLE = "REPO_UNUSABLE"          # archived, or with no base branch
+    NO_CAPABILITY = "NO_CAPABILITY"          # the adapter cannot do what is needed
+    BLOCKED_BY_POLICY = "BLOCKED_BY_POLICY"
+    NEEDS_HUMAN = "NEEDS_HUMAN"
+    CANDIDATE = "CANDIDATE"                  # passed everything
 
     @property
     def executable(self) -> bool:
-        return self is Stage.CANDIDATO
+        return self is Stage.CANDIDATE
 
 
 @dataclass(frozen=True, slots=True)
 class Step:
     task: ExternalTask
-    elo: Stage
+    link: Stage
     reason: str
     target: Target | None = None
     repo: RepoInfo | None = None
@@ -58,7 +63,7 @@ class Step:
     @property
     def summary(self) -> str:
         where = self.repo.ref.key if self.repo else "-"
-        return f"{self.task.key:<10} {self.elo.value:<20} {where}"
+        return f"{self.task.key:<10} {self.link.value:<20} {where}"
 
 
 @dataclass(slots=True)
@@ -73,25 +78,25 @@ class ChainReport:
 
     @property
     def candidates(self) -> tuple[Step, ...]:
-        return tuple(p for p in self.steps if p.elo.executable)
+        return tuple(p for p in self.steps if p.link.executable)
 
 
-#: A acao que o motor precisaria executar para trabalhar numa task. Declarada
-#: aqui para que policy e risco sejam avaliados sobre a MESMA acao que seria
-#: pedida de verdade -- avaliar uma acao generica daria um veredito que nao
-#: corresponde a nada.
+#: The action the engine would have to execute to work on a task. Declared here
+#: so that policy and risk are evaluated against the SAME action that would
+#: really be requested -- evaluating a generic action would give a verdict that
+#: corresponds to nothing.
 WORK_ACTION = "repo.branch"
 
-#: Capacidades sem as quais nao ha como comecar trabalho de codigo.
+#: Capabilities without which there is no way to start code work.
 REQUIRED_CAPS = (RepoCapability.READ_FILES, RepoCapability.CLONE)
 
 
 def build(
-    workspace_nome: str,
+    workspace_name: str,
     workspace_id: str,
     tasks: list[ExternalTask],
     repos: list[RepoInfo],
-    resolvedor: TargetResolver,
+    resolver: TargetResolver,
     policy: PolicyEngine,
     risk: RiskEngine,
     autonomy: AutonomyLevel,
@@ -100,51 +105,51 @@ def build(
     organization: str = "*",
     client: str = "*",
 ) -> ChainReport:
-    rel = ChainReport(workspace=workspace_nome, tasks=len(tasks), repos=len(repos))
+    rel = ChainReport(workspace=workspace_name, tasks=len(tasks), repos=len(repos))
     steps: list[Step] = []
 
     for t in tasks:
-        # --- elo 1: ha trabalho? ---------------------------------------
+        # --- link 1: is there work? ------------------------------------
         if not t.status.available:
-            steps.append(Step(t, Stage.SEM_TRABALHO,
-                                f"a origem diz {t.external_status or t.status.value}"))
+            steps.append(Step(t, Stage.NO_WORK,
+                                f"the source says {t.external_status or t.status.value}"))
             continue
 
-        # --- elo 2: onde? ----------------------------------------------
-        target = resolvedor.resolve(t, repos, branches)
+        # --- link 2: where? --------------------------------------------
+        target = resolver.resolve(t, repos, branches)
         rel.by_confidence[target.confidence.value] += 1
         if target.confidence is Confidence.ABSENT:
-            steps.append(Step(t, Stage.SEM_ALVO, target.reason, target=target))
+            steps.append(Step(t, Stage.NO_TARGET, target.reason, target=target))
             continue
         if target.confidence is Confidence.AMBIGUOUS:
-            steps.append(Step(t, Stage.ALVO_AMBIGUO, target.reason, target=target))
+            steps.append(Step(t, Stage.AMBIGUOUS_TARGET, target.reason, target=target))
             continue
 
         repo = target.repo
-        assert repo is not None   # garantido por Confianca.acionavel + 1 candidato
+        assert repo is not None   # guaranteed by Confidence.actionable + 1 candidate
 
-        # --- elo 3: da para trabalhar nele? -----------------------------
+        # --- link 3: can we work in it? --------------------------------
         if not repo.usable:
-            steps.append(Step(t, Stage.REPO_INUTILIZAVEL,
-                                "; ".join(repo.anomalies) or "sem branch base",
+            steps.append(Step(t, Stage.REPO_UNUSABLE,
+                                "; ".join(repo.anomalies) or "no base branch",
                                 target=target, repo=repo))
             continue
-        faltando = [c.value for c in REQUIRED_CAPS if not repo.can(c)]
-        if faltando:
-            # Descobrir isto now poupa um ciclo inteiro -- e poupa uma
-            # escalonada ao humano por um motivo que o motor ja sabia.
-            steps.append(Step(t, Stage.SEM_CAPACIDADE,
-                                f"o provedor nao oferece: {', '.join(faltando)}",
+        missing = [c.value for c in REQUIRED_CAPS if not repo.can(c)]
+        if missing:
+            # Finding this out now saves a whole cycle -- and saves an
+            # escalation to the human for a reason the engine already knew.
+            steps.append(Step(t, Stage.NO_CAPABILITY,
+                                f"the provider does not offer: {', '.join(missing)}",
                                 target=target, repo=repo))
             continue
 
-        # --- elo 4: isolamento ------------------------------------------
-        # O recurso e escopado pelo workspace. Repositorio homonimo em outro
-        # cliente e outro recurso, e nao pode disputar a mesma trava.
+        # --- link 4: isolation -----------------------------------------
+        # The resource is scoped by workspace. A repository of the same name in
+        # another client is another resource, and cannot contend for the same lock.
         resources = (repo.ref.resource(workspace_id),)
         branch = f"regente/{t.key.lower()}"
 
-        # --- elo 5: risco e policy --------------------------------------
+        # --- link 5: risk and policy -----------------------------------
         assessment = risk.assess({
             "action": WORK_ACTION,
             "environment": environment,
@@ -154,63 +159,63 @@ def build(
         decision = policy.decide(PolicyContext(
             action=Action(kind=WORK_ACTION, resource=repo.ref.key,
                           environment=environment),
-            organization=organization, client=client, workspace=workspace_nome,
+            organization=organization, client=client, workspace=workspace_name,
             project=t.project or "*", agent="coder",
             risk=assessment.level.name, autonomy=autonomy))
 
-        comum = dict(target=target, repo=repo, base_branch=repo.base_branch,
+        common = dict(target=target, repo=repo, base_branch=repo.base_branch,
                      work_branch=branch, resources=resources,
                      risk=assessment, decision=decision)
         if decision.effect == Effect.DENY:
-            steps.append(Step(t, Stage.BARRADO_POR_POLICY, decision.reason, **comum))
+            steps.append(Step(t, Stage.BLOCKED_BY_POLICY, decision.reason, **common))
             continue
         if decision.effect == Effect.HUMAN_APPROVAL:
-            steps.append(Step(t, Stage.PRECISA_HUMANO, decision.reason, **comum))
+            steps.append(Step(t, Stage.NEEDS_HUMAN, decision.reason, **common))
             continue
 
-        steps.append(Step(t, Stage.CANDIDATO,
-                            f"risco {assessment.level.name}; base {repo.base_branch}",
-                            **comum))
+        steps.append(Step(t, Stage.CANDIDATE,
+                            f"risk {assessment.level.name}; base {repo.base_branch}",
+                            **common))
 
     rel.steps = tuple(steps)
-    rel.by_stage = Counter(p.elo.value for p in steps)
+    rel.by_stage = Counter(p.link.value for p in steps)
     return rel
 
 
 def render(rel: ChainReport, limit: int = 10) -> str:
     lines = [
-        "CADEIA DE EXECUCAO (sombra)",
+        "EXECUTION CHAIN (shadow)",
         "",
         f"  Workspace                  {rel.workspace}",
         f"  Tasks                      {rel.tasks}",
-        f"  Repositorios               {rel.repos}",
-        f"  Mutacoes                   {rel.mutations}   <- tem de ser 0",
+        f"  Repositories               {rel.repos}",
+        f"  Mutations                  {rel.mutations}   <- has to be 0",
         "",
-        "  ONDE A CADEIA PAROU",
+        "  WHERE THE CHAIN STOPPED",
     ]
-    for elo, n in rel.by_stage.most_common():
-        lines.append(f"    {elo:<22} {n}")
+    for link, n in rel.by_stage.most_common():
+        lines.append(f"    {link:<22} {n}")
 
     if rel.by_confidence:
-        lines += ["", "  CONFIANCA NO ALVO (das que tinham trabalho)"]
+        lines += ["", "  TARGET CONFIDENCE (of those that had work)"]
         for c, n in rel.by_confidence.most_common():
             lines.append(f"    {c:<22} {n}")
 
     candidates = rel.candidates
-    lines += ["", f"  CANDIDATOS A EXECUCAO ({len(candidates)})"]
+    lines += ["", f"  EXECUTION CANDIDATES ({len(candidates)})"]
     for p in candidates[:limit]:
         lines.append(f"    {p.task.key:<10} -> {p.repo.ref.key}")
         lines.append(f"                  base={p.base_branch}  branch={p.work_branch}")
-        lines.append(f"                  recurso={p.resources[0]}")
-        lines.append(f"                  risco={p.risk.level.name}  policy={p.decision.effect}"
+        lines.append(f"                  resource={p.resources[0]}")
+        lines.append(f"                  risk={p.risk.level.name}  policy={p.decision.effect}"
                       f" ({p.decision.rule})")
-        lines.append(f"                  evidencia: {p.target.reason[:70]}")
+        lines.append(f"                  evidence: {p.target.reason[:70]}")
     if len(candidates) > limit:
-        lines.append(f"    ... mais {len(candidates) - limit}")
+        lines.append(f"    ... {len(candidates) - limit} more")
 
-    ambiguos = [p for p in rel.steps if p.elo is Stage.ALVO_AMBIGUO]
-    if ambiguos:
-        lines += ["", f"  AMBIGUOS -- o motor NAO desempata ({len(ambiguos)})"]
-        for p in ambiguos[:5]:
+    ambiguous = [p for p in rel.steps if p.link is Stage.AMBIGUOUS_TARGET]
+    if ambiguous:
+        lines += ["", f"  AMBIGUOUS -- the engine does NOT break the tie ({len(ambiguous)})"]
+        for p in ambiguous[:5]:
             lines.append(f"    {p.task.key:<10} {p.reason[:80]}")
     return "\n".join(lines)

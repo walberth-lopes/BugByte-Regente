@@ -16,7 +16,7 @@ class NotificationProvider(Port):
     @abstractmethod
     def notify(self, title: str, body: str, urgency: str = "normal",
                link: str | None = None) -> None:
-        """Chamar isto e caro em atencao humana. O motor limita por tick."""
+        """Calling this is expensive in human attention. The engine caps it per tick."""
 
 
 class SecretProvider(Port):
@@ -24,11 +24,11 @@ class SecretProvider(Port):
 
     @abstractmethod
     def resolve(self, reference: str) -> str:
-        """Resolve uma REFERENCIA a segredo.
+        """Resolves a secret REFERENCE.
 
-        O valor devolvido nunca entra em prompt, evento, log ou estado. A port
-        existe para que o adapter possa usar o segredo dentro de uma operacao
-        fechada -- o agente pede a operacao, nao a credencial.
+        The returned value never enters a prompt, event, log or state. The port
+        exists so the adapter can use the secret inside a closed operation --
+        the agent asks for the operation, not for the credential.
         """
 
     def available(self, reference: str) -> bool:
@@ -49,24 +49,24 @@ class Message:
 class Completion:
     text: str
     model: str = ""
-    tokens_entrada: int = 0
-    tokens_saida: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     cost_usd: float = 0.0
     data: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class ModelSpec:
-    """Qual modelo usar. Resolvido por perfil, nunca fixado em codigo de agente.
+    """Which model to use. Resolved by profile, never hard-coded in agent code.
 
-    Perfis existem porque a escolha varia por tipo de agente, complexidade,
-    risco, custo, organizacao e projeto -- seis eixos que nao cabem numa
-    constante. O agente pede 'triagem' ou 'codigo'; a configuracao decide o
-    modelo e o fornecedor.
+    Profiles exist because the choice varies by agent type, complexity, risk,
+    cost, organisation and project -- six axes that do not fit in a constant.
+    The agent asks for 'triage' or 'code'; the configuration decides the model
+    and the provider.
     """
     profile: str
-    #: Vazio de proposito: a port nao tem fornecedor preferido.
-    #: Quem escolhe e a configuracao do cliente.
+    #: Empty on purpose: the port has no preferred provider.
+    #: The client's configuration is what chooses.
     provider: str = ""
     model: str = ""
     max_tokens: int = 4096
@@ -77,8 +77,8 @@ class LLMProvider(Port):
     capability = Capability.LLM
 
     @abstractmethod
-    def complete(self, mensagens: list[Message], spec: ModelSpec) -> Completion: ...
+    def complete(self, messages: list[Message], spec: ModelSpec) -> Completion: ...
 
-    def custo_estimado(self, tokens_entrada: int, tokens_saida: int,
+    def estimated_cost(self, input_tokens: int, output_tokens: int,
                        spec: ModelSpec) -> float:
         return 0.0

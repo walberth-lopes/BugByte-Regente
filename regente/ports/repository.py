@@ -1,25 +1,25 @@
 # -*- coding: utf-8 -*-
-"""RepositoryProvider: onde o codigo vive.
+"""RepositoryProvider: where the code lives.
 
-Duas decisoes sustentam esta port:
+Two decisions hold up this port:
 
-**1. Nome nao e identidade.** Um repositorio se identifica por
-`(provider, chave)`, e o motor ainda escopa isso pelo workspace antes de usar
-como chave de trava ou de estado. Nome nu falha de tres formas ja observadas no
-ambiente real: o diretorio local pode nao bater com o repositorio remoto; dois
-clientes podem ter repositorios homonimos; e o mesmo repositorio pode ser visto
-por dois provedores diferentes ao mesmo tempo.
+**1. A name is not an identity.** A repository identifies itself by
+`(provider, key)`, and the engine still scopes that by workspace before using it
+as a lock or state key. A bare name fails in three ways already observed in the
+real environment: the local directory may not match the remote repository; two
+clients may have repositories of the same name; and the same repository may be
+seen by two different providers at once.
 
-**2. Poder e permissao sao coisas separadas.** `capacidades` diz o que o adapter
-CONSEGUE fazer; o Policy Engine diz o que ele PODE. Um adapter montado so para
-leitura declara poucas capacidades e a policy nem chega a ser consultada; um
-adapter completo declara muitas e a policy continua sendo quem barra. Misturar as
-duas nocoes produz o pior dos casos: um `if pode_escrever` espalhado pelo codigo,
-que ninguem consegue auditar num lugar so.
+**2. Power and permission are separate things.** `capabilities` says what the
+adapter CAN do; the Policy Engine says what it MAY do. An adapter mounted for
+reading only declares few capabilities and the policy is never even consulted; a
+full adapter declares many and the policy is still what blocks. Mixing the two
+notions produces the worst case: an `if can_write` scattered through the code,
+which nobody can audit in one place.
 
-Escrita existe aqui apenas como CONTRATO. As assinaturas estao declaradas para
-que o desenho futuro seja visivel e criticavel now; nenhuma implementacao deste
-marco as executa.
+Writing exists here only as a CONTRACT. The signatures are declared so that the
+future design is visible and open to criticism now; no implementation in this
+milestone executes them.
 """
 
 from __future__ import annotations
@@ -34,12 +34,12 @@ from . import Capability, Port
 
 
 class RepoCapability(str, Enum):
-    """O que um adapter consegue fazer com um repositorio.
+    """What an adapter can do with a repository.
 
-    Declarado pelo adapter, consultado pelo motor antes de propor trabalho.
-    Propor uma acao que o adapter nao implementa e desperdicio de um ciclo
-    inteiro -- e, pior, uma escalonada ao humano por um motivo que o motor
-    poderia ter previsto sozinho.
+    Declared by the adapter, consulted by the engine before proposing work.
+    Proposing an action the adapter does not implement wastes a whole cycle --
+    and, worse, escalates to a human for a reason the engine could have foreseen
+    on its own.
     """
     READ_METADATA = "read_metadata"
     READ_FILES = "read_files"
@@ -47,8 +47,8 @@ class RepoCapability(str, Enum):
     READ_BRANCHES = "read_branches"
     READ_PULL_REQUESTS = "read_pull_requests"
     CLONE = "clone"
-    # As de escrita existem no vocabulario para que a policy e a UI possam
-    # raciocinar sobre elas antes de qualquer implementacao existir.
+    # The write ones exist in the vocabulary so that the policy and the UI can
+    # reason about them before any implementation exists.
     CREATE_BRANCH = "create_branch"
     COMMIT = "commit"
     PUSH = "push"
@@ -68,12 +68,12 @@ WRITE_CAPS: frozenset[RepoCapability] = frozenset(RepoCapability) - READ_CAPS
 
 @dataclass(frozen=True, slots=True)
 class RepoRef:
-    """Identidade de um repositorio NO PROVEDOR.
+    """A repository's identity AT THE PROVIDER.
 
-    Nao carrega workspace de proposito: o adapter nao deve precisar conhecer a
-    tenancy para responder o que sabe. Quem compoe a identidade completa e o
-    motor, com `escopado_em()` -- e e essa forma composta, nunca a chave nua,
-    que vira trava, recurso ou linha de estado.
+    It deliberately carries no workspace: the adapter should not need to know the
+    tenancy to answer what it knows. What composes the full identity is the
+    engine, with `scoped_to()` -- and it is that composed form, never the bare
+    key, that becomes a lock, a resource or a row of state.
     """
     provider: str
     key: str
@@ -82,34 +82,34 @@ class RepoRef:
         return f"{self.provider}:{self.key}"
 
     def scoped_to(self, workspace_id: str) -> str:
-        """A identidade que o motor usa. Unica no universo de um deployment."""
+        """The identity the engine uses. Unique within one deployment's universe."""
         return f"{workspace_id}/{self.provider}/{self.key}"
 
     def resource(self, workspace_id: str) -> str:
-        """Chave de exclusao mutua para o scheduler e para o lease."""
+        """Mutual-exclusion key for the scheduler and for the lease."""
         return f"repo:{self.scoped_to(workspace_id)}"
 
 
 @dataclass(frozen=True, slots=True)
 class RepoInfo:
-    """Um repositorio como o provedor o descreve."""
+    """A repository as the provider describes it."""
     ref: RepoRef
     name: str
-    #: Branch de integracao REAL, lida do provider.
+    #: The REAL integration branch, read from the provider.
     #:
-    #: Nunca presumir 'main'. Derivar branch de trabalho da base errada produz um
-    #: PR cheio de conflito que ninguem pediu, e o error so aparece depois do
-    #: push -- quando ja custou o trabalho inteiro.
+    #: Never assume 'main'. Deriving a work branch from the wrong base produces a
+    #: PR full of conflicts nobody asked for, and the error only shows up after
+    #: the push -- by which point it has already cost the whole job.
     base_branch: str = ""
-    #: De onde clonar. Pode ser URL remota ou caminho local.
+    #: Where to clone from. May be a remote URL or a local path.
     clone_origin: str | None = None
-    #: Onde um humano ve este repositorio.
+    #: Where a human sees this repository.
     url: str | None = None
     archived: bool = False
     private: bool | None = None
     capabilities: frozenset[RepoCapability] = field(default_factory=frozenset)
-    #: True quando o registro veio de uma LISTAGEM, com campos enxutos --
-    #: mesma distincao que vale para tasks: "nao veio" nao e "esta vazio".
+    #: True when the record came from a LISTING, with trimmed fields -- the same
+    #: distinction that holds for tasks: "did not come" is not "is empty".
     partial: bool = False
     data: dict[str, Any] = field(default_factory=dict)
 
@@ -120,16 +120,16 @@ class RepoInfo:
     def anomalies(self) -> tuple[str, ...]:
         findings = []
         if not self.partial and not self.base_branch:
-            findings.append("sem branch base -- derivar trabalho daqui e chute")
+            findings.append("no base branch -- deriving work from here is a guess")
         if not self.name.strip():
-            findings.append("sem nome legivel")
+            findings.append("no readable name")
         if self.archived:
-            findings.append("arquivado: nao aceita trabalho novo")
+            findings.append("archived: accepts no new work")
         return tuple(findings)
 
     @property
     def usable(self) -> bool:
-        """Da para trabalhar aqui? Arquivado e sem base nao dao."""
+        """Can we work here? Archived and base-less both mean no."""
         return bool(self.base_branch) and not self.archived
 
 
@@ -137,8 +137,8 @@ class RepoInfo:
 class Branch:
     name: str
     sha: str = ""
-    #: True quando e a branch de integracao do repositorio.
-    e_base: bool = False
+    #: True when this is the repository's integration branch.
+    is_base: bool = False
     updated_at: str = ""
 
 
@@ -157,9 +157,9 @@ class PullRequest:
     title: str
     url: str
     state: str = "OPEN"
-    #: SHA exato do head. Sem ele e impossivel distinguir parecer vigente de
-    #: parecer vencido -- e um parecer vencido descreve um codigo e aparece
-    #: grudado noutro.
+    #: The exact head SHA. Without it there is no telling a current review from
+    #: a stale one -- and a stale review describes one piece of code while being
+    #: displayed stuck to another.
     head_sha: str = ""
     branch: str = ""
     base: str = ""
@@ -203,7 +203,7 @@ def read_marker(body: str) -> dict[str, str] | None:
 @dataclass(frozen=True, slots=True)
 class Review:
     author: str
-    veredito: str          # APPROVED | CHANGES_REQUESTED | COMMENTED
+    verdict: str          # APPROVED | CHANGES_REQUESTED | COMMENTED
     commit_sha: str = ""
     body: str = ""
     id: str = ""
@@ -212,26 +212,26 @@ class Review:
 class RepositoryProvider(Port):
     capability = Capability.REPOSITORY
 
-    #: O que este adapter, como esta montado, consegue fazer.
+    #: What this adapter, as mounted, can do.
     capabilities: frozenset[RepoCapability] = READ_CAPS
 
-    # ---- descoberta e leitura -------------------------------------------
+    # ---- discovery and reading -------------------------------------------
 
     @abstractmethod
-    def list_repositories(self, filtro: dict[str, Any] | None = None) -> list[RepoInfo]:
-        """Repositorios visiveis. Erro sobe como AdapterErro, nunca lista vazia."""
+    def list_repositories(self, filters: dict[str, Any] | None = None) -> list[RepoInfo]:
+        """Visible repositories. An error rises as AdapterError, never an empty list."""
 
     @abstractmethod
     def get_repository(self, key: str) -> RepoInfo:
-        """Detalhe completo de um repositorio, pela chave do provider."""
+        """Full detail of a repository, by the provider's key."""
 
-    def list_branches(self, key: str, filtro: dict[str, Any] | None = None) -> list[Branch]:
+    def list_branches(self, key: str, filters: dict[str, Any] | None = None) -> list[Branch]:
         return []
 
     def read_file(self, key: str, path: str, ref: str | None = None) -> str:
         raise NotImplementedError
 
-    def list_pull_requests(self, filtro: dict[str, Any] | None = None) -> list[PullRequest]:
+    def list_pull_requests(self, filters: dict[str, Any] | None = None) -> list[PullRequest]:
         return []
 
     def get_pull_request(self, key: str, number: int) -> PullRequest:
@@ -240,15 +240,16 @@ class RepositoryProvider(Port):
     def list_reviews(self, key: str, number: int) -> list[Review]:
         return []
 
-    # ---- escrita: contrato declarado, nada implementado -----------------
+    # ---- writing: contract declared, nothing implemented -----------------
     #
-    # As assinaturas existem para que o desenho futuro seja visivel e criticavel
-    # now. Cada uma tem a forma que impede um defeito ja conhecido -- e por
-    # isso vale escreve-las antes, e nao depois de o defeito acontecer.
+    # The signatures exist so that the future design is visible and open to
+    # criticism now. Each one has the shape that prevents an already-known
+    # defect -- which is why it is worth writing them before, and not after,
+    # the defect happens.
 
-    def create_branch(self, key: str, name: str, a_partir_de: str) -> Branch:
-        """`a_partir_de` e obrigatorio: derivar da base implicita e o caminho
-        curto para um PR nascido de codigo velho."""
+    def create_branch(self, key: str, name: str, from_ref: str) -> Branch:
+        """`a_partir_de` is mandatory: deriving from the implicit base is the
+        short path to a PR born out of stale code."""
         raise NotImplementedError
 
     def create_commit(self, key: str, branch: str, message: str,
@@ -265,12 +266,13 @@ class RepositoryProvider(Port):
         raise NotImplementedError
 
     def submit_review(self, key: str, number: int, head_sha: str,
-                      body: str, veredito: str) -> Review:
-        """`head_sha` e obrigatorio na assinatura para que nenhum adapter possa
-        publicar 'no head que existir now'. O adapter deve reler o head e
-        abortar se mudou: parecer que nasce vencido e pior que parecer ausente."""
+                      body: str, verdict: str) -> Review:
+        """`head_sha` is mandatory in the signature so that no adapter can
+        publish 'against whatever head exists now'. The adapter must re-read the
+        head and abort if it changed: a review that is born stale is worse than
+        no review at all."""
         raise NotImplementedError
 
-    def merge_pull_request(self, key: str, number: int, metodo: str = "squash",
-                           esperado_sha: str | None = None) -> None:
+    def merge_pull_request(self, key: str, number: int, method: str = "squash",
+                           expected_sha: str | None = None) -> None:
         raise NotImplementedError

@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Erros do dominio. Nenhum deles carrega detalhe de fornecedor."""
+"""Domain errors. None of them carries provider-specific detail."""
 
 
 class RegenteError(Exception):
-    """Raiz. Quem captura Regente captura tudo do motor."""
+    """Root. Catching RegenteError catches everything the engine raises."""
 
 
 class InvalidTransition(RegenteError):
-    """Tentativa de mover uma unidade de trabalho para um estado inalcancavel."""
+    """Attempt to move a work unit into a state it cannot reach."""
 
 
 class GraphCycle(RegenteError):
-    """Dependencias formam ciclo -- nada pode comecar."""
+    """Dependencies form a cycle -- nothing can start."""
 
 
 class PolicyDenied(RegenteError):
-    """A acao foi barrada pelo Policy Engine. Nao e falha: e o motor funcionando."""
+    """The action was blocked by the Policy Engine. Not a failure: the engine working."""
 
     def __init__(self, reason: str, rule: str | None = None):
         super().__init__(reason)
@@ -24,7 +24,7 @@ class PolicyDenied(RegenteError):
 
 
 class HumanApprovalRequired(RegenteError):
-    """A acao exige decisao humana. Interrompe o agente, nao o motor."""
+    """The action needs a human decision. It stops the agent, not the engine."""
 
     def __init__(self, reason: str, rule: str | None = None):
         super().__init__(reason)
@@ -33,12 +33,12 @@ class HumanApprovalRequired(RegenteError):
 
 
 class CapabilityMissing(RegenteError):
-    """Pediram uma capacidade que o cliente nao configurou.
+    """Someone asked for a capability the client did not configure.
 
-    Erro explicito de proposito: ausencia de adapter nunca pode virar
-    'a operacao nao encontrou nada'.
+    Explicit on purpose: a missing adapter must never degrade into
+    'the operation found nothing'.
     """
 
 
 class CorruptedState(RegenteError):
-    """O estado persistido nao bate com o que o motor espera."""
+    """The persisted state does not match what the engine expects."""
