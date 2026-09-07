@@ -52,6 +52,59 @@ class IsolatedDirectory(WorkspaceProvider):
     def head(self, area: WorkArea) -> str:
         return self._git("rev-parse", "HEAD", cwd=Path(area.path)).strip()
 
+    #: Branch names a push may never target, whatever the caller asks for.
+    INTEGRATION_BRANCHES = frozenset({"main", "master", "develop", "dev",
+                                      "release", "staging", "production", "HEAD"})
+
+    def push(self, area: WorkArea, expected_sha: str,
+             branch: str | None = None) -> str:
+        """Publish the work branch. Five refusals, checked in this order.
+
+        Order matters: the cheapest and most dangerous checks run first, so a
+        misconfigured call never reaches the network.
+        """
+        path = Path(area.path)
+        target_branch = branch or area.branch
+        if not target_branch:
+            raise AdapterError("refused: the area has no work branch")
+
+        # 1. Never an integration branch, whoever asked.
+        if target_branch in self.INTEGRATION_BRANCHES:
+            raise AdapterError(
+                f"refused to push '{target_branch}': it is an integration branch")
+
+        # 2. Never a branch this run does not own.
+        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
+        if current != target_branch:
+            raise AdapterError(
+                f"refused to push: the area is on '{current}' and the push asks "
+                f"for '{target_branch}'")
+
+        # 3. Never to a local path. The whole point of separating `sources` from
+        #    `remotes` is that a local target means somebody's checkout.
+        destination = self.push_target_of(path)
+        if not destination:
+            raise AdapterError(
+                "refused to push: this area has no push target. Absence of "
+                "configuration means a push is impossible, not local")
+        if _looks_local(destination):
+            raise AdapterError(
+                f"refused to push to a local path: {destination}")
+
+        # 4. Never work nobody verified. Between validation and push the branch
+        #    may have moved, and pushing then vouches for an unseen commit.
+        actual = self.head(area)
+        if actual != expected_sha:
+            raise AdapterError(
+                f"refused to push: expected {expected_sha[:12]} and the branch "
+                f"is at {actual[:12]}; the work changed after it was validated")
+
+        # 5. Never rewrite history. `--force-with-lease` is still a force, and
+        #    the engine has no business overwriting anyone's refs.
+        self._git("push", "--set-upstream", "origin",
+                  f"{target_branch}:{target_branch}", cwd=path)
+        return actual
+
     def is_dirty(self, area: WorkArea) -> bool:
         return bool(self._git("status", "--porcelain", cwd=Path(area.path)).strip())
 
@@ -264,6 +317,59 @@ class GitClone(WorkspaceProvider):
 
     def head(self, area: WorkArea) -> str:
         return self._git("rev-parse", "HEAD", cwd=Path(area.path)).strip()
+
+    #: Branch names a push may never target, whatever the caller asks for.
+    INTEGRATION_BRANCHES = frozenset({"main", "master", "develop", "dev",
+                                      "release", "staging", "production", "HEAD"})
+
+    def push(self, area: WorkArea, expected_sha: str,
+             branch: str | None = None) -> str:
+        """Publish the work branch. Five refusals, checked in this order.
+
+        Order matters: the cheapest and most dangerous checks run first, so a
+        misconfigured call never reaches the network.
+        """
+        path = Path(area.path)
+        target_branch = branch or area.branch
+        if not target_branch:
+            raise AdapterError("refused: the area has no work branch")
+
+        # 1. Never an integration branch, whoever asked.
+        if target_branch in self.INTEGRATION_BRANCHES:
+            raise AdapterError(
+                f"refused to push '{target_branch}': it is an integration branch")
+
+        # 2. Never a branch this run does not own.
+        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
+        if current != target_branch:
+            raise AdapterError(
+                f"refused to push: the area is on '{current}' and the push asks "
+                f"for '{target_branch}'")
+
+        # 3. Never to a local path. The whole point of separating `sources` from
+        #    `remotes` is that a local target means somebody's checkout.
+        destination = self.push_target_of(path)
+        if not destination:
+            raise AdapterError(
+                "refused to push: this area has no push target. Absence of "
+                "configuration means a push is impossible, not local")
+        if _looks_local(destination):
+            raise AdapterError(
+                f"refused to push to a local path: {destination}")
+
+        # 4. Never work nobody verified. Between validation and push the branch
+        #    may have moved, and pushing then vouches for an unseen commit.
+        actual = self.head(area)
+        if actual != expected_sha:
+            raise AdapterError(
+                f"refused to push: expected {expected_sha[:12]} and the branch "
+                f"is at {actual[:12]}; the work changed after it was validated")
+
+        # 5. Never rewrite history. `--force-with-lease` is still a force, and
+        #    the engine has no business overwriting anyone's refs.
+        self._git("push", "--set-upstream", "origin",
+                  f"{target_branch}:{target_branch}", cwd=path)
+        return actual
 
     def is_dirty(self, area: WorkArea) -> bool:
         return bool(self._git("status", "--porcelain", cwd=Path(area.path)).strip())

@@ -127,6 +127,18 @@ def _agent_deterministic(o: dict[str, Any]) -> Port:
                                   "summary": "no edit declared for this task"})
 
 
+def _repos_github_write(o: dict[str, Any]) -> Port:
+    from .repos.github_write import GitHubWrite
+    return GitHubWrite(org=o["org"], cli_path=o.get("cli", "gh"),
+                       observer=o.get("observer"))
+
+
+def _cicd_github(o: dict[str, Any]) -> Port:
+    from .cicd.github_checks import GitHubChecks
+    return GitHubChecks(org=o["org"], cli_path=o.get("cli", "gh"),
+                        observer=o.get("observer"))
+
+
 def _scoped_secrets(o: dict[str, Any]) -> Port:
     from .secrets import ScopedSecrets
     return ScopedSecrets(allowed_from=frozenset(o.get("allowed", ())),
@@ -159,6 +171,8 @@ register(Capability.TASKS, "jira", _tasks_jira)
 register(Capability.SECRETS, "scoped", _scoped_secrets)
 register(Capability.REPOSITORY, "git-local", _repos_git_local)
 register(Capability.REPOSITORY, "github", _repos_github)
+register(Capability.REPOSITORY, "github-write", _repos_github_write)
+register(Capability.CICD, "github-checks", _cicd_github)
 register(Capability.WORKSPACE, "directory", _workspace_directory)
 register(Capability.WORKSPACE, "worktree", _workspace_worktree)
 register(Capability.WORKSPACE, "clone", _workspace_clone)

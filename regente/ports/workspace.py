@@ -81,6 +81,30 @@ class WorkspaceProvider(Port):
         """
         return None
 
+    def push(self, area: WorkArea, expected_sha: str,
+             branch: str | None = None) -> str:
+        """Publish the area's work branch to its push target. Returns the SHA.
+
+        Lives here, and not on `RepositoryProvider`, for the same reason `commit`
+        does: a push is a git operation FROM THE ISOLATED AREA, and only this
+        provider knows how that area was materialised, where it points and
+        whether it is clean. A repository port would have to learn about local
+        checkouts to do this, which is precisely the coupling the ports exist to
+        prevent -- and a provider that writes commits through an API has no
+        concept of "push" at all.
+
+        `expected_sha` is required, not optional. Pushing "whatever is on the
+        branch now" publishes work nobody verified: between validation and push
+        the branch may have moved, and the engine would be vouching for a commit
+        it never saw. Implementations MUST re-read HEAD and refuse on mismatch.
+
+        Implementations MUST also refuse:
+          - an integration branch as the target,
+          - a push target that is a local path,
+          - any form of force push.
+        """
+        raise NotImplementedError
+
     def is_dirty(self, area: WorkArea) -> bool:
         """Are there uncommitted changes? Distinguishes 'nothing to commit' from
         'the commit silently did nothing'."""

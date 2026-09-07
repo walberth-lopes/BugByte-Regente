@@ -132,6 +132,32 @@ class Store(Port):
     @abstractmethod
     def expired_leases(self, workspace_id: str, now: datetime | None = None) -> list[Lease]: ...
 
+    # ---- entregas --------------------------------------------------------
+    @abstractmethod
+    def open_delivery(self, workspace_id: str, task_key: str, run_id: str,
+                      provider: str, repo_key: str, branch: str,
+                      commit_sha: str) -> str:
+        """Abre o registro ANTES de qualquer mutacao remota e devolve o id."""
+
+    @abstractmethod
+    def record_push(self, delivery_id: str, target: str) -> None: ...
+
+    @abstractmethod
+    def record_pull_request(self, delivery_id: str, number: int, url: str,
+                            head_sha: str) -> None: ...
+
+    @abstractmethod
+    def record_ci(self, delivery_id: str, state: str, result: str | None,
+                  reason: str, checks: list[dict]) -> None: ...
+
+    @abstractmethod
+    def deliveries(self, workspace_id: str,
+                   task_key: str | None = None) -> list[dict]: ...
+
+    @abstractmethod
+    def delivery_for_pr(self, workspace_id: str, provider: str, repo_key: str,
+                        number: int) -> dict | None: ...
+
     # ---- contadores ------------------------------------------------------
     @abstractmethod
     def dispatch_count(self, workspace_id: str, dia: str) -> int: ...

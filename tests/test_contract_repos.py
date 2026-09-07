@@ -21,7 +21,7 @@ import pytest
 
 from regente.adapters.repos.git_local import GitLocal, _org_repo
 from regente.adapters.repos.github import GitHubRepos
-from regente.adapters.repos.readonly import cli_e_leitura, git_e_leitura
+from regente.adapters.repos.readonly import cli_is_read, git_is_read
 from regente.ports import AdapterError, ReadOnlyRefused
 from regente.ports.repository import RepoCapability, RepoRef, RepositoryProvider
 
@@ -193,10 +193,12 @@ def test_capacidade_missing_is_declared_is_not_simulated(provider):
 # Shadow mode: por INVOCACAO, nunca por verbo
 # ---------------------------------------------------------------------------
 
+# `push` is absent on purpose: it belongs to `WorkspaceProvider`, where the
+# isolated area lives. See `test_push_target.py` and the note in
+# `ports/repository.py`.
 PORT_WRITE_OPS = [
     ("create_branch", ("k", "b", "base")),
     ("create_commit", ("k", "b", "msg", {})),
-    ("push", ("k", "b")),
     ("create_pull_request", ("k", "b", "base", "t", "c")),
     ("submit_review", ("k", 1, "sha", "corpo", "APPROVE")),
     ("merge_pull_request", ("k", 1)),
@@ -235,7 +237,7 @@ def test_git_refuses_invocation_that_writes(provider, clones, invocation):
 ])
 def test_cli_refuses_invocation_that_writes(invocation):
     """`repo delete` atravessou um allowlist por verbo em 06/09/2026. Nunca mais."""
-    ok, reason = cli_e_leitura(invocation)
+    ok, reason = cli_is_read(invocation)
     assert not ok, f"'{' '.join(invocation)}' passou pelo portao"
     assert reason
 
@@ -245,7 +247,7 @@ def test_cli_refuses_invocation_that_writes(invocation):
     ["api", "repos/x/y"], ["api", "--method", "GET", "repos/x"], ["auth", "status"],
 ])
 def test_cli_allows_read(invocation):
-    ok, reason = cli_e_leitura(invocation)
+    ok, reason = cli_is_read(invocation)
     assert ok, f"'{' '.join(invocation)}' recusado: {reason}"
 
 
@@ -255,7 +257,7 @@ def test_cli_allows_read(invocation):
     ["show", "HEAD:README.md"], ["config", "--get", "x"],
 ])
 def test_git_allows_read(invocation):
-    ok, reason = git_e_leitura(invocation)
+    ok, reason = git_is_read(invocation)
     assert ok, f"'git {' '.join(invocation)}' recusado: {reason}"
 
 

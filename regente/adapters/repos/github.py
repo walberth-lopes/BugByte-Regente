@@ -30,7 +30,7 @@ from ...ports.repository import (READ_CAPS, Branch, RepoCapability, RepoInfo, Re
 from ..tasks.transport import (Call, AuthFailure, RateLimited,
                                 NotFound, Observer, ProviderUnavailable,
                                 MalformedResponse)
-from .readonly import cli_e_leitura
+from .readonly import cli_is_read
 
 
 #: Campos pedidos numa LISTAGEM. Enxuto: uma organizacao com centenas de
@@ -67,7 +67,7 @@ class GitHubRepos(RepositoryProvider):
         # Por INVOCACAO INTEIRA, nao por verbo. `repo list` le; `repo delete`
         # apaga, e os dois comecam com `repo` -- foi assim que um `repo delete`
         # atravessou o portao em 06/09/2026.
-        ok, reason = cli_e_leitura(args)
+        ok, reason = cli_is_read(args)
         if not ok:
             raise ReadOnlyRefused(
                 f"'{self.cli_path} {' '.join(args)}' recusado: {reason}. "

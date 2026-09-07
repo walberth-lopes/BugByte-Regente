@@ -31,7 +31,7 @@ from ...ports import AdapterError, ReadOnlyRefused
 from ...ports.repository import (READ_CAPS, Branch, RepoCapability, RepoInfo, RepoRef,
                                  RepositoryProvider)
 from ..tasks.transport import Call, Observer
-from .readonly import git_e_leitura
+from .readonly import git_is_read
 
 
 #: Ordem de tentativa para descobrir a branch de integracao. A primeira que
@@ -69,7 +69,7 @@ class GitLocal(RepositoryProvider):
     def _git(self, cwd: Path, *args: str) -> str:
         # A checagem e por INVOCACAO INTEIRA, nao por verbo. `git remote get-url`
         # le; `git remote set-url` grava, e os dois comecam com `remote`.
-        ok, reason = git_e_leitura(args)
+        ok, reason = git_is_read(args)
         if not ok:
             raise ReadOnlyRefused(
                 f"'git {' '.join(args)}' recusado: {reason}. "

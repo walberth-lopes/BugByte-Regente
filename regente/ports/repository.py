@@ -24,6 +24,7 @@ marco as executa.
 
 from __future__ import annotations
 
+import re
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -151,7 +152,7 @@ class FileChange:
 
 @dataclass(frozen=True, slots=True)
 class PullRequest:
-    numero: int
+    number: int
     repo: RepoRef
     title: str
     url: str
@@ -162,17 +163,46 @@ class PullRequest:
     head_sha: str = ""
     branch: str = ""
     base: str = ""
-    rascunho: bool = False
-    autor: str = ""
+    draft: bool = False
+    author: str = ""
     additions: int = 0
     deletions: int = 0
     files: tuple[FileChange, ...] = ()
     data: dict[str, Any] = field(default_factory=dict)
 
 
+#: The stamp that makes a pull request recognisable as one run's work.
+#:
+#: Lives on the PORT, not in an adapter, because it is about IDENTITY -- which
+#: workspace, task and run produced this -- and identity is the engine's concern.
+#: Putting it in an adapter made `engine/` import `adapters/`, which the boundary
+#: test caught immediately and correctly.
+#:
+#: Single-line and rigid on purpose: a marker a human might reflow, translate or
+#: prettify is a marker the engine will one day fail to find -- and failing to
+#: find it means either opening a duplicate or adopting a stranger's work.
+MARKER_PREFIX = "regente-run"
+
+_MARKER_RE = re.compile(
+    rf"<!--\s*{MARKER_PREFIX}:\s*workspace=(\S+)\s+task=(\S+)\s+run=(\S+)\s*-->")
+
+
+def build_marker(workspace_id: str, task_key: str, run_id: str) -> str:
+    return (f"<!-- {MARKER_PREFIX}: workspace={workspace_id} "
+            f"task={task_key} run={run_id} -->")
+
+
+def read_marker(body: str) -> dict[str, str] | None:
+    """Extract the marker from a pull request body, or `None`."""
+    m = _MARKER_RE.search(body or "")
+    if not m:
+        return None
+    return {"workspace_id": m.group(1), "task_key": m.group(2), "run_id": m.group(3)}
+
+
 @dataclass(frozen=True, slots=True)
 class Review:
-    autor: str
+    author: str
     veredito: str          # APPROVED | CHANGES_REQUESTED | COMMENTED
     commit_sha: str = ""
     body: str = ""
@@ -204,10 +234,10 @@ class RepositoryProvider(Port):
     def list_pull_requests(self, filtro: dict[str, Any] | None = None) -> list[PullRequest]:
         return []
 
-    def get_pull_request(self, key: str, numero: int) -> PullRequest:
+    def get_pull_request(self, key: str, number: int) -> PullRequest:
         raise NotImplementedError
 
-    def list_reviews(self, key: str, numero: int) -> list[Review]:
+    def list_reviews(self, key: str, number: int) -> list[Review]:
         return []
 
     # ---- escrita: contrato declarado, nada implementado -----------------
@@ -225,21 +255,22 @@ class RepositoryProvider(Port):
                       files: dict[str, str]) -> str:
         raise NotImplementedError
 
-    def push(self, key: str, branch: str, esperado_sha: str | None = None) -> None:
-        """`esperado_sha` permite recusar o push se a branch andou sob os pes."""
-        raise NotImplementedError
+    # `push` deliberately does NOT live here. It moved to `WorkspaceProvider`,
+    # where the isolated area is materialised and where its push target is
+    # known. Leaving a second, unimplemented way to publish work on this port
+    # would be an ambiguity waiting to become the wrong call site.
 
     def create_pull_request(self, key: str, branch: str, base: str,
                             title: str, body: str) -> PullRequest:
         raise NotImplementedError
 
-    def submit_review(self, key: str, numero: int, head_sha: str,
+    def submit_review(self, key: str, number: int, head_sha: str,
                       body: str, veredito: str) -> Review:
         """`head_sha` e obrigatorio na assinatura para que nenhum adapter possa
         publicar 'no head que existir now'. O adapter deve reler o head e
         abortar se mudou: parecer que nasce vencido e pior que parecer ausente."""
         raise NotImplementedError
 
-    def merge_pull_request(self, key: str, numero: int, metodo: str = "squash",
+    def merge_pull_request(self, key: str, number: int, metodo: str = "squash",
                            esperado_sha: str | None = None) -> None:
         raise NotImplementedError

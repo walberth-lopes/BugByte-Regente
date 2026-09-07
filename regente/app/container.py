@@ -18,6 +18,7 @@ from ..core.risk import RiskEngine
 from ..engine.gate import Gate
 from ..engine.target import TargetResolver
 from ..engine.orchestrator import Orchestrator
+from ..engine.remote import RemoteDelivery
 from ..engine.store_sqlite import SqliteStore
 from ..ports import Capability
 from ..ports.support import NotificationProvider
@@ -54,6 +55,9 @@ class Engine:
     resolver: TargetResolver | None = None
     policy: PolicyEngine | None = None
     risk: RiskEngine | None = None
+    #: Push, pull request and CI observation. `None` when the workspace has no
+    #: workspace provider at all -- absent capability, not silent local action.
+    delivery: RemoteDelivery | None = None
 
     def close(self) -> None:
         self.store.close()
@@ -211,6 +215,18 @@ def build(cfg: Config) -> Engine:
     if "notification" in cfg.providers:
         notificador = create(Capability.NOTIFICATION, "notification", {"journal": str(cfg.journal)})
 
+    # Writing to the hosted provider is a SEPARATE adapter from reading it.
+    # Not configured means not possible: there is no flag that turns the read
+    # adapter into a write one.
+    repos_write = None
+    if "repository_write" in cfg.providers:
+        repos_write = create(Capability.REPOSITORY, "repository_write",
+                             {"secrets": secrets, "observer": observe})
+    cicd = None
+    if "cicd" in cfg.providers:
+        cicd = create(Capability.CICD, "cicd",
+                      {"secrets": secrets, "observer": observe})
+
     policy = PolicyEngine.from_config(load_policies(cfg.policies))
     risk = RiskEngine.from_config(list(cfg.risk_factors))
     gate = Gate(store=store, policy=policy, risk=risk)
@@ -226,9 +242,14 @@ def build(cfg: Config) -> Engine:
         by_project=dict(cfg.targets.get("by_project") or {}),
         by_task=dict(cfg.targets.get("by_task") or {}))
 
+    delivery = RemoteDelivery(
+        store=store, areas=areas, repos_write=repos_write, cicd=cicd,
+        policy=policy, autonomy=cfg.autonomy,
+        environment=(projects[0].default_environment if projects else "staging"))
+
     return Engine(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate,
                   repos=repos, resolver=resolver, policy=policy, risk=risk,
-                  areas=areas, agent=runner)
+                  areas=areas, agent=runner, delivery=delivery)
 
 
 def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:

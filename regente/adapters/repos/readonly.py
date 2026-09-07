@@ -48,7 +48,7 @@ CLI_READ_INVOCATIONS: frozenset[tuple[str, str | None]] = frozenset({
 })
 
 
-def git_e_leitura(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
+def git_is_read(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
     """Devolve (permitido, motivo da recusa)."""
     if not args:
         return False, "invocacao vazia"
@@ -89,7 +89,7 @@ def git_e_leitura(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
     return False, f"'git {cmd}' nao esta na lista de leitura"
 
 
-def cli_e_leitura(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
+def cli_is_read(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
     """Devolve (permitido, motivo da recusa)."""
     if not args:
         return False, "invocacao vazia"
@@ -116,3 +116,58 @@ def cli_e_leitura(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
     if (cmd, sub) in CLI_READ_INVOCATIONS:
         return True, ""
     return False, f"'{(cmd + ' ' + (sub or '')).strip()}' nao esta na lista de leitura"
+
+
+# ---------------------------------------------------------------------------
+# WRITE invocations. A SEPARATE list, never a widening of the read one.
+# ---------------------------------------------------------------------------
+#
+# Kept apart on purpose. If writes were added by relaxing `CLI_READ_INVOCATIONS`,
+# then every future read would inherit write reach, and the read gate would stop
+# meaning anything. Two lists means a caller must say which door it is asking
+# for, and the read door can never accidentally open the write one.
+#
+# Same granularity rule as the read list, for the same measured reason: allowing
+# the verb `repo` once let `repo delete` through.
+
+#: Exactly the write invocations this milestone permits. Nothing else.
+CLI_WRITE_INVOCATIONS: frozenset[tuple[str, str | None]] = frozenset({
+    ("pr", "create"),
+})
+
+#: Write invocations that exist, are understood, and stay forbidden here.
+#: Listed rather than merely absent so a reader can see they were considered --
+#: an empty absence looks like an oversight, a named refusal looks like a rule.
+CLI_FORBIDDEN_INVOCATIONS: frozenset[tuple[str, str]] = frozenset({
+    ("pr", "merge"), ("pr", "close"), ("pr", "reopen"), ("pr", "edit"),
+    ("pr", "review"), ("pr", "ready"), ("pr", "comment"), ("pr", "lock"),
+    ("repo", "create"), ("repo", "delete"), ("repo", "edit"), ("repo", "archive"),
+    ("release", "create"), ("workflow", "run"), ("workflow", "enable"),
+    ("run", "rerun"), ("run", "cancel"), ("secret", "set"), ("api", "delete"),
+})
+
+
+def cli_is_allowed_write(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
+    """Devolve (permitido, motivo da recusa) para uma invocacao de ESCRITA."""
+    if not args:
+        return False, "invocacao vazia"
+    cmd = args[0]
+    sub = args[1] if len(args) > 1 and not args[1].startswith("-") else None
+
+    if (cmd, sub) in CLI_FORBIDDEN_INVOCATIONS:
+        return False, f"'{cmd} {sub}' is explicitly forbidden in this milestone"
+    if (cmd, sub) not in CLI_WRITE_INVOCATIONS:
+        return False, (f"'{(cmd + ' ' + (sub or '')).strip()}' is not among the "
+                       f"permitted writes")
+
+    # A permitted write may still carry a forbidden shape. `--body-file` is fine;
+    # `--web` opens a browser and takes the operation out of the engine's sight,
+    # which means the engine could no longer say what it did.
+    for a in args:
+        base = a.split("=", 1)[0]
+        if base in ("--web", "-w"):
+            return False, "'--web' takes the operation outside the engine's view"
+        if base in ("--fill", "--fill-first"):
+            return False, ("'--fill' derives the body from commits; the engine "
+                           "must state the body it is responsible for")
+    return True, ""

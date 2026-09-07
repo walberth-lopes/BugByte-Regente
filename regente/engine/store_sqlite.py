@@ -125,12 +125,31 @@ CREATE TABLE IF NOT EXISTS targets (
   confirmations INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (workspace_id, task_key, repo_provider, repo_key));
 
+CREATE TABLE IF NOT EXISTS deliveries (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL, task_key TEXT NOT NULL, run_id TEXT NOT NULL,
+  repo_provider TEXT NOT NULL, repo_key TEXT NOT NULL,
+  branch TEXT NOT NULL, commit_sha TEXT NOT NULL,
+  pushed_at TEXT, push_target TEXT,
+  pr_number INTEGER, pr_url TEXT, pr_head_sha TEXT, pr_opened_at TEXT,
+  ci_state TEXT, ci_result TEXT, ci_reason TEXT,
+  ci_observed_at TEXT, ci_checks TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL);
+-- One pull request belongs to one workspace and one delivery. This is the
+-- schema-level half of the cross-association guard: the marker and the head SHA
+-- are the runtime half, and a constraint holds when both of those are somehow
+-- bypassed.
+CREATE UNIQUE INDEX IF NOT EXISTS ix_deliveries_pr
+  ON deliveries(workspace_id, repo_provider, repo_key, pr_number)
+  WHERE pr_number IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_deliveries_task ON deliveries(workspace_id, task_key);
+
 CREATE TABLE IF NOT EXISTS counters (
   workspace_id TEXT NOT NULL, day TEXT NOT NULL, name TEXT NOT NULL,
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "6"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -241,10 +260,57 @@ def _v3_to_v4(c: sqlite3.Connection) -> None:
                    PRIMARY KEY (workspace_id, task_key, repo_provider, repo_key))""")
 
 
+def _v4_to_v5(c: sqlite3.Connection) -> None:
+    """Deliveries: the link from task to run to commit to PR to CI.
+
+    A table rather than columns on `runs`, because one run observes the same PR
+    many times -- CI re-runs, the head moves -- and columns would force
+    overwriting history the timeline needs.
+    """
+    c.execute("""CREATE TABLE IF NOT EXISTS deliveries (
+                   id TEXT PRIMARY KEY,
+                   workspace_id TEXT NOT NULL, task_key TEXT NOT NULL,
+                   run_id TEXT NOT NULL,
+                   repo_provider TEXT NOT NULL, repo_key TEXT NOT NULL,
+                   branch TEXT NOT NULL, commit_sha TEXT NOT NULL,
+                   pushed_at TEXT, push_target TEXT,
+                   pr_number INTEGER, pr_url TEXT, pr_head_sha TEXT,
+                   pr_opened_at TEXT,
+                   ci_state TEXT, ci_result TEXT, ci_reason TEXT,
+                   ci_observed_at TEXT, ci_checks TEXT NOT NULL DEFAULT '[]',
+                   created_at TEXT NOT NULL)""")
+    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS ix_deliveries_pr
+                 ON deliveries(workspace_id, repo_provider, repo_key, pr_number)
+                 WHERE pr_number IS NOT NULL""")
+    c.execute("""CREATE INDEX IF NOT EXISTS ix_deliveries_task
+                 ON deliveries(workspace_id, task_key)""")
+
+
+def _v5_to_v6(c: sqlite3.Connection) -> None:
+    """Repair the daily dispatch counter, which was written and read under two
+    different names after the rename to English.
+
+    `mark_dispatch` wrote `dispatches`; `dispatch_count` read `despachos`. The
+    read therefore always answered zero and the daily ceiling never engaged --
+    a budget that silently does not apply, which is the direction that costs
+    money before anyone notices. Existing rows are folded into the English name
+    rather than dropped: a counter reset to zero would hand back the whole
+    day's budget to a workspace that had already spent it.
+    """
+    c.execute("""INSERT INTO counters(workspace_id, day, name, value)
+                 SELECT workspace_id, day, 'dispatches', value FROM counters
+                  WHERE name='despachos'
+                 ON CONFLICT(workspace_id, day, name)
+                   DO UPDATE SET value = value + excluded.value""")
+    c.execute("DELETE FROM counters WHERE name='despachos'")
+
+
 MIGRATIONS: dict[str, tuple[str, Any]] = {
     "1": ("2", _v1_to_v2),
     "2": ("3", _v2_to_v3),
     "3": ("4", _v3_to_v4),
+    "4": ("5", _v4_to_v5),
+    "5": ("6", _v5_to_v6),
 }
 
 
@@ -769,9 +835,88 @@ class SqliteStore(Store):
                  "confirmations": r["confirmations"]}
                 for r in self._con.execute(q + " ORDER BY task_key", args)]
 
+    # ---- deliveries: task -> run -> commit -> push -> PR -> CI ---------
+
+    def open_delivery(self, workspace_id: str, task_key: str, run_id: str,
+                      provider: str, repo_key: str, branch: str,
+                      commit_sha: str) -> str:
+        """Open the record BEFORE anything remote happens, and return its id.
+
+        Written first on purpose. If the engine dies between the push and the
+        record, the row already names the commit and branch that were about to
+        be published -- enough for a human, or the next tick, to go and look. A
+        record written afterwards would be missing exactly when it matters.
+        """
+        did = ids.new_id(ids.DELIVERY)
+        with self._tx() as c:
+            c.execute("""INSERT INTO deliveries(id, workspace_id, task_key, run_id,
+                           repo_provider, repo_key, branch, commit_sha, created_at)
+                         VALUES(?,?,?,?,?,?,?,?,?)""",
+                      (did, workspace_id, task_key, run_id, provider, repo_key,
+                       branch, commit_sha, _iso(now())))
+        return did
+
+    def record_push(self, delivery_id: str, target: str) -> None:
+        with self._tx() as c:
+            c.execute("UPDATE deliveries SET pushed_at=?, push_target=? WHERE id=?",
+                      (_iso(now()), target, delivery_id))
+
+    def record_pull_request(self, delivery_id: str, number: int, url: str,
+                            head_sha: str) -> None:
+        """The head SHA is stored with the number, never the number alone.
+
+        A pull request number identifies a conversation; the head identifies the
+        code. Recording only the number would leave the engine unable to tell,
+        later, whether the thing it observes is still the thing it published.
+        """
+        with self._tx() as c:
+            c.execute("""UPDATE deliveries SET pr_number=?, pr_url=?, pr_head_sha=?,
+                           pr_opened_at=? WHERE id=?""",
+                      (int(number), url, head_sha, _iso(now()), delivery_id))
+
+    def record_ci(self, delivery_id: str, state: str, result: str | None,
+                  reason: str, checks: list[dict]) -> None:
+        """`state` and `result` are separate columns because they answer
+        different questions: whether there is an answer, and what it was.
+        UNAVAILABLE and PENDING carry no result, and a schema that folded them
+        into one column would force writing a fake one."""
+        with self._tx() as c:
+            c.execute("""UPDATE deliveries SET ci_state=?, ci_result=?, ci_reason=?,
+                           ci_observed_at=?, ci_checks=? WHERE id=?""",
+                      (state, result, reason, _iso(now()), _j(checks), delivery_id))
+
+    def deliveries(self, workspace_id: str, task_key: str | None = None) -> list[dict]:
+        q = "SELECT * FROM deliveries WHERE workspace_id=?"
+        args: list[Any] = [workspace_id]
+        if task_key:
+            q += " AND task_key=?"
+            args.append(task_key)
+        return [self._delivery(r)
+                for r in self._con.execute(q + " ORDER BY created_at DESC", args)]
+
+    def delivery_for_pr(self, workspace_id: str, provider: str, repo_key: str,
+                        number: int) -> dict | None:
+        """Which run owns this pull request, according to local state.
+
+        Scoped by workspace: two clients may hold repositories with the same
+        name, and a lookup that ignored tenancy would answer about the wrong
+        one -- confidently.
+        """
+        r = self._con.execute(
+            """SELECT * FROM deliveries WHERE workspace_id=? AND repo_provider=?
+                 AND repo_key=? AND pr_number=?""",
+            (workspace_id, provider, repo_key, int(number))).fetchone()
+        return self._delivery(r) if r else None
+
+    @staticmethod
+    def _delivery(r: sqlite3.Row) -> dict:
+        d = {k: r[k] for k in r.keys()}
+        d["ci_checks"] = json.loads(r["ci_checks"] or "[]")
+        return d
+
     def dispatch_count(self, workspace_id: str, day: str) -> int:
         r = self._con.execute(
-            "SELECT value FROM counters WHERE workspace_id=? AND day=? AND name='despachos'",
+            "SELECT value FROM counters WHERE workspace_id=? AND day=? AND name='dispatches'",
             (workspace_id, day)).fetchone()
         return r["value"] if r else 0
 

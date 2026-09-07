@@ -533,3 +533,49 @@ def test_database_of_version_future_is_refused(tmp_path):
     con.commit(); con.close()
     with _pytest.raises(CorruptedState, match="newer engine|no path to"):
         SqliteStore(path).migrate()
+
+
+def test_the_daily_dispatch_counter_is_written_and_read_under_one_name(tmp_path):
+    """The ceiling only bites if both sides agree on the counter's name.
+
+    They did not: the rename to English changed the write and left the read, so
+    `dispatch_count` always answered zero and `max_dispatches_per_day` never
+    engaged. A budget that silently does not apply fails in the expensive
+    direction, and nothing in the suite noticed -- hence this test.
+    """
+    from regente.engine.store_sqlite import SqliteStore
+
+    s = SqliteStore(tmp_path / "counter.db")
+    s.migrate()
+    assert s.dispatch_count("wks_a", "2026-09-06") == 0
+    s.mark_dispatch("wks_a", "2026-09-06")
+    s.mark_dispatch("wks_a", "2026-09-06")
+    assert s.dispatch_count("wks_a", "2026-09-06") == 2
+    assert s.dispatch_count("wks_b", "2026-09-06") == 0, "counters are per workspace"
+    assert s.dispatch_count("wks_a", "2026-09-07") == 0, "counters are per day"
+    s.close()
+
+
+def test_migrating_to_v6_keeps_a_day_already_spent(tmp_path):
+    """Renaming the counter must not hand back budget that was already used."""
+    from regente.engine.store_sqlite import SCHEMA_VERSION, SqliteStore
+
+    path = tmp_path / "v5.db"
+    s = SqliteStore(path)
+    s.migrate()
+    with s._tx() as c:
+        c.execute("INSERT INTO counters(workspace_id, day, name, value) "
+                  "VALUES('wks_a','2026-09-06','despachos',7)")
+        c.execute("UPDATE meta SET value='5' WHERE key='schema'")
+    s.close()
+
+    s2 = SqliteStore(path)
+    s2.migrate()
+    assert s2.dispatch_count("wks_a", "2026-09-06") == 7
+    s2.mark_dispatch("wks_a", "2026-09-06")
+    assert s2.dispatch_count("wks_a", "2026-09-06") == 8
+    assert s2._con.execute(
+        "SELECT COUNT(*) FROM counters WHERE name='despachos'").fetchone()[0] == 0
+    assert s2._con.execute(
+        "SELECT value FROM meta WHERE key='schema'").fetchone()[0] == SCHEMA_VERSION
+    s2.close()

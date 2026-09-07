@@ -20,6 +20,7 @@ RUN = "run"
 EVENT = "evt"
 APPROVAL = "apv"
 ACTION = "act"
+DELIVERY = "dlv"
 
 
 def new_id(prefixo: str) -> str:
