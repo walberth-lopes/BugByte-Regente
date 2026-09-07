@@ -1,16 +1,18 @@
-# Configuracao do Regente. Um arquivo por workspace.
+# Regente configuration. One file per workspace.
 #
-# Trocar de fornecedor e editar `providers`. O Core Engine nao muda.
+# Swapping providers means editing `providers`. The Core Engine does not change.
 
 organization: my-org
 client: first-client
 workspace: main
 
-# Ate onde o motor vai sozinho: L0 leitura, L1 codigo, L2 PR, L3 staging, L4 producao.
+# How far the engine goes on its own: L0 read, L1 code, L2 PR, L3 staging,
+# L4 production.
 autonomy: L2
 
-# Sombra: o motor decide, registra e mostra -- mas nao executa escrita externa.
-# Nasce ligado. Desligar e decisao explicita, depois de conferir a sombra.
+# Shadow: the engine decides, records and shows -- but performs no external
+# write. It is born on. Turning it off is an explicit decision, after checking
+# what `regente shadow` says it would have done.
 shadow: true
 
 root: .regente
@@ -42,5 +44,5 @@ budget:
   max_seconds: 2700
   max_attempts: 3
 
-# Somam aos fatores da base; nao os substituem.
+# These add to the base factors; they do not replace them.
 risk_factors: []

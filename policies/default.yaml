@@ -1,73 +1,79 @@
-# Regras do Policy Engine.
+# Policy Engine rules.
 #
-# Default e DENY: acao sem regra que a permita nao acontece. As regras abaixo
-# abrem o que precisa estar aberto, e nada alem.
+# The default is DENY: an action with no rule allowing it does not happen. The
+# rules below open what needs to be open, and nothing more.
 #
-# Vence o mais restritivo. Se qualquer regra diz DENY, o veredito e DENY --
-# ordem no arquivo nao decide seguranca.
+# The most restrictive wins. If any rule says DENY, the verdict is DENY --
+# order in the file does not decide security.
 #
-# Campos que podem aparecer em `match` (ausente = curinga):
+# Fields that may appear in `match` (absent = wildcard):
 #   action environment resource organization client workspace project agent risk
+#
+# Match values are data, not prose: "producao" stays in the environment lists
+# below so a workspace configured with that environment name is still caught.
+# The same spelling is in the risk engine's production factor.
 
 rules:
-  # ---- leitura: aberta ---------------------------------------------------
+  # ---- reading: open -----------------------------------------------------
   - name: read_anything
     effect: ALLOW
     match: {action: "*.read"}
-    reason: "ler nunca muda o mundo"
+    reason: "reading never changes the world"
 
   - name: read_tasks
     effect: ALLOW
     match: {action: "task.read*"}
 
-  # ---- trabalho no proprio workspace -------------------------------------
+  # ---- work in the worker's own area -------------------------------------
   - name: write_in_own_area
     effect: ALLOW
     match: {action: "workspace.write*"}
-    reason: "a area do worker e isolada e descartavel"
+    reason: "the worker's area is isolated and disposable"
 
   - name: write_code
     effect: ALLOW
     match: {action: ["repo.branch*", "repo.commit*"]}
 
-  # ---- entrega -----------------------------------------------------------
+  # ---- delivery ----------------------------------------------------------
   - name: publish_work
     effect: ALLOW
     match: {action: ["repo.push*", "repo.pr*"]}
-    reason: "PR e a superficie onde um humano ve o trabalho antes de valer"
+    reason: "a PR is the surface where a human sees the work before it counts"
 
   - name: comment_and_transition
     effect: ALLOW
     match: {action: "task.write*"}
 
-  # ---- staging: autonomo -------------------------------------------------
+  # ---- staging: autonomous -----------------------------------------------
   - name: merge_and_deploy_staging
     effect: ALLOW
     match: {action: ["repo.merge", "deploy.staging"], environment: ["staging", "local", "test"]}
-    reason: "staging existe para quebrar; esperar assinatura aqui e o gargalo que o motor remove"
+    reason: "staging exists to break; waiting for a signature here is the bottleneck the engine removes"
 
-  # ---- producao: autoridade humana ---------------------------------------
-  # Nao e desconfianca do modelo: e onde a organizacao decidiu que a assinatura
-  # tem dono. Risco alto NAO entra aqui -- risco compra releitura, nao espera.
+  # ---- production: human authority ---------------------------------------
+  # Not distrust of the model: this is where the organisation decided the
+  # signature has an owner. High risk does NOT belong here -- risk buys a
+  # re-read, not waiting.
   - name: production_needs_signature
     effect: HUMAN_APPROVAL
     match: {action: ["repo.merge", "deploy.*", "cloud.write*"], environment: ["prod", "production", "producao"]}
-    reason: "mudanca em producao tem dono humano"
+    reason: "a change in production has a human owner"
 
-  # ---- proibido ----------------------------------------------------------
-  # DENY, e nao HUMAN_APPROVAL, porque nao existe circunstancia em que o motor
-  # deva executar isto -- nem com autorizacao. Quem precisa faz com as maos.
+  # ---- forbidden ---------------------------------------------------------
+  # DENY, and not HUMAN_APPROVAL, because there is no circumstance in which the
+  # engine should do this -- not even with authorisation. Whoever needs it does
+  # it by hand.
   - name: never_destroys_data
     effect: DENY
     match: {action: ["db.write*", "db.drop*", "db.delete*", "*.destroy", "*.purge", "*.truncate"]}
-    reason: "o motor nao escreve em banco; migration passa por deploy, com revisao"
+    reason: "the engine does not write to a database; a migration goes through deploy, with review"
 
   - name: never_touches_credentials
     effect: DENY
     match: {resource: ["*secret*", "*credential*", "*iam*", "*.env*"]}
-    reason: "credencial e infraestrutura critica, nao arquivo"
+    reason: "a credential is critical infrastructure, not a file"
 
   - name: never_deletes_in_production
     effect: DENY
     match: {action: "*.delete*", environment: ["prod", "production", "producao"]}
-    reason: "apagar em producao nao tem desfazer"
+    reason: "deleting in production has no undo"
