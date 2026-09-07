@@ -73,13 +73,16 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
 
     observer = o.get("observer")
     modo = o.get("transport", "http")
-    if modo == "instantaneo":
+    if modo == "snapshot":
         from pathlib import Path
         transport = SnapshotTransport(
             directory=Path(o["snapshots"]), observer=observer)
     elif modo == "http":
         site = o["site"].rstrip("/")
-        secrets = o["segredos"]           # SecretProvider, injetado pela composicao
+        # Injetado pela composicao. O nome desta chave e o que a composicao
+        # escreve -- ja divergiu uma vez depois de uma renomeacao, e o efeito
+        # foi um KeyError na construcao do adapter, nao um erro legivel.
+        secrets = o["secrets"]
         ref_usuario = o.get("user_ref") or "env:JIRA_EMAIL"
         ref_token = o.get("token_ref") or "env:JIRA_API_TOKEN"
         transport = HttpTransport(
@@ -89,7 +92,8 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
             max_attempts=int(o.get("max_tentativas", 3)),
             observer=observer)
     else:
-        raise KeyError(f"transport desconhecido para jira: {modo!r}. Use http ou instantaneo")
+        raise KeyError(f"transport desconhecido para jira: {modo!r}. "
+                       f"Use http ou snapshot")
 
     return JiraTasks(
         transport=transport,

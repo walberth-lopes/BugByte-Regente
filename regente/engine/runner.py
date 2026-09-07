@@ -36,8 +36,8 @@ from ..ports.repository import RepositoryProvider
 from ..ports import AdapterError
 from ..ports.store import Store
 from ..ports.workspace import WorkspaceProvider
-from . import (coder, context, metrics, mission, observation, testing,
-               validation)
+from . import (coder, context, metrics, mission, observation, pipeline,
+               remote, testing, validation)
 from .discovery import Source
 from .target import Confidence
 
@@ -60,6 +60,10 @@ class MissionOutcome:
     commit_reason: str = ""
     promoted: bool = False
     promotion_reason: str = ""
+    #: How far the change got towards a reviewer. `None` when no delivery stage
+    #: is configured at all -- which is a different thing from a delivery that
+    #: was attempted and refused, and the two must not read alike.
+    delivery: pipeline.DeliveryOutcome | None = None
 
     @property
     def refused(self) -> bool:
@@ -103,6 +107,14 @@ class MissionRunner:
     authority_paths: tuple[str, ...] = ()
     #: Vendor-named instruction filenames, from composition.
     instruction_files: tuple[str, ...] = ()
+    #: The road out of `TESTING`. Optional on purpose: a workspace with no
+    #: remote configured still runs missions, and the engine says so rather
+    #: than failing at the end of a successful piece of work.
+    delivery: pipeline.DeliveryStage | None = None
+    #: Which origin the mission's task key belongs to. A key alone does not
+    #: identify a task -- two providers can both call something `PROJ-1` -- so
+    #: the lookup that finds the row to move is given both, never one.
+    task_provider: str = ""
 
     def _watched_sources(self) -> tuple[str, ...]:
         return self.watched_sources
@@ -223,6 +235,8 @@ class MissionRunner:
                              repository=m.repo.ref.key,
                              workspace_id=self.workspace_id, reason=commit_reason)
 
+            delivered = self._maybe_deliver(m, area, run, result, commit_sha)
+
             measured = metrics.build(
                 task_key=m.task.key, repository=m.repo.ref.key,
                 verdict=result.verdict, discovery=m.discovery, loop_result=result,
@@ -239,7 +253,8 @@ class MissionRunner:
             return MissionOutcome(briefing, result.verdict, result, measured,
                                   area.path, commit_sha=commit_sha,
                                   commit_reason=commit_reason, promoted=promoted,
-                                  promotion_reason=promotion_reason)
+                                  promotion_reason=promotion_reason,
+                                  delivery=delivered)
         finally:
             self.store.release_lease(m.resource, run.id, self.workspace_id)
 
@@ -328,6 +343,87 @@ class MissionRunner:
         except AdapterError as e:
             return "", f"commit refused by the workspace: {e}"
         return sha, judgement.reason
+
+    def _maybe_deliver(self, m: mission.Mission, area, run: Run,
+                       result: coder.LoopResult, commit_sha: str
+                       ) -> "pipeline.DeliveryOutcome | None":
+        """Carry the committed change towards a reviewer, or say why not.
+
+        Three preconditions, each of which is a refusal to guess:
+
+        * **a stage** -- without a configured remote there is nowhere to
+          deliver, and inventing one would be worse than stopping.
+        * **a commit the engine wrote** -- `commit_sha` is empty whenever the
+          engine or the policy declined. Delivering anyway would push a change
+          the engine itself refused to record.
+        * **a task the store can name** -- the mission carries the origin's key;
+          the delivery moves a row. Without the row there is no state to move,
+          and moving the wrong one is worse than moving none.
+
+        Everything after that -- policy, identity, SHA, idempotency -- is asked
+        again inside the stage, per step. Reaching this line authorises nothing.
+        """
+        if self.delivery is None or not commit_sha:
+            return None
+        task = self.store.task_by_key(self.workspace_id, self.task_provider,
+                                      m.task.key)
+        if task is None:
+            self._record("delivery_skipped", m.task.key, run.id,
+                         "the task is not in this workspace's store; the "
+                         "delivery has no state to move")
+            return None
+
+        identity = remote.RemoteIdentity(
+            workspace_id=self.workspace_id, workspace_name=self.workspace_name,
+            organization=self.organization, client=self.client,
+            task_key=m.task.key, run_id=run.id, repo=m.repo.ref,
+            branch=area.branch or "", commit_sha=commit_sha)
+
+        outcome = self.delivery.advance(
+            identity, area, result.verdict, task.id,
+            title=f"{m.task.key}: {m.task.title}"[:72],
+            body=self._pull_request_body(m, result, commit_sha),
+            risk=m.risk.level.name)
+
+        self._record("delivery", m.task.key, run.id,
+                     f"{outcome.step.value}: {outcome.reason}"[:300],
+                     step=outcome.step.value, sha=commit_sha,
+                     pull_request=outcome.pull_request,
+                     resumed=list(outcome.resumed),
+                     ci=outcome.ci.state.value if outcome.ci else None,
+                     workspace_id=self.workspace_id)
+        return outcome
+
+    def _pull_request_body(self, m: mission.Mission, result: coder.LoopResult,
+                           commit_sha: str) -> str:
+        """What a reviewer needs, written so it cannot be mistaken for approval.
+
+        Says what was done, what was measured, and by whom. It states the limits
+        of its own evidence in the text, because a pull request body is read by
+        a person deciding whether to merge, and a confident summary of an
+        unverified change is how a machine borrows authority it does not have.
+        """
+        tests = result.test_verdict
+        if tests is None:
+            verified = "no test verdict was produced"
+        else:
+            verified = f"{tests.result.value} ({tests.command or 'no command'})"
+
+        lines = [
+            f"**{m.task.key}** -- {m.task.title}",
+            "",
+            f"- repository: `{m.repo.ref.key}` (target {m.discovery.confidence.value})",
+            f"- engine verdict: `{result.verdict.value}`",
+            f"- tests: {verified}",
+            f"- files changed: {len(result.changed_files)}",
+            f"- commit written by the engine: `{commit_sha[:12]}`",
+            "",
+            "Written by an automated agent under an engine that validated the "
+            "change and wrote the commit itself. The agent did not decide to "
+            "open this; it does not decide whether it merges. Review it as you "
+            "would any other proposal.",
+        ]
+        return "\n".join(lines)
 
     def _record(self, kind: str, task_key: str, run_id: str, summary: str,
                 **data) -> None:

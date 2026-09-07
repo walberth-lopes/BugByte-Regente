@@ -163,6 +163,25 @@ class GitHubWrite:
             raise AdapterError("pr list returned an unexpected shape")
         return self._normalize(raw[0], target) if raw else None
 
+    def remote_branch_sha(self, repo: str, branch: str) -> str | None:
+        """The commit a branch points at on the remote, or `None` if absent.
+
+        A READ, through the read allowlist, and the only way to answer the
+        question that makes a push idempotent: did the previous attempt land?
+        A process that died between pushing and recording its push has no local
+        way to tell, and pushing again blind is how a retry becomes a second
+        mutation.
+        """
+        target = repo if "/" in repo else f"{self.org}/{repo}"
+        try:
+            raw = self._cli(["api", f"repos/{target}/git/ref/heads/{branch}"],
+                            write=False)
+        except NotFound:
+            return None
+        if not isinstance(raw, dict):
+            raise AdapterError("git ref returned an unexpected shape")
+        return ((raw.get("object") or {}).get("sha") or "") or None
+
     # ---- the one mutation ------------------------------------------------
 
     def create_pull_request(self, repo: str, branch: str, base: str, title: str,

@@ -326,3 +326,131 @@ def test_no_marker_file_means_no_guess(tmp_path):
     """Guessing `pytest` where nothing declares it produces an infrastructure
     failure the engine caused itself."""
     assert testing.detect_command(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# The seam between a mission and its delivery
+# ---------------------------------------------------------------------------
+#
+# The mutation sweep found this half untested: removing the requirement that the
+# ENGINE wrote a commit left every test green. A mission that ends without a
+# commit is the normal shape of a refusal -- the engine declined, or the policy
+# did -- and delivering one anyway would push a change the engine itself
+# refused to record.
+
+class _RecordingStage:
+    """Stands in for the delivery road and records whether it was asked."""
+
+    def __init__(self):
+        self.calls = []
+
+    def advance(self, identity, area, verdict, task_id, title, body="",
+                risk="LOW"):
+        self.calls.append({"identity": identity, "verdict": verdict,
+                           "task_id": task_id, "title": title, "body": body})
+        from regente.engine.pipeline import DeliveryOutcome, Step
+        return DeliveryOutcome(Step.PULL_REQUEST, "recorded", pull_request=1)
+
+
+def _delivering_runner(tmp_path, store, stage):
+    r = _runner(tmp_path, store)
+    r.delivery = stage
+    r.task_provider = "filesystem"
+    return r
+
+
+def test_a_mission_that_wrote_no_commit_is_never_delivered(tmp_path, store):
+    """`commit_sha` empty means the engine or the policy said no.
+
+    The task row exists here on purpose. Without it the later guard -- "the
+    store cannot name this task" -- stops the delivery too, and the test would
+    pass with the commit check deleted. The sweep caught exactly that: the first
+    version of this test proved the wrong guard.
+    """
+    _a_task_row(store)
+    stage = _RecordingStage()
+    r = _delivering_runner(tmp_path, store, stage)
+
+    delivered = r._maybe_deliver(_mission(), _an_area(), _a_run(), _a_result(),
+                                 commit_sha="")
+
+    assert delivered is None
+    assert stage.calls == [], (
+        "a change the engine refused to commit was handed to the delivery")
+
+
+def test_a_mission_whose_task_is_not_in_the_store_is_never_delivered(tmp_path, store):
+    """The delivery moves a row. Without the row there is no state to move,
+    and moving the wrong one is worse than moving none."""
+    stage = _RecordingStage()
+    r = _delivering_runner(tmp_path, store, stage)
+
+    delivered = r._maybe_deliver(_mission(), None, _a_run(), _a_result(),
+                                 commit_sha="a" * 40)
+
+    assert delivered is None
+    assert stage.calls == []
+    assert any("not in this workspace" in e.summary
+               for e in store.events("wks_1", limit=50))
+
+
+def test_a_committed_mission_is_handed_over_with_its_own_identity(tmp_path, store):
+    task_row = _a_task_row(store)
+    stage = _RecordingStage()
+    r = _delivering_runner(tmp_path, store, stage)
+    run = _a_run()
+
+    out = r._maybe_deliver(_mission(), _an_area(), run, _a_result(),
+                           commit_sha="a" * 40)
+
+    assert out is not None and stage.calls
+    call = stage.calls[0]
+    assert call["task_id"] == task_row.id
+    assert call["identity"].commit_sha == "a" * 40
+    assert call["identity"].run_id == run.id
+    assert call["identity"].repo.key == "acme/api"
+    assert call["identity"].workspace_id == "wks_1"
+    # The body describes the work and claims no authority over it.
+    assert "K-1" in call["body"] and "does not decide whether it merges" in call["body"]
+
+
+def test_a_runner_without_a_delivery_stage_says_nothing_happened(tmp_path, store):
+    """`None` is not the same as a delivery that was attempted and refused."""
+    _a_task_row(store)
+    r = _runner(tmp_path, store)
+    assert r.delivery is None
+    assert r._maybe_deliver(_mission(), None, _a_run(), _a_result(),
+                            commit_sha="a" * 40) is None
+
+
+def _a_task_row(store):
+    from regente.core import ids
+    from regente.core.model import ExternalRef, Task
+    from regente.core.states import TaskState
+
+    task = Task(id=ids.new_id(ids.TASK), workspace_id="wks_1",
+                project_id="prj", title="work", state=TaskState.READY,
+                externo=ExternalRef(provider="filesystem", key="K-1"))
+    store.save_task(task)
+    return task
+
+
+def _a_run():
+    from regente.core import ids
+    from regente.core.model import Run, RunState
+    return Run(id=ids.new_id(ids.RUN), task_id="K-1", workspace_id="wks_1",
+               agent="coder", state=RunState.RUNNING)
+
+
+def _an_area():
+    from regente.ports.workspace import WorkArea
+    return WorkArea(id="K-1", path="/tmp/area", branch="regente/k-1",
+                    repo="acme/api")
+
+
+def _a_result():
+    from regente.engine import coder
+    from regente.ports.agent import Verdict
+    return coder.LoopResult(
+        verdict=Verdict.READY_FOR_REVIEW, reason="green",
+        attempts=(), changed_files=("a.py",), test_verdict=None)

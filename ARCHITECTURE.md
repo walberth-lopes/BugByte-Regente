@@ -107,6 +107,13 @@ propriedades que não são óbvias:
   estado ativo "para preservar o progresso" não preserva nada: o progresso vive
   na área de trabalho e na branch, não no rótulo. A task ficaria viva no papel e
   parada de verdade — o pior modo de falha possível, porque nada acusa.
+- **Estado ativo não é uma coisa só.** `OWNED_ACTIVE` tem um worker dentro e
+  sempre implica um run vivo; `AWAITING_EXTERNAL` — `PR_CREATED`, `CI_RUNNING`,
+  `AI_REVIEW` — espera um sistema de fora e por definição não tem ninguém
+  dentro. Tratar os dois como um só custa nos dois sentidos: exigir run vivo
+  devolve à fila uma task que só aguarda o CI, e não exigir deixa passar a task
+  que ficou órfã. O que `AWAITING_EXTERNAL` precisa ter não é um run, é um
+  registro de entrega — sem ele não há a que voltar.
 
 O que preserva o trabalho parcial é a **área ser endereçada pela task, não pela
 tentativa**: a retomada reabre a mesma árvore, com os commits WIP.
@@ -500,6 +507,59 @@ cliente A para o cliente B.
 
 Credencial e autonomia moram no **workspace**, não no projeto — é ali que a
 fronteira entre clientes precisa ser inviolável.
+
+## Entrega: o caminho depois do veredito
+
+`TESTING` era onde a estrada acabava. A task chegava lá, o scheduler a pulava
+por parecer ocupada, e todo tick seguinte lia limpo.
+
+```
+veredito do motor -> push -> PR_CREATED -> CI_RUNNING -> observado -> humano
+```
+
+### Cada etapa revalida
+
+Policy, identidade e SHA são conferidos antes de **cada** mutação remota, não uma
+vez no começo. Validação e mutação estão separadas no tempo, e o mundo anda no
+meio: a branch move, o lease vence, alguém abre um PR na mesma branch.
+
+### Cada etapa é idempotente, porque o remoto é a fonte
+
+Um processo pode morrer entre mutar o remoto e gravar a linha que registra isso.
+Depois disso os dois discordam, e o local discorda em silêncio — ele apenas diz
+que nada aconteceu.
+
+```
+push entra no remoto  ->  [MORTE]  ->  linha nunca escrita
+```
+
+Supor que deu certo perde trabalho. Supor que falhou duplica. Os dois são
+palpite, e um deles escreve. Então o motor **pergunta ao remoto** antes de
+repetir qualquer coisa: a branch já está neste commit? existe PR com o marcador
+desta run *e* com este head? Falha de leitura não é resposta — não saber não é
+permissão para empurrar de novo.
+
+### Onde a estrada para, e por quê
+
+Num humano. Resultado de CI não é veredito de revisão, e veredito de revisão não
+é resolução da task. Este motor não tem revisor nem autoridade de merge: a cor
+do CI muda **o que a pessoa recebe**, nunca **quem decide**.
+
+```
+Agent Outcome != Validation != CI Result != Review Verdict != Task Resolution
+```
+
+O tick observa entregas em voo — e observar tem custo, então é limitado: depois
+de N leituras sem conclusão a entrega vai para a fila do humano. Um pipeline que
+nunca conclui é um resultado real, e ficar perguntando para sempre é como ele
+fica invisível.
+
+### Quem entrega, e quem não
+
+Entrega quem validou a mudança e escreveu o commit. O tick não-atendido roda o
+agente e registra o que ele alega; entregar dali seria entregar com base no
+relato do agente sobre o próprio trabalho, que é a única coisa que este motor
+existe para recusar.
 
 ## Decisões tomadas, e por quê
 

@@ -26,12 +26,13 @@ more dangerous than a thing it can see and dislikes.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 
 from ..core.model import now
-from ..core.states import ACTIVE, TaskState, is_terminus
+from ..core.states import (ACTIVE, AWAITING_EXTERNAL, TaskState,
+                            is_terminus)
 from ..core.model import RunState
 from ..ports.store import Store
 
@@ -120,7 +121,7 @@ def inspect(
     max_dispatches: int | None = None,
     when: datetime | None = None,
 ) -> Health:
-    """Answer the twelve questions. Every answer from a row, or `UNKNOWN`."""
+    """Answer the thirteen questions. Every answer from a row, or `UNKNOWN`."""
     at = when or now()
     signals: list[Signal] = []
     measurements: dict[str, int] = {}
@@ -152,6 +153,8 @@ def inspect(
     # 12. Database growth.
     growth, measurements = _growth(store, workspace_id, at)
     signals.append(growth)
+    # 13. Deliveries in flight.
+    signals.append(_in_flight(store, workspace_id, tasks, at))
 
     return Health(workspace=workspace_name or workspace_id, at=at,
                   signals=tuple(signals), measurements=measurements)
@@ -362,6 +365,63 @@ def _dead_ends(tasks) -> Signal:
     return Signal("dead_end_tasks", Level.STUCK,
                   f"{len(stranded)} task(s) cannot be moved by any tick",
                   tuple(f"{t.key}: {why}" for t, why in stranded[:8]))
+
+
+def _in_flight(store, workspace_id, tasks, at) -> Signal:
+    """Changes already on a remote, waiting on somebody else.
+
+    These are the tasks nobody in this engine is working on and nobody is
+    supposed to be: `AWAITING_EXTERNAL` means the work left and the answer has
+    not come back. They are the easiest thing in the system to lose sight of --
+    no run, no lease, no worker, nothing that expires and complains.
+
+    Two failures are asked about separately, because they need different people:
+    a delivery with no record of what it waits for is broken, and a delivery
+    that has been waiting a long time is merely slow.
+    """
+    waiting = [t for t in tasks if t.state in AWAITING_EXTERNAL]
+    if not waiting:
+        return Signal("deliveries_in_flight", Level.OK, "none")
+
+    lost, slow, evidence = [], [], []
+    for task in waiting:
+        rows = [r for r in store.deliveries(workspace_id, task.key)
+                if r.get("pr_number")]
+        if not rows:
+            lost.append(task)
+            evidence.append(f"{task.key}: {task.state.value} with no delivery "
+                            f"recorded; nothing says what it waits for")
+            continue
+        row = rows[-1]
+        asked = int(row.get("ci_observations") or 0)
+        age = _age(_since(row.get("pr_opened_at")), at)
+        state = row.get("ci_state") or "not yet read"
+        evidence.append(f"{task.key}: PR #{row['pr_number']} for "
+                        f"{row['commit_sha'][:12]}, CI {state}, asked {asked}x, "
+                        f"open {age}")
+        if state in ("PENDING", "UNAVAILABLE") and asked >= 10:
+            slow.append(task)
+
+    if lost:
+        return Signal("deliveries_in_flight", Level.STUCK,
+                      f"{len(lost)} delivery(ies) wait on nothing recorded",
+                      tuple(evidence[:8]))
+    level = Level.ATTENTION if slow else Level.OK
+    return Signal("deliveries_in_flight", level,
+                  f"{len(waiting)} delivery(ies) in flight"
+                  + (f", {len(slow)} with no answer yet" if slow else ""),
+                  tuple(evidence[:8]))
+
+
+def _since(raw: str | None):
+    """Parse a stored timestamp, or admit it cannot be read."""
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+            tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def _budget(store, workspace_id, at, budget_usd, max_dispatches) -> Signal:

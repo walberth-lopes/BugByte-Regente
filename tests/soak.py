@@ -38,7 +38,8 @@ from regente.core.model import RunState, Workspace, now
 from regente.core.policy import AutonomyLevel, PolicyEngine
 from regente.core.risk import RiskEngine
 from regente.core.scheduling import Limits
-from regente.core.states import ACTIVE, TaskState
+from regente.core.states import (ACTIVE, AWAITING_EXTERNAL, OWNED_ACTIVE,
+                                 TaskState)
 from regente.engine import health as health_module
 from regente.engine.gate import Gate
 from regente.engine.orchestrator import Orchestrator
@@ -148,14 +149,33 @@ def check_invariants(store, workspace_id: str, at: datetime,
                 f"live lease '{lease.resource}' is held by '{lease.owner}', "
                 f"which is not an active run")
 
-    # A task in an active state with no run is work nobody is doing, and the
-    # scheduler will not pick it up because it looks busy.
-    active = [t for t in store.tasks(workspace_id) if t.state in ACTIVE]
+    # A task in an OWNED active state with no run is work nobody is doing, and
+    # the scheduler will not pick it up because it looks busy.
     owned = {r.task_id for r in store.active_runs(workspace_id)}
-    for task in active:
-        if task.id not in owned and task.state is not TaskState.READY:
+    live = {l.owner for l in store.leases(workspace_id)
+            if l.expires_at and l.expires_at > at}
+    for task in store.tasks(workspace_id):
+        if task.state not in OWNED_ACTIVE or task.id in owned:
+            continue
+        # A live lease means a worker is inside and has not written its run
+        # row yet -- a real moment, not a strand.
+        if any(r.id in live for r in store.task_runs(task.id, workspace_id)):
+            continue
+        broken.append(
+            f"task {task.key} is {task.state.value} with no active run")
+
+    # A task WAITING on something outside has no run by definition -- that is
+    # what waiting means. What it must have is a delivery to come back to.
+    # Without one there is nothing to observe, nothing to resume, and no way
+    # for any tick to discover what the task is even waiting for.
+    for task in store.tasks(workspace_id):
+        if task.state not in AWAITING_EXTERNAL:
+            continue
+        rows = store.deliveries(workspace_id, task.key)
+        if not any(r.get("pr_number") for r in rows):
             broken.append(
-                f"task {task.key} is {task.state.value} with no active run")
+                f"task {task.key} is {task.state.value} with no delivery "
+                f"recorded; nothing says what it waits for")
 
     # WAITING_HUMAN without a record of where it paused cannot be resumed: a
     # decision would have nowhere to send it.

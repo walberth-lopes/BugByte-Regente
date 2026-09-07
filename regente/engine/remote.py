@@ -29,6 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
 
+from ..core.redaction import redact_url
 from ..core.policy import (Action, AutonomyLevel, Effect, PolicyContext,
                            PolicyEngine)
 from ..ports import AdapterError
@@ -76,6 +77,35 @@ class RemoteIdentity:
 class PushOutcome:
     sha: str
     target: str
+    #: True when the push had already happened and this call only recorded it.
+    already_done: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Reconciliation:
+    """What the remote says already happened, whatever the local record says.
+
+    The question every retry has to answer before acting: *did the previous
+    attempt land?* A process that dies between a remote mutation and the row
+    that records it leaves no local trace of the mutation -- and repeating it
+    blind is how a retry becomes a second push, or a second pull request.
+
+    So the engine asks the remote instead of assuming either way. Assuming it
+    succeeded loses work; assuming it failed duplicates it. Both are guesses,
+    and one of them is a mutation.
+    """
+    pushed: bool
+    remote_sha: str | None
+    pull_request: PullRequest | None
+    detail: str
+
+    @property
+    def push_needed(self) -> bool:
+        return not self.pushed
+
+    @property
+    def pull_request_needed(self) -> bool:
+        return self.pull_request is None
 
 
 @dataclass(slots=True)
@@ -128,6 +158,61 @@ class RemoteDelivery:
                 f"was never validated")
         return actual
 
+    # ---- before any retry: what does the remote already say? -------------
+    def reconcile(self, identity: RemoteIdentity) -> Reconciliation:
+        """Read the remote's version of events. Never mutates.
+
+        Called before repeating anything, and on every resume from persisted
+        state. A branch already at this run's commit means the push landed; a
+        pull request already carrying this run's marker AND head means it was
+        created. Anything else, and the mutation still has to happen.
+
+        A failure to READ is not evidence that nothing happened. It raises,
+        because proceeding on an unread remote is exactly the blind retry this
+        exists to prevent.
+        """
+        remote_sha: str | None = None
+        reader = getattr(self.repos_write, "remote_branch_sha", None)
+        if reader is None:
+            raise Refused(
+                "this workspace's repository adapter cannot read a branch, so "
+                "the engine cannot tell whether a previous attempt landed; it "
+                "will not guess")
+        try:
+            remote_sha = reader(identity.repo.key, identity.branch)
+        except AdapterError as e:
+            raise Refused(
+                f"could not read '{identity.branch}' on the remote: "
+                f"{redact_url(str(e))}. "
+                f"Not knowing is not permission to push again") from e
+
+        pushed = remote_sha == identity.commit_sha
+        existing: PullRequest | None = None
+        if self.repos_write is not None:
+            try:
+                candidate = self.repos_write.find_pull_request_for_branch(
+                    identity.repo.key, identity.branch)
+            except AdapterError as e:
+                raise Refused(
+                    f"could not read the pull requests for "
+                    f"'{identity.branch}': {redact_url(str(e))}") from e
+            if candidate is not None and self._is_ours(candidate, identity):
+                existing = candidate
+
+        return Reconciliation(
+            pushed=pushed, remote_sha=remote_sha, pull_request=existing,
+            detail=(f"remote branch at {remote_sha[:12] if remote_sha else 'absent'}; "
+                    f"pull request "
+                    f"{('#' + str(existing.number)) if existing else 'absent'}"))
+
+    def _is_ours(self, existing: PullRequest, identity: RemoteIdentity) -> bool:
+        """Both proofs, or it is not ours to adopt."""
+        try:
+            self._refuse_or_adopt(existing, identity)
+        except Refused:
+            return False
+        return True
+
     # ---- mutation 1: push ------------------------------------------------
     def push(self, area: WorkArea, identity: RemoteIdentity, delivery_id: str,
              risk: str = "LOW") -> PushOutcome:
@@ -138,12 +223,28 @@ class RemoteDelivery:
         target = self.areas.push_target(area)
         if not target:
             raise Refused("the area has no push target; a push is impossible")
+        # An HTTPS remote can carry the credential inside the URL. Everything
+        # below this line writes the target somewhere permanent -- the ledger,
+        # the report, an event -- so the credential is removed here, once,
+        # rather than at each of those places where one would be forgotten.
+        target = redact_url(target)
+
+        # Did a previous attempt already land? Asked before every push, not
+        # only on a retry: the engine cannot tell a first attempt from a
+        # resumed one, and it should not have to.
+        already = self.reconcile(identity)
+        if already.pushed:
+            self.store.record_push(delivery_id, target)
+            return PushOutcome(sha=identity.commit_sha, target=target,
+                               already_done=True)
 
         try:
             sha = self.areas.push(area, expected_sha=identity.commit_sha,
                                   branch=identity.branch)
         except AdapterError as e:
-            raise Refused(f"push refused by the workspace: {e}") from e
+            # The adapter's message often quotes the remote URL back.
+            raise Refused(
+                f"push refused by the workspace: {redact_url(str(e))}") from e
 
         self.store.record_push(delivery_id, target)
         return PushOutcome(sha=sha, target=target)
@@ -164,7 +265,12 @@ class RemoteDelivery:
         existing = self.repos_write.find_pull_request_for_branch(
             identity.repo.key, identity.branch)
         if existing is not None:
+            # Refuses unless BOTH the marker and the head match. A pull request
+            # this run already opened is adopted rather than duplicated; anybody
+            # else's is refused.
             self._refuse_or_adopt(existing, identity)
+            self.store.record_pull_request(delivery_id, existing.number,
+                                           existing.url, existing.head_sha)
             return existing
 
         created = self.repos_write.create_pull_request(

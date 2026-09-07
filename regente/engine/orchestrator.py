@@ -28,8 +28,9 @@ from ..core.model import (Dependency, Event, ExternalRef, Run, RunState, Task, W
 from ..core.policy import AutonomyLevel
 from ..core.risk import RiskEngine, RiskLevel
 from ..core.scheduling import Candidate, Limits, Plan, plan
-from ..core.states import (_AVANCOS, ACTIVE, TaskState, engine_can_advance,
-                           is_terminus, resumable_from)
+from ..core.states import (_AVANCOS, ACTIVE, AWAITING_EXTERNAL, OWNED_ACTIVE,
+                           TaskState, engine_can_advance, is_terminus,
+                           resumable_from)
 from ..ports import AdapterError
 from ..ports.support import NotificationProvider
 from ..ports.tasks import ExternalTask, ExternalStatus, TaskProvider
@@ -37,7 +38,10 @@ from ..ports.agent import (AgentRunner, Budget as AgentBudget, ContextItem,
                            ContextPackage, Mission, Outcome, ProcessStatus)
 from ..ports.workspace import WorkspaceProvider
 from ..ports.store import Store
+from ..ports.repository import RepoRef
 from . import escalation, supervisor
+from .ci import CIState
+from .remote import RemoteDelivery, RemoteIdentity
 from .gate import Scope, Gate
 from .ownership import Heartbeat, Ownership
 
@@ -73,6 +77,8 @@ class TickReport:
     changes: tuple[tuple[str, str, str], ...] = ()
     #: Estavam bloqueadas pela origem e voltaram a fila.
     unblocked_tasks: tuple[str, ...] = ()
+    #: Entregas cujos checks foram lidos neste tick. Observacao, nunca disparo.
+    ci_observed: tuple[str, ...] = ()
 
     def summary(self) -> str:
         if self.baseline:
@@ -117,6 +123,21 @@ class Orchestrator:
     #: Segundos de vida de um lease. O worker renova; se morrer, vence e a
     #: recuperacao devolve a task a fila.
     lease_seconds: int = 900
+    #: Reads the checks of deliveries in flight. `None` means this workspace
+    #: has no remote at all -- in which case a task that somehow reaches
+    #: `CI_RUNNING` is escalated rather than watched, because an engine that
+    #: cannot look must not pretend to be waiting.
+    delivery: "RemoteDelivery | None" = None
+    #: How many times the engine asks about one commit's checks before handing
+    #: the delivery to a person. A pipeline that never concludes is a real
+    #: outcome, and polling it for ever is how it stays invisible.
+    max_ci_observations: int = 20
+    #: Who this workspace belongs to, as POLICY names them. Given by
+    #: composition, never derived from an internal id: a client id is opaque by
+    #: design, and a rule written about "acme" would silently stop matching if
+    #: the engine started answering with `cli_9f3a` instead.
+    organization: str = "*"
+    client: str = "*"
 
     # ------------------------------------------------------------------
     def tick(self) -> TickReport:
@@ -125,6 +146,10 @@ class Orchestrator:
         try:
             self._recover(rel)
             self._resume_decided(rel)
+            # Before looking for new work: a delivery already in flight is
+            # closer to done than anything still in the queue, and leaving it
+            # unwatched is how CI_RUNNING would become the next dead end.
+            self._watch_ci(rel)
             first_pass = self._discover(rel)
             if first_pass:
                 rel.baseline = True
@@ -173,6 +198,8 @@ class Orchestrator:
             self._record("recuperada", task_id=task.id, run_id=run.id,
                         summary=f"worker morto; task volta como {destination.value}")
 
+        self._rescue_stranded(rel)
+
         # Leases held by nobody. With an atomic claim these should not appear,
         # but a database written by an older version can contain them and a
         # blocked resource that no report can explain is worse than the cost of
@@ -184,6 +211,138 @@ class Orchestrator:
             self._record("lease_orfao", summary=(
                 f"'{orphan.resource}' estava preso por '{orphan.owner}', que "
                 f"nao e um run ativo"))
+
+    def _watch_ci(self, rel: TickReport) -> None:
+        """Come back to deliveries that are waiting on somebody else's checks.
+
+        Moving a task to `CI_RUNNING` and never looking again would relocate the
+        dead end rather than remove it: the state is active, the scheduler skips
+        it, and every later tick reads clean. So each tick re-reads the checks
+        for the commit -- an observation, nothing more. It never triggers, never
+        re-runs and never cancels anything.
+
+        Where it stops is the point of the design. Whatever CI says, the next
+        step belongs to a person: this engine has no reviewer and no authority
+        to merge. A conclusive answer therefore escalates, carrying the pull
+        request and the checks; what changes with the colour of the CI is what
+        the human is told, never who decides.
+        """
+        if not self.store.tasks(self.workspace.id, [TaskState.CI_RUNNING]):
+            return
+        for task in self.store.tasks(self.workspace.id, [TaskState.CI_RUNNING]):
+            row = self._delivery_of(task)
+            if row is None:
+                self._escalate_delivery(
+                    task, rel, "a task waits on CI with no delivery recorded; "
+                    "there is nothing to come back to",
+                    escalation.BLOCK.id)
+                continue
+            if self.delivery is None:
+                self._escalate_delivery(
+                    task, rel, f"pull request #{row['pr_number']} is open and "
+                    f"this workspace has no way to read its checks; a person "
+                    f"has to look", escalation.BLOCK.id)
+                continue
+
+            identity = RemoteIdentity(
+                workspace_id=self.workspace.id, workspace_name=self.workspace.name,
+                organization=self.organization, client=self.client,
+                task_key=task.key, run_id=row["run_id"],
+                repo=RepoRef(provider=row["repo_provider"], key=row["repo_key"]),
+                branch=row["branch"], commit_sha=row["commit_sha"])
+            observation = self.delivery.observe_ci(identity, row["id"])
+            rel.ci_observed += (task.key,)
+
+            if observation.state is CIState.CONCLUDED or observation.allows_progress:
+                self._escalate_delivery(
+                    task, rel,
+                    f"pull request #{row['pr_number']} -- CI "
+                    f"{observation.state.value}"
+                    + (f"/{observation.result.value}" if observation.result else "")
+                    + f": {observation.reason}",
+                    # Green: the engine has no next step -- a person reviews
+                    # and merges, and the task leaves the work queue until they
+                    # do. Red: the change itself is the problem, and asking for
+                    # more work on it is a legitimate thing for the engine to
+                    # do again. Neither recommendation decides anything; the
+                    # person still picks from the whole list.
+                    escalation.BLOCK.id if observation.allows_progress
+                    else escalation.INVESTIGATE.id,
+                    url=row["pr_url"] or "")
+                continue
+
+            # Pending, unavailable or unknown: none of those is a result, and
+            # none of them is a reason to keep asking for ever.
+            seen = int(row.get("ci_observations") or 0) + 1
+            if seen >= self.max_ci_observations:
+                self._escalate_delivery(
+                    task, rel,
+                    f"asked {seen} times about the checks for "
+                    f"{identity.commit_sha[:12]} and the answer is still "
+                    f"{observation.state.value}: {observation.reason}",
+                    escalation.BLOCK.id, url=row["pr_url"] or "")
+
+    def _delivery_of(self, task: Task) -> dict | None:
+        """The newest delivery for this task that actually reached a remote."""
+        rows = [r for r in self.store.deliveries(self.workspace.id, task.key)
+                if r.get("pr_number") and r.get("commit_sha")]
+        return rows[-1] if rows else None
+
+    def _escalate_delivery(self, task: Task, rel: TickReport, reason: str,
+                           recommendation: str, url: str = "") -> None:
+        """Hand a delivered change to a person, with what is known about it."""
+        self._transition(task.id, TaskState.WAITING_HUMAN, actor="orchestrator",
+                               reason=reason[:300])
+        approval = escalation.build(
+            task=task,
+            what_happened="the change was delivered and its checks were read",
+            why_it_matters=reason,
+            attempts=((url,) if url else ()),
+            recommendation=recommendation,
+            risk=task.risk or RiskLevel.MEDIUM)
+        self._publish(approval, task, rel)
+        self._record("ci_observada", task_id=task.id,
+                    summary=reason[:200], pull_request=url)
+
+    def _rescue_stranded(self, rel: TickReport) -> None:
+        """Tasks in an owned state with nobody inside them.
+
+        Recovery above proves a worker died by its EXPIRED LEASE. That proof is
+        unavailable for one window, and a real one: `_collect` releases the
+        leases, saves the run as finished, and only then transitions the task.
+        A process killed between the second and third of those leaves a task in
+        an owned active state with no lease to expire and no run still active.
+        Nothing reaches it afterwards -- the scheduler skips active states, and
+        matching expired leases finds nothing to match. The task is lost while
+        every report stays clean, which is the failure mode this engine keeps
+        finding and the reason this clause exists.
+
+        Found by the multi-tenant kill harness on one round in several: the
+        window is a few milliseconds wide, which is exactly how long a defect
+        needs to survive a thousand ticks.
+        """
+        alive = {r.task_id for r in self.store.active_runs(self.workspace.id)}
+        held = {l.owner for l in self.store.leases(self.workspace.id)
+                if l.expires_at and l.expires_at > self.clock()}
+        for task in self.store.tasks(self.workspace.id):
+            if task.state not in OWNED_ACTIVE or task.id in alive:
+                continue
+            # A live lease means a worker IS inside and merely has not written
+            # its run yet. Returning that task to the queue would hand live work
+            # to a second worker -- worse than the strand being fixed.
+            runs = self.store.task_runs(task.id, self.workspace.id)
+            if any(r.id in held for r in runs):
+                continue
+
+            destination = supervisor.resume_state(task.state)
+            reason = (f"task ficou em {task.state.value} sem run ativo e sem "
+                      f"lease: o worker morreu depois de encerrar o run e antes "
+                      f"de mover a task. Nada a alcancaria de novo")
+            self._transition(task.id, destination, actor="supervisor",
+                                   reason=reason)
+            rel.recovered += (task.key,)
+            self._record("resgatada", task_id=task.id,
+                        summary=f"{reason}; volta como {destination.value}")
 
     def _resume_decided(self, rel: TickReport) -> None:
         """Act on decisions a person already made.

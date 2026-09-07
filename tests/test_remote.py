@@ -88,6 +88,13 @@ class FakeRepos:
     existing: PullRequest | None = None
     created: PullRequest | None = None
     calls: list[tuple] = field(default_factory=list)
+    #: What the remote branch points at. `None` means the branch is not there,
+    #: which is the ordinary state before a first push. The engine asks this
+    #: before every push so a resumed run does not push twice.
+    branch_sha: str | None = None
+
+    def remote_branch_sha(self, repo, branch):
+        return self.branch_sha
 
     def find_pull_request_for_branch(self, repo, branch):
         return self.existing

@@ -556,3 +556,198 @@ def test_a_soak_that_stops_doing_work_is_a_failure_not_a_pass(tmp_path):
             "the engine stopped doing work half way through and said nothing")
     finally:
         s.close()
+
+
+# ---------------------------------------------------------------------------
+# The thirteenth question: what is in flight?
+# ---------------------------------------------------------------------------
+#
+# A delivery waiting on somebody else's CI is the easiest thing in the system to
+# lose sight of: no run, no lease, no worker, nothing that expires and
+# complains. If `regente health` cannot see it, nothing can.
+
+def _awaiting(store, workspace_id, key="FLY-1", with_delivery=True, asked=0,
+              ci_state="PENDING"):
+    from regente.core import ids
+    from regente.core.model import ExternalRef, Task
+    from regente.core.states import TaskState
+
+    task = Task(id=ids.new_id(ids.TASK), workspace_id=workspace_id,
+                project_id="prj", title="in flight", state=TaskState.READY,
+                externo=ExternalRef(provider="filesystem", key=key))
+    store.save_task(task)
+    for step in (TaskState.ASSIGNED, TaskState.IMPLEMENTING, TaskState.TESTING,
+                 TaskState.PR_CREATED, TaskState.CI_RUNNING):
+        store.transition(task.id, step, actor="test", reason="setup",
+                         workspace_id=workspace_id)
+    if with_delivery:
+        row = store.open_delivery(workspace_id, key, "run_1", "github",
+                                  "acme/worker", "regente/fly", "e" * 40)
+        store.record_push(row, "https://example.invalid/acme/worker.git")
+        store.record_pull_request(row, 4, "https://example.invalid/pull/4",
+                                  "e" * 40)
+        for _ in range(asked):
+            store.record_ci(row, state=ci_state, result=None, reason="waiting",
+                            checks=[])
+    return task
+
+
+def test_health_sees_a_delivery_in_flight(tmp_path):
+    from regente.core.model import Workspace
+    from regente.core.policy import AutonomyLevel
+    from regente.engine import health
+    from regente.engine.store_sqlite import SqliteStore
+
+    store = SqliteStore(tmp_path / "h.db")
+    store.migrate()
+    store.save_workspace(Workspace(id="wks_h", client_id="c", name="ws",
+                                   max_autonomy=AutonomyLevel.L3))
+    try:
+        _awaiting(store, "wks_h", asked=2)
+        report = health.inspect(store, "wks_h", areas_root=tmp_path / "areas")
+
+        signal = next(s for s in report.signals
+                      if s.question == "deliveries_in_flight")
+        assert signal.level is health.Level.OK
+        assert "1 delivery(ies) in flight" in signal.detail
+        assert any("PR #4" in d and "asked 2x" in d for d in signal.evidence)
+    finally:
+        store.close()
+
+
+def test_health_calls_a_delivery_waiting_on_nothing_stuck(tmp_path):
+    """The dangerous shape: a task waits, and no row says for what."""
+    from regente.core.model import Workspace
+    from regente.core.policy import AutonomyLevel
+    from regente.engine import health
+    from regente.engine.store_sqlite import SqliteStore
+
+    store = SqliteStore(tmp_path / "h.db")
+    store.migrate()
+    store.save_workspace(Workspace(id="wks_h", client_id="c", name="ws",
+                                   max_autonomy=AutonomyLevel.L3))
+    try:
+        _awaiting(store, "wks_h", with_delivery=False)
+        report = health.inspect(store, "wks_h", areas_root=tmp_path / "areas")
+
+        signal = next(s for s in report.signals
+                      if s.question == "deliveries_in_flight")
+        assert signal.level is health.Level.STUCK
+        assert not report.healthy
+        assert any("nothing says what it waits for" in d for d in signal.evidence)
+    finally:
+        store.close()
+
+
+def test_health_flags_a_delivery_nobody_has_answered_about(tmp_path):
+    from regente.core.model import Workspace
+    from regente.core.policy import AutonomyLevel
+    from regente.engine import health
+    from regente.engine.store_sqlite import SqliteStore
+
+    store = SqliteStore(tmp_path / "h.db")
+    store.migrate()
+    store.save_workspace(Workspace(id="wks_h", client_id="c", name="ws",
+                                   max_autonomy=AutonomyLevel.L3))
+    try:
+        _awaiting(store, "wks_h", asked=12, ci_state="UNAVAILABLE")
+        report = health.inspect(store, "wks_h", areas_root=tmp_path / "areas")
+
+        signal = next(s for s in report.signals
+                      if s.question == "deliveries_in_flight")
+        assert signal.level is health.Level.ATTENTION
+        assert "no answer yet" in signal.detail
+    finally:
+        store.close()
+
+
+def test_a_task_awaiting_ci_is_not_reported_as_a_dead_end(tmp_path):
+    """It has a route out: the tick reads its checks and hands it to a person.
+
+    Before the watcher existed it did not, and reporting it as healthy then
+    would have been the exact lie `dead_end_tasks` is there to prevent.
+    """
+    from regente.core.model import Workspace
+    from regente.core.policy import AutonomyLevel
+    from regente.engine import health
+    from regente.engine.store_sqlite import SqliteStore
+
+    store = SqliteStore(tmp_path / "h.db")
+    store.migrate()
+    store.save_workspace(Workspace(id="wks_h", client_id="c", name="ws",
+                                   max_autonomy=AutonomyLevel.L3))
+    try:
+        _awaiting(store, "wks_h", asked=1)
+        report = health.inspect(store, "wks_h", areas_root=tmp_path / "areas")
+        signal = next(s for s in report.signals
+                      if s.question == "dead_end_tasks")
+        assert signal.level is health.Level.OK, signal.detail
+    finally:
+        store.close()
+
+
+# ---------------------------------------------------------------------------
+# Composition writes the option; the factory reads it. They must agree.
+# ---------------------------------------------------------------------------
+#
+# `container.py` injected `"secrets"`; the jira factory read `o["segredos"]`.
+# The rename to English moved one and not the other, and the result was a
+# `KeyError` from inside a factory -- which is what a silent rename looks like
+# from the outside. Same shape as the dispatch counter in Milestone 6: a writer
+# and a reader that stopped agreeing, with nothing in between to notice.
+
+def _config(tmp_path, providers: str) -> "object":
+    from regente.app import config as config_mod
+
+    (tmp_path / "policies.yaml").write_text(
+        "rules:\n  - name: read\n    effect: ALLOW\n    match: {action: '*.read'}\n",
+        encoding="utf-8")
+    (tmp_path / "regente.yaml").write_text(
+        "organization: org\nclient: cli\nworkspace: ws\nautonomy: L1\n"
+        "shadow: true\nroot: .regente\npolicies: policies.yaml\n"
+        "secrets:\n- env:JIRA_EMAIL\n- env:JIRA_API_TOKEN\n"
+        f"providers:\n{providers}"
+        "  workspace_provider:\n    name: directory\n"
+        "  runner:\n    name: script\n"
+        "projects:\n- name: P\n  default_environment: staging\n",
+        encoding="utf-8")
+    return config_mod.load(tmp_path / "regente.yaml")
+
+
+def test_no_adapter_asks_for_an_option_composition_never_writes(tmp_path):
+    """Every shipped adapter, built the way `regente doctor` builds it.
+
+    A `KeyError` here means an option name drifted. It is checked separately
+    from whether the adapter works, because "the token is missing" is a legible
+    answer a person can act on and "KeyError: 'segredos'" is not.
+    """
+    from regente.app.container import diagnose
+
+    for name, block in (
+            ("jira", "  tasks:\n    name: jira\n    site: https://example.invalid\n"),
+            ("filesystem", "  tasks:\n    name: filesystem\n    directory: board\n"),
+            ("git-local", "  repository:\n    name: git-local\n"
+                          f"    root: {tmp_path}\n"
+                          "  tasks:\n    name: filesystem\n    directory: board\n"),
+            ("console", "  notification:\n    name: console\n"
+                        "  tasks:\n    name: filesystem\n    directory: board\n")):
+        (tmp_path / "board").mkdir(exist_ok=True)
+        results = diagnose(_config(tmp_path, block))
+        for check, ok, detail in results:
+            assert "KeyError" not in detail, (
+                f"{name}: composition and the factory disagree about an option "
+                f"name -- {check}: {detail}")
+
+
+def test_a_missing_credential_is_reported_as_a_missing_credential(tmp_path):
+    """The failure a person can act on, stated as itself."""
+    import os
+
+    from regente.app.container import diagnose
+
+    for var in ("JIRA_EMAIL", "JIRA_API_TOKEN"):
+        os.environ.pop(var, None)
+    results = diagnose(_config(
+        tmp_path, "  tasks:\n    name: jira\n    site: https://example.invalid\n"))
+    tasks = next(d for name, _, d in results if name == "provider tasks")
+    assert "SecretMissing" in tasks and "JIRA_EMAIL" in tasks

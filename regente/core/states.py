@@ -54,6 +54,23 @@ ACTIVE: frozenset[TaskState] = frozenset({
     S.AI_REVIEW, S.MERGING, S.DEPLOYING,
 })
 
+#: Estados ativos em que o motor espera por um sistema DE FORA -- CI, revisao
+#: humana -- e nao por um worker seu.
+#:
+#: A diferenca importa para recuperacao. Um estado ativo comum implica um run
+#: vivo, e a ausencia dele significa que a task ficou orfa. Estes nao: nenhum
+#: processo esta dentro deles por definicao, e exigir um run ativo aqui faria a
+#: recuperacao devolver a fila uma task que apenas aguarda o CI responder.
+#: O que precisa existir para estes e um registro de entrega -- sem ele nao ha
+#: a que voltar, e ai sim a task esta perdida.
+AWAITING_EXTERNAL: frozenset[TaskState] = frozenset({
+    S.PR_CREATED, S.CI_RUNNING, S.AI_REVIEW,
+})
+
+#: Estados ativos com um worker do motor dentro. Sempre implicam um run vivo.
+#: A ausencia de um run aqui e uma task orfa; em AWAITING_EXTERNAL nao e.
+OWNED_ACTIVE: frozenset[TaskState] = ACTIVE - AWAITING_EXTERNAL
+
 #: Saidas de emergencia disponiveis a partir de qualquer estado nao-terminal.
 #: `WAITING_HUMAN` esta aqui porque escalar e sempre legitimo -- o motor nunca
 #: fica sem a opcao de parar e perguntar.
@@ -119,6 +136,10 @@ _AVANCOS: dict[TaskState, frozenset[TaskState]] = {
 ENGINE_ADVANCES: frozenset[TaskState] = frozenset({
     S.DISCOVERED, S.READY, S.ASSIGNED, S.IMPLEMENTING, S.FAILED, S.BLOCKED,
     S.WAITING_HUMAN,
+    # O tick le os checks de uma entrega em voo e, com resposta conclusiva ou
+    # com a espera esgotada, entrega a uma pessoa. CI_RUNNING deixou de ser
+    # beco sem saida quando esse observador passou a existir -- e so por isso.
+    S.CI_RUNNING,
 })
 
 

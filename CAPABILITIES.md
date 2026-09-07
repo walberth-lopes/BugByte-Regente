@@ -17,6 +17,124 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 11 — closing the cycle
+
+The question: can the Regente actually deliver? Not "do the tests pass", but
+does a task go from the board to a place where a person can act on it.
+
+### The real-world path: `BLOCKED_BY_REAL_WORLD_INPUT`
+
+The search came first, before any code was written. It is recorded in
+`MILESTONE-11-CANDIDATES.md` and its verdict is unchanged: **no eligible task
+exists**, and **no agent is authenticated**. Two independent gates.
+
+```
+eligible task    NO   20 concrete unassigned items; none has a target
+                      resolvable by evidence rather than by inference
+agent            NO   BLOCKED_AUTHENTICATION, from `regente doctor`
+```
+
+No task was invented, none was edited into eligibility, and no credential was
+taken from the interactive session. A milestone that produced a green report by
+loosening any of those would have measured the loosening, not the engine.
+
+### What was built instead
+
+`TESTING` was a dead end. Milestone 8 found it — every successful task parked
+there, the scheduler skipped it because it looked busy, and every later tick
+read clean. Milestone 8 made the engine *say so*. Milestone 11 is the road.
+
+```
+verdict -> push -> PR_CREATED -> CI_RUNNING -> observed -> a person
+```
+
+Two properties matter more than the sequence.
+
+**Every stage revalidates.** Policy, identity and SHA are checked before each
+remote mutation, not once at the start. Validation and mutation are separated in
+time, and the world moves in between.
+
+**Every stage is idempotent.** Before repeating anything, the engine asks the
+remote what already exists. A process that dies between a remote mutation and
+the row recording it leaves the two disagreeing: local says nothing happened,
+the remote says something did. Assuming success loses work; assuming failure
+duplicates it. Both are guesses, and one of them writes.
+
+### Where it stops, and why that is the point
+
+A conclusive CI result escalates to a person. It does not approve, merge, deploy
+or resolve anything. This engine has no reviewer and no merge authority, so the
+colour of the checks changes **what the human is told**, never **who decides**:
+
+| CI | What the engine does | Recommendation |
+|---|---|---|
+| green | escalates with the pull request and the checks | block — a person reviews and merges |
+| red | escalates with the failures | investigate — the change needs work |
+| unavailable, N times | escalates | block — nothing is wrong with the change |
+| never concludes, N times | escalates | block — a pipeline that never answers is a real outcome |
+
+`AI_REVIEW` remains unimplemented. Its owner would be a reviewer agent, which
+this milestone forbids adding. An unreachable state is honest; a state entered
+with nobody in it is not.
+
+### Defects found
+
+| # | Defect | Why it was invisible |
+|---|---|---|
+| 1 | **A kill between "the run ended" and "the task moved" stranded the task for ever.** `_collect` releases the leases, saves the run as finished, then transitions. A process killed in that window leaves a task in an owned active state with no lease to expire and no active run to match. Recovery proves a worker died *by its expired lease*, so it finds nothing; the scheduler skips active states. The task is lost and every report stays clean. | A few milliseconds wide. Survived a 1000-tick soak, 40 contention rounds and the whole M10 suite; surfaced on one round out of three of the multi-tenant kill harness. |
+| 2 | **The push target was recorded exactly as `git` reports it.** An HTTPS remote can carry the credential inside the URL, and that string was written to the delivery ledger and into refusal messages. The database outlives the process: backups, bug reports, screenshots. | Every test used a local clone, whose remote URL has no credential in it. The defect cannot appear without a real tokenised remote. |
+| 3 | **A resumed delivery walked the task backwards.** Tolerating "already there" is not enough: on a resume the task is *further along*, and the stage tried to move it back to `PR_CREATED` from `CI_RUNNING`. | Only a second pass over the same delivery reaches it, which is exactly what the first idempotency test did. |
+
+Defect 1 is the milestone's most valuable finding and has nothing to do with
+delivery. It was found because closing the cycle meant asking, for the first
+time, what a task is *waiting for* — which forced apart two things the engine
+had been treating as one: a state with a worker inside it, and a state waiting
+on somebody else's system.
+
+```
+OWNED_ACTIVE        ASSIGNED, IMPLEMENTING, TESTING, MERGING, DEPLOYING
+                    a worker is inside; no active run means the task is orphaned
+AWAITING_EXTERNAL   PR_CREATED, CI_RUNNING, AI_REVIEW
+                    nobody is inside by definition; what must exist is a
+                    delivery row to come back to
+```
+
+### Capability status
+
+| Capability | State | Evidence |
+|---|---|---|
+| `TESTING` is no longer a dead end | CONTRACT_TESTED | the stage drives push → PR → CI against fakes |
+| Every stage revalidates policy, identity and SHA | CONTRACT_TESTED | mutation sweep: removing any check goes red |
+| Push is idempotent against the remote's own answer | CONTRACT_TESTED | resume, restart, and run-it-twice tests |
+| Pull request creation is idempotent | CONTRACT_TESTED | this run's PR adopted; anyone else's refused |
+| A remote that cannot be read stops the delivery | CONTRACT_TESTED | read failure and absent-capability both refuse |
+| Delivery ledger answers task → run → commit → push → PR → CI | CONTRACT_TESTED | every identity column asserted non-empty |
+| A task moved by a person mid-cycle is not dragged back | CONTRACT_TESTED | the PR is kept and recorded; the task is left alone |
+| CI is asked about the commit, never the pull request | CONTRACT_TESTED | a PR's head moves; a SHA cannot |
+| `UNKNOWN` / `UNAVAILABLE` / no checks never become success | CONTRACT_TESTED | each recorded as its own state, none advances |
+| The tick returns to deliveries in flight | CONTRACT_TESTED | observation count persisted and bounded |
+| A stranded task is rescued; a live one is never touched | CONTRACT_TESTED | deterministic reproduction of the kill window |
+| No credential reaches the database | CONTRACT_TESTED | every row of every table read back and scanned |
+| Delivery under two tenants with identical names | CONTRACT_TESTED | same task key, repo, branch and PR number stay distinct |
+| **A real pull request against a real remote** | **BLOCKED_EXTERNAL** | no eligible task; no authenticated agent |
+| Task resolution written back to the origin | NOT IMPLEMENTED | deliberately: the engine does not resolve tasks |
+
+### Limitations
+
+**The tick cannot deliver.** The road out of `TESTING` runs in `MissionRunner`,
+which is the path that validates a change and writes the commit. The unattended
+orchestrator has neither: it runs an agent and records what it claims. Wiring
+delivery there would mean delivering on an agent's own account of its work,
+which is the one thing this engine exists to refuse. The tick *watches*
+deliveries already in flight; it does not start them.
+
+**No fake is evidence of integration.** Everything above is CONTRACT_TESTED. The
+fakes are deliberately obedient, so every refusal comes from the engine — good
+for proving guards, worthless for proving that a real provider behaves as
+assumed.
+
+---
+
 ## Milestone 10 — multi-client isolation
 
 The spine, tested: `Organization -> Client -> Workspace`, with two complete

@@ -610,3 +610,105 @@ def test_migrating_to_v6_keeps_a_day_already_spent(tmp_path):
     assert s2._con.execute(
         "SELECT value FROM meta WHERE key='schema'").fetchone()[0] == SCHEMA_VERSION
     s2.close()
+
+
+# ---------------------------------------------------------------------------
+# The window between "the run ended" and "the task moved"
+# ---------------------------------------------------------------------------
+#
+# Found by the multi-tenant kill harness, on one round out of several. Every
+# other round was clean, which is precisely how a defect this narrow survives a
+# thousand ticks and forty contention rounds.
+
+def _stranded_task(store, orq, state):
+    """A task in `state` whose run already ended and whose leases are gone.
+
+    Exactly what a `SIGKILL` between `save_run` and the transition leaves
+    behind: no lease to expire, no active run to match, and a state the
+    scheduler skips.
+    """
+    from regente.core import ids
+    from regente.core.model import ExternalRef, Run, RunState, Task
+    from regente.core.states import TaskState
+
+    task = Task(id=ids.new_id(ids.TASK), workspace_id=orq.workspace.id,
+                project_id="prj", title="interrupted work",
+                state=TaskState.READY,
+                externo=ExternalRef(provider="filesystem", key="STRAND-1"))
+    store.save_task(task)
+    for step in (TaskState.ASSIGNED, TaskState.IMPLEMENTING):
+        store.transition(task.id, step, actor="test", reason="setup",
+                         workspace_id=orq.workspace.id)
+    for step in (TaskState.TESTING, TaskState.PR_CREATED, TaskState.CI_RUNNING):
+        if state in (TaskState.IMPLEMENTING,):
+            break
+        store.transition(task.id, step, actor="test", reason="setup",
+                         workspace_id=orq.workspace.id)
+        if step is state:
+            break
+
+    run = Run(id=ids.new_id(ids.RUN), task_id=task.id,
+              workspace_id=orq.workspace.id, agent="coder",
+              state=RunState.SUCCEEDED)
+    run.ended_at = orq.clock()
+    store.save_run(run)
+    return task, run
+
+
+def test_a_task_stranded_by_a_kill_is_rescued(bench):
+    """The strand: nothing owns it and no report would ever mention it."""
+    from regente.core.states import TaskState
+
+    orq, store = bench()
+    task, _ = _stranded_task(store, orq, TaskState.IMPLEMENTING)
+
+    report = orq.tick()
+
+    after = store.task(task.id, orq.workspace.id)
+    assert after.state is not TaskState.IMPLEMENTING, (
+        "the task is still in an owned state with nobody inside it; no tick "
+        "will ever reach it again")
+    assert after.state in (TaskState.READY, TaskState.WAITING_HUMAN,
+                           TaskState.FAILED)
+    assert task.key in report.recovered
+
+
+def test_a_task_with_a_worker_still_inside_is_never_rescued(bench):
+    """A live lease means somebody IS in there, whatever the run rows say.
+
+    Returning that task to the queue would hand live work to a second worker --
+    a worse outcome than the strand this rescue exists to fix.
+    """
+    from regente.core.states import TaskState
+
+    orq, store = bench()
+    task, run = _stranded_task(store, orq, TaskState.IMPLEMENTING)
+    store.acquire_lease(f"repo:{task.key}", run.id, orq.workspace.id, 900)
+
+    orq.tick()
+    assert store.task(task.id, orq.workspace.id).state is TaskState.IMPLEMENTING
+
+
+def test_a_task_waiting_on_ci_is_not_mistaken_for_stranded(bench):
+    """No run is expected in an awaited state -- that is what awaiting means.
+
+    Rescuing here would return a task to the queue while its pull request sits
+    open, and the next worker would redo work that was already delivered. This
+    one has no delivery row either, so the watcher escalates it: waiting on
+    something with no record of what is being waited for is not waiting.
+    """
+    from regente.core.states import TaskState
+
+    orq, store = bench()
+    task, _ = _stranded_task(store, orq, TaskState.CI_RUNNING)
+
+    orq.tick()
+
+    after = store.task(task.id, orq.workspace.id)
+    assert after.state is not TaskState.READY, (
+        "a delivered change was returned to the queue; the next worker would "
+        "redo work that is already on a remote")
+    assert after.state is TaskState.WAITING_HUMAN
+    assert after.paused_at is TaskState.CI_RUNNING
+    reasons = [e.summary for e in store.events(orq.workspace.id, limit=200)]
+    assert any("no delivery recorded" in r for r in reasons)

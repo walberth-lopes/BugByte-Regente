@@ -128,7 +128,9 @@ class Engine:
             # CI provider's filenames are allowed to be known.
             authority_paths=conventions.default_authority_paths(),
             instruction_files=conventions.INSTRUCTION_FILES,
-            watched_sources=self.config.watched_sources)
+            watched_sources=self.config.watched_sources,
+            task_provider=self.config.providers["tasks"].name,
+            delivery=self._delivery_stage())
         if not execute:
             from ..engine.runner import MissionOutcome
             if selection.mission is None:
@@ -141,6 +143,20 @@ class Engine:
                 timeout_seconds=runner.budget.max_seconds)
             return MissionOutcome(briefing, None, None, None, refusal="")
         return runner.run(selection)
+
+    def _delivery_stage(self):
+        """The road out of `TESTING`, when this workspace has one.
+
+        Absent whenever the remote write path is not configured. Returning
+        `None` there is deliberate: a workspace that cannot push should say so
+        at the moment of delivery, not deliver into a local clone and call it
+        the same thing.
+        """
+        from ..engine.pipeline import DeliveryStage
+        if self.delivery is None or self.delivery.repos_write is None:
+            return None
+        return DeliveryStage(store=self.store, delivery=self.delivery,
+                             workspace_id=self.workspace.id)
 
     def _branch_is_ahead(self, repo_key: str, branch: str) -> bool:
         """Does this branch carry commits the base branch does not?
@@ -239,21 +255,26 @@ def build(cfg: Config) -> Engine:
     risk = RiskEngine.from_config(list(cfg.risk_factors))
     gate = Gate(store=store, policy=policy, risk=risk)
 
+    delivery = RemoteDelivery(
+        store=store, areas=areas, repos_write=repos_write, cicd=cicd,
+        policy=policy, autonomy=cfg.autonomy,
+        environment=(projects[0].default_environment if projects else "staging"))
+
     orq = Orchestrator(
         store=store, workspace=ws, tasks_provider=tasks, area_provider=areas,
         runner=runner, gate=gate, risk=risk, limits=cfg.limits,
         budget=cfg.budget, notificador=notificador, project_id=project_id,
-        lease_seconds=cfg.lease_seconds)
+        lease_seconds=cfg.lease_seconds,
+        organization=cfg.organization, client=cfg.client,
+        # The tick reads the checks of deliveries already in flight. Given to
+        # the orchestrator rather than built inside it: what a workspace can
+        # reach is composition's answer, not the engine's.
+        delivery=delivery)
 
     resolver = TargetResolver(
         by_label=dict(cfg.targets.get("by_label") or {}),
         by_project=dict(cfg.targets.get("by_project") or {}),
         by_task=dict(cfg.targets.get("by_task") or {}))
-
-    delivery = RemoteDelivery(
-        store=store, areas=areas, repos_write=repos_write, cicd=cicd,
-        policy=policy, autonomy=cfg.autonomy,
-        environment=(projects[0].default_environment if projects else "staging"))
 
     return Engine(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate,
                   repos=repos, resolver=resolver, policy=policy, risk=risk,

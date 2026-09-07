@@ -136,6 +136,12 @@ CREATE TABLE IF NOT EXISTS deliveries (
   pr_number INTEGER, pr_url TEXT, pr_head_sha TEXT, pr_opened_at TEXT,
   ci_state TEXT, ci_result TEXT, ci_reason TEXT,
   ci_observed_at TEXT, ci_checks TEXT NOT NULL DEFAULT '[]',
+  -- How many times the engine has ASKED about this commit's checks. Counted
+  -- because "CI never answered" and "CI was never asked" look identical in a
+  -- state column, and only one of them is the engine's fault. It is also what
+  -- bounds the watching: a pipeline that never concludes must eventually reach
+  -- a person instead of being polled until the end of time.
+  ci_observations INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL);
 -- One pull request belongs to one workspace and one delivery. This is the
 -- schema-level half of the cross-association guard: the marker and the head SHA
@@ -151,7 +157,7 @@ CREATE TABLE IF NOT EXISTS counters (
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "6"
+SCHEMA_VERSION = "7"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -307,12 +313,27 @@ def _v5_to_v6(c: sqlite3.Connection) -> None:
     c.execute("DELETE FROM counters WHERE name='despachos'")
 
 
+def _v6_to_v7(c: sqlite3.Connection) -> None:
+    """Count how many times a delivery's checks have been asked about.
+
+    Without it, a pull request whose CI never concludes is observed on every
+    tick for ever, and the report cannot distinguish that from a CI nobody
+    asked about. Existing rows start at zero: an unknown history is recorded as
+    unknown, not as a number invented to look complete.
+    """
+    columns = {r[1] for r in c.execute("PRAGMA table_info(deliveries)")}
+    if "ci_observations" not in columns:
+        c.execute("ALTER TABLE deliveries "
+                  "ADD COLUMN ci_observations INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS: dict[str, tuple[str, Any]] = {
     "1": ("2", _v1_to_v2),
     "2": ("3", _v2_to_v3),
     "3": ("4", _v3_to_v4),
     "4": ("5", _v4_to_v5),
     "5": ("6", _v5_to_v6),
+    "6": ("7", _v6_to_v7),
 }
 
 
@@ -1205,7 +1226,8 @@ class SqliteStore(Store):
         into one column would force writing a fake one."""
         with self._tx() as c:
             c.execute("""UPDATE deliveries SET ci_state=?, ci_result=?, ci_reason=?,
-                           ci_observed_at=?, ci_checks=? WHERE id=?""",
+                           ci_observed_at=?, ci_checks=?,
+                           ci_observations=ci_observations+1 WHERE id=?""",
                       (state, result, reason, _iso(self._now()), _j(checks), delivery_id))
 
     def deliveries(self, workspace_id: str, task_key: str | None = None) -> list[dict]:
