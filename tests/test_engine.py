@@ -265,7 +265,9 @@ def test_lease_prevents_two_owners(bench):
     orq, store = bench()
     assert store.acquire_lease("repo:a", "run_1", "wks_teste", 60) is not None
     assert store.acquire_lease("repo:a", "run_2", "wks_teste", 60) is None
-    store.release_lease("repo:a", "run_1")
+    # The workspace is required now: a release without one used to match on
+    # resource and owner across every tenant.
+    store.release_lease("repo:a", "run_1", "wks_teste")
     assert store.acquire_lease("repo:a", "run_2", "wks_teste", 60) is not None
 
 

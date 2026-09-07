@@ -352,15 +352,48 @@ class SqliteStore(Store):
         self._con = sqlite3.connect(str(self.path), isolation_level=None,
                                     check_same_thread=False)
         self._con.row_factory = sqlite3.Row
-        self._con.execute("PRAGMA journal_mode=WAL")
-        self._con.execute("PRAGMA synchronous=NORMAL")
-        self._con.execute("PRAGMA foreign_keys=ON")
-        self._con.execute("PRAGMA busy_timeout=5000")
+
         #: How many times to wait for the write lock before giving up. Counted
         #: so a soak run can report contention rather than hide it.
         self.lock_attempts = 6
         self.lock_backoff = 0.02
         self.lock_retries = 0
+
+        # `busy_timeout` FIRST, before any statement that can block.
+        #
+        # It used to be set last, after `journal_mode=WAL` -- which takes a lock
+        # to switch modes. So a process opening the database while another held
+        # the write lock raised `database is locked` from its constructor, with
+        # the very setting that would have made it wait sitting two lines below,
+        # unreached. Four processes starting at once found it; one process never
+        # could.
+        self._con.execute("PRAGMA busy_timeout=5000")
+        self._configure()
+
+    def _configure(self) -> None:
+        """Apply the connection settings, waiting out a busy database.
+
+        `journal_mode` is the one that can genuinely fail rather than block:
+        switching modes needs a moment with no other writer, and on a shared
+        file that moment may take a few tries. Retried here rather than left to
+        crash a starting process, and never silently skipped -- a store running
+        without WAL would serialise every reader behind every writer, which is
+        the opposite of what this engine needs.
+        """
+        for attempt in range(self.lock_attempts):
+            try:
+                self._con.execute("PRAGMA journal_mode=WAL")
+                break
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower() and "busy" not in str(e).lower():
+                    raise
+                self.lock_retries += 1
+                if attempt == self.lock_attempts - 1:
+                    raise
+                time.sleep(self.lock_backoff * (2 ** attempt)
+                           * (0.5 + random.random()))
+        self._con.execute("PRAGMA synchronous=NORMAL")
+        self._con.execute("PRAGMA foreign_keys=ON")
 
     def close(self) -> None:
         self._con.close()
@@ -593,9 +626,19 @@ class SqliteStore(Store):
                    _j(list(t.resources)), t.attempts,
                    _iso(t.created_at), _iso(t.updated_at), _j(t.data)))
 
-    def task(self, task_id: str) -> Task | None:
-        r = self._con.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
-        return self._task_row(r) if r else None
+    def task(self, task_id: str, workspace_id: str | None = None) -> Task | None:
+        r = self._con.execute("SELECT * FROM tasks WHERE id=?",
+                              (task_id,)).fetchone()
+        if r is None:
+            return None
+        if workspace_id is not None and r["workspace_id"] != workspace_id:
+            # An id belonging to another tenant answers as if it did not exist.
+            # Ids are globally unique, so this can only happen when one arrived
+            # from outside -- a CLI argument, an adapter, an agent -- and the
+            # authority to read must come from the caller's context rather than
+            # from the id it was handed.
+            return None
+        return self._task_row(r)
 
     def task_by_key(self, workspace_id: str, provider: str, key: str) -> Task | None:
         r = self._con.execute(
@@ -614,19 +657,27 @@ class SqliteStore(Store):
         return [self._task_row(r) for r in self._con.execute(q, args)]
 
     def transition(self, task_id: str, destination: TaskState, actor: str,
-                    reason: str = "", data: dict | None = None) -> Task:
+                    reason: str = "", data: dict | None = None,
+                    workspace_id: str | None = None) -> Task:
         """Le, valida, grava e anota -- numa transacao so.
 
         Ler dentro da transacao (e nao antes) e o que impede dois ticks
         concorrentes de partirem do mesmo state e ambos despacharem.
+
+        `workspace_id` recusa uma task de outro tenant. Sem ele, um cliente que
+        nao conseguia LER a task do outro ainda conseguia MOVE-LA: a leitura ja
+        era escopada e a escrita nao, entao bastava ter o id. Achado por um
+        teste adversarial de dois clientes, e nao por leitura -- as duas
+        operacoes viviam a dez linhas uma da outra.
         """
         with self._tx() as c:
             return self._transition_row(c, task_id, destination, actor, reason,
-                                        data)
+                                        data, workspace_id)
 
     def _transition_row(self, c: sqlite3.Connection, task_id: str,
                         destination: TaskState, actor: str, reason: str = "",
-                        data: dict | None = None) -> Task:
+                        data: dict | None = None,
+                        workspace_id: str | None = None) -> Task:
         """The transition itself, inside a transaction the caller owns.
 
         Separated so a caller can make the move part of a larger atomic step.
@@ -640,6 +691,10 @@ class SqliteStore(Store):
         r = c.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
         if r is None:
             raise CorruptedState(f"task {task_id} nao existe")
+        if workspace_id is not None and r["workspace_id"] != workspace_id:
+            raise CorruptedState(
+                f"task {task_id} pertence a outro workspace; este motor nao "
+                f"pode move-la")
         t = self._task_row(r)
         source = t.state
         require(source, destination, t.paused_at)
@@ -708,18 +763,36 @@ class SqliteStore(Store):
                    r.reason, r.cost_usd, r.tokens, r.tool_calls, r.iterations,
                    _j(r.data)))
 
-    def run(self, run_id: str) -> Run | None:
-        r = self._con.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
-        return self._run_row(r) if r else None
+    def run(self, run_id: str, workspace_id: str | None = None) -> Run | None:
+        r = self._con.execute("SELECT * FROM runs WHERE id=?",
+                              (run_id,)).fetchone()
+        if r is None:
+            return None
+        if workspace_id is not None and r["workspace_id"] != workspace_id:
+            return None
+        return self._run_row(r)
 
     def active_runs(self, workspace_id: str) -> list[Run]:
         return [self._run_row(r) for r in self._con.execute(
             "SELECT * FROM runs WHERE workspace_id=? AND state=? ORDER BY started_at",
             (workspace_id, RunState.RUNNING.value))]
 
-    def task_runs(self, task_id: str) -> list[Run]:
-        return [self._run_row(r) for r in self._con.execute(
-            "SELECT * FROM runs WHERE task_id=? ORDER BY started_at", (task_id,))]
+    def task_runs(self, task_id: str,
+                  workspace_id: str | None = None) -> list[Run]:
+        """Runs of one task. Scoped when the caller knows its tenant.
+
+        A task id is globally unique, so this answered correctly without the
+        scope -- for one client. With two, an id arriving from outside would
+        read another tenant's runs, and "the ids do not collide" is not a
+        boundary.
+        """
+        q = "SELECT * FROM runs WHERE task_id=?"
+        args = [task_id]
+        if workspace_id is not None:
+            q += " AND workspace_id=?"
+            args.append(workspace_id)
+        return [self._run_row(r) for r in
+                self._con.execute(q + " ORDER BY started_at", args)]
 
     # ---- trilha ----------------------------------------------------------
 
@@ -796,15 +869,32 @@ class SqliteStore(Store):
             "SELECT * FROM approvals WHERE workspace_id=? AND state=? ORDER BY risk DESC, created_at",
             (workspace_id, ApprovalState.OPEN.value))]
 
-    def approval(self, approval_id: str) -> Approval | None:
-        r = self._con.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
-        return self._approval_row(r) if r else None
+    def approval(self, approval_id: str,
+                 workspace_id: str | None = None) -> Approval | None:
+        r = self._con.execute("SELECT * FROM approvals WHERE id=?",
+                              (approval_id,)).fetchone()
+        if r is None:
+            return None
+        if workspace_id is not None and r["workspace_id"] != workspace_id:
+            return None
+        return self._approval_row(r)
 
-    def decide_approval(self, approval_id: str, choice: str, per: str, note: str = "") -> Approval:
+    def decide_approval(self, approval_id: str, choice: str, per: str,
+                        note: str = "", workspace_id: str | None = None) -> Approval:
+        """Record a decision. The id usually arrives from a person's keyboard.
+
+        `regente decide <id>` takes whatever it is given, which makes this the
+        most exposed untrusted identifier in the system. When the caller knows
+        which tenant it is acting for, an approval belonging to another one is
+        refused rather than decided.
+        """
         with self._tx() as c:
             r = c.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
             if r is None:
                 raise CorruptedState(f"approval {approval_id} nao existe")
+            if workspace_id is not None and r["workspace_id"] != workspace_id:
+                raise CorruptedState(
+                    f"approval {approval_id} nao pertence a este workspace")
             a = self._approval_row(r)
             if a.state is not ApprovalState.OPEN:
                 raise CorruptedState(f"approval {approval_id} ja foi decidido")
@@ -855,8 +945,7 @@ class SqliteStore(Store):
                      workspace_id=workspace_id, renewed_at=ts)
 
     def renew_lease(self, resource: str, owner: str, segundos: int,
-                     workspace_id: str | None = None,
-                     when: datetime | None = None) -> bool:
+                     workspace_id: str, when: datetime | None = None) -> bool:
         """Extend a lease this owner still holds. False if it does not.
 
         The `WHERE ... AND owner=?` is what makes this safe: a worker whose
@@ -867,18 +956,10 @@ class SqliteStore(Store):
         """
         ts = when or self._now()
         with self._tx() as c:
-            if workspace_id:
-                cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
-                                   WHERE workspace_id=? AND resource=? AND owner=?""",
-                                (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
-                                 workspace_id, resource, owner))
-            else:
-                # Sem workspace, o owner do lease e o filtro. `dono` e um id de run,
-                # que ja e unico -- entao isto continua seguro, so menos explicito.
-                cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
-                                   WHERE resource=? AND owner=?""",
-                                (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
-                                 resource, owner))
+            cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
+                               WHERE workspace_id=? AND resource=? AND owner=?""",
+                            (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
+                             workspace_id, resource, owner))
             return cur.rowcount > 0
 
     def claim(self, run: Run, resources: tuple[str, ...], seconds: int,
@@ -922,7 +1003,8 @@ class SqliteStore(Store):
                 # took the locks and then found the task escalated by somebody
                 # else used to leave a live run holding leases for a task it
                 # could not have.
-                self._transition_row(c, task_id, destination, actor, reason)
+                self._transition_row(c, task_id, destination, actor, reason,
+                                     workspace_id=run.workspace_id)
             self._save_run_row(c, run)
             for resource in sorted(resources):
                 c.execute(
@@ -980,13 +1062,21 @@ class SqliteStore(Store):
         expires = _dt(row["expires_at"])
         return bool(expires and expires > ts)
 
-    def release_lease(self, resource: str, owner: str, workspace_id: str | None = None) -> None:
+    def release_lease(self, resource: str, owner: str,
+                      workspace_id: str) -> None:
+        """Free a lease. The workspace is required, not optional.
+
+        Both of these used to fall back to matching on resource and owner alone
+        when no workspace was given, with a comment arguing it was safe because
+        a run id is unique. Identity here is `(workspace_id, resource)` -- that
+        is the whole point of the key -- and "safe because the ids happen not to
+        collide" is a hope, not a boundary. An optional tenant scope is one
+        careless call away from a cross-tenant delete, and absence of tenancy
+        must make an operation impossible rather than global.
+        """
         with self._tx() as c:
-            if workspace_id:
-                c.execute("DELETE FROM leases WHERE workspace_id=? AND resource=? AND owner=?",
-                          (workspace_id, resource, owner))
-            else:
-                c.execute("DELETE FROM leases WHERE resource=? AND owner=?", (resource, owner))
+            c.execute("DELETE FROM leases WHERE workspace_id=? AND resource=? "
+                      "AND owner=?", (workspace_id, resource, owner))
 
     def expired_leases(self, workspace_id: str, when: datetime | None = None) -> list[Lease]:
         ts = when or self._now()

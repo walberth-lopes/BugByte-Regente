@@ -137,6 +137,88 @@ Cada item carrega decisão, não diagnóstico: o que aconteceu, por que importa,
 que o agente já tentou, opções, recomendação, risco. Log fica no evento, sob
 demanda.
 
+## Dois clientes, um motor: identidade nunca vem do nome local
+
+A forma fraca da prova de tenancy da nomes diferentes a cada cliente e mostra que
+sao diferentes. Isso prova que os nomes sao diferentes.
+
+A prova de verdade da aos dois clientes **os mesmos nomes locais** -- mesma chave
+de task, mesmo repositorio, mesmo recurso, mesma branch, ate o mesmo nome de
+workspace -- e mostra que continuam entidades distintas:
+
+```
+Organization: acme
+|-- client-a / workspace "main" : TASK-1, repo "worker", repo:database
+`-- client-b / workspace "main" : TASK-1, repo "worker", repo:database
+```
+
+Um banco SQLite so. Bancos separados nao provariam nada: a pergunta e se a
+fronteira aguenta com as linhas lado a lado.
+
+Se em qualquer ponto da cadeia
+
+```
+task -> target -> mission -> workspace -> lease -> run -> delivery
+```
+
+a identidade global for derivada de um nome local, esses dois colidem.
+
+### Escopo e obrigatorio, nunca opcional
+
+Duas operacoes aceitavam `workspace_id` opcional e caiam para uma busca global
+quando ele faltava -- com um comentario argumentando que era seguro porque um id
+de run e unico. "Seguro porque os ids nao colidem" e uma esperanca, nao uma
+fronteira, e escopo opcional fica a uma chamada distraida de um delete entre
+clientes. Hoje `renew_lease` e `release_lease` exigem o workspace: ausencia de
+tenancy torna a operacao impossivel, nunca global.
+
+### Ler escopado e escrever escopado sao coisas diferentes
+
+`store.transition` nao tinha escopo nenhum. A leitura ja era escopada, entao um
+cliente **nao conseguia ver** a task do outro -- e conseguia **move-la**,
+bastando ter o id. Dez linhas separavam as duas operacoes.
+
+Achado por um teste adversarial de substituicao de id, nao por leitura. Hoje
+toda transicao do tick passa por um helper que informa o tenant, porque
+convencao e comentario e helper e codigo.
+
+### Id que vem de fora nao carrega autoridade
+
+Ids sao globalmente unicos, entao um id vindo de outro cliente *funcionaria*. A
+autoridade tem que vir do contexto de quem chama, e nao do identificador que lhe
+entregaram:
+
+- `task(id, workspace_id)` responde como se nao existisse
+- `run(id, workspace_id)` idem
+- `approval(id, workspace_id)` idem
+- `decide_approval(..., workspace_id)` recusa
+- `transition(..., workspace_id)` recusa
+
+O caso mais exposto e `regente decide <id>`: o id vem de um teclado. O workspace
+vem do motor.
+
+### Telemetria global e dado de tenant
+
+```
+global operational telemetry     tenant-scoped operational data
+  quantos clientes existem         chave de task
+  quantos runs ativos              repositorio
+  tamanho do banco                 referencia de segredo
+                                   escalonamento, evento, run
+```
+
+A primeira coluna e contagem e nao carrega conteudo. A segunda pertence a um
+tenant e nunca aparece numa visao global. `regente health` responde por um
+workspace: um operador olhando o cliente A nao ve nada de B.
+
+### Estado global por design, ou nenhum
+
+Uma auditoria varre todo estado mutavel de modulo. Cada nome precisa estar numa
+lista explicita de "global por design, sem dado de tenant" -- hoje sao tabelas de
+consulta constantes e o registro de fabricas de adapter. Cache algum, keyed por
+nome local, sobrevive a essa lista: funcionaria perfeitamente com um cliente e
+vazaria com dois.
+
 ## Concorrencia real: posse, e o direito de agir
 
 `max_workers > 1` e uma configuracao. Concorrencia e um fato sobre processos, e

@@ -161,8 +161,10 @@ def cmd_decide(args) -> int:
     cfg = _load_config(args)
     motor = container.build(cfg)
     try:
+        # The id came from a keyboard. The workspace comes from the engine.
         a = motor.store.decide_approval(args.approval_id, args.option,
-                                        per=args.per, note=args.note or "")
+                                        per=args.per, note=args.note or "",
+                                        workspace_id=motor.workspace.id)
         t = motor.store.task(a.task_id)
         print(f"{t.key}: registrado '{args.option}'.")
         print("O proximo tick retoma a task a partir daqui.")

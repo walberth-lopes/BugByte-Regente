@@ -14,14 +14,16 @@ Marco não fecha sem prova em disco.
 | **7** | **AgentRunner real** ⚠ | motor observa o mundo por conta propria e nao acredita no agente; sandbox sem execucao de comando; **modelo real bloqueado** por falta de credencial que o motor possa resolver |
 | **8** | **Operacao continua sob falha** ✅ | 1000 ticks, 43 reinicios sem fechamento limpo, 13 mortes de worker e 13 recuperacoes, 142 quedas de provider, zero violacao de invariante |
 | **9** | **Concorrencia real entre processos** ✅ | interpretadores separados sobre um SQLite: posse exclusiva, revalidacao no momento de agir, claim atomico, zero execucao duplicada em 60 rodadas com SIGKILL |
-| 10 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
-| 11 | CloudProvider | leitura de recursos, logs e métricas |
-| 12 | Deploy em staging | deploy governado + smoke, com rollback |
-| 13 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
-| 14 | **Segundo cliente** | outro conjunto de provedores rodando **sem tocar em `core/` nem `engine/`** |
+| **10** | **Isolamento entre clientes** ✅ | dois contextos completos com nomes locais IDENTICOS num so motor e banco: task, lease, policy, budget, secret e observabilidade sem cruzamento, sob processos concorrentes e SIGKILL dos dois lados |
+| 11 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
+| 12 | CloudProvider | leitura de recursos, logs e métricas |
+| 13 | Deploy em staging | deploy governado + smoke, com rollback |
+| 14 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
 
-O marco do segundo cliente é o único teste honesto da arquitetura. Todos os
-outros podem passar com um motor secretamente acoplado ao primeiro cliente.
+O marco do segundo cliente era o único teste honesto da arquitetura, e foi feito
+no marco 10 — com identificadores locais **iguais** nos dois clientes, que é a
+contraprova forte. Falta ainda o mesmo com dois conjuntos de provedores REAIS
+diferentes, o que depende de M6 e M7 saírem do bloqueio.
 
 ⚠ = capacidade pronta e provada em contrato, com a integracao real bloqueada por
 uma dependencia externa nomeada. Ver `CAPABILITIES.md`: suite verde nunca

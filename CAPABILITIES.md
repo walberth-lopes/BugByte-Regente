@@ -17,6 +17,118 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 10 — multi-client isolation
+
+The spine, tested: `Organization -> Client -> Workspace`, with two complete
+client contexts coexisting in one engine and one database.
+
+### The shape of the proof
+
+Both clients were given **the same local identifiers on purpose**. The weak
+version of this test gives them different names and shows they differ, which
+proves the names differ.
+
+| | Client-A | Client-B |
+|---|---|---|
+| workspace name | `main` | `main` |
+| task key | `TASK-1` | `TASK-1` |
+| repository | `worker` | `worker` |
+| resource | `repo:database` | `repo:database` |
+| branch | `feature/test` | `feature/test` |
+| policy | `repo.push` DENIED | `repo.push` ALLOWED |
+| daily budget | 2 dispatches | 50 dispatches |
+| secret | `env:SECRET_A` | `env:SECRET_B` |
+
+One SQLite file, because separate databases would prove nothing: the question is
+whether the boundary holds with the rows side by side.
+
+### Results
+
+| Measure | Result |
+|---|---|
+| cross-client task access | **0** |
+| cross-client secret access | **0** |
+| cross-client lease collision | **0** |
+| cross-client policy leakage | **0** |
+| cross-client budget leakage | **0** |
+| cross-client repository leak | **0** |
+| cross-client state mutation | **0** |
+| cross-client observability | **0** |
+| shared task rows | **0** |
+| invariant violations | **0** |
+| worker crashes | **0** |
+
+Real processes on both sides, interleaved, with `SIGKILL` on each side while the
+other worked.
+
+### Defects found
+
+| # | Defect | Why one client never showed it |
+|---|---|---|
+| 1 | **`store.transition` had no tenant scope.** Reads were scoped, writes were not -- ten lines apart. A client could not *see* another's task and could still *move* it, given the id. | With one client there is no other id to hold. |
+| 2 | **`renew_lease` and `release_lease` fell back to a global match** when no workspace was passed, with a comment arguing it was safe because run ids are unique. | The fallback was never taken; every production caller passed one. |
+| 3 | **`busy_timeout` was set after `journal_mode=WAL`**, which takes a lock. A process opening the database while another was writing raised `database is locked` from its own constructor. | One process never contends with itself at startup. |
+| 4 | **Losing possession stranded the task.** Abandoning released the leases and ended the run, so recovery -- which matches expired leases against active runs -- had nothing left to match. | Needs a mission that outlives its lease with nobody waiting; a 1000-tick soak and 40 contention rounds never produced it. |
+
+Defects 3 and 4 are not tenancy defects. They surfaced here because two clients
+mean twice the processes and twice the starts.
+
+### Mutation sweep
+
+Nineteen mutations aimed at tenancy -- the category that works perfectly with one
+client and leaks with two. **Fourteen caught immediately. Five escaped, and each
+exposed a guard nothing was exercising:**
+
+| Mutation | What was missing |
+|---|---|
+| Derive the workspace id without the client | the tenancy tests computed ids in the harness, so the real composition root was never checked |
+| Derive the client id without the organization | same |
+| Move any task regardless of workspace | the orchestrator refuses earlier, so the store's own guard was unexercised |
+| Claim into the caller's workspace instead of the run's | my mutation was a no-op; the real one needed writing |
+| Transition without naming the tenant | `_moved_by_another` never reaches the store with a foreign id |
+
+All caught after the gaps were closed, including both branches of the task
+listing. Every one of these mutations passes a single-tenant suite.
+
+### Counter-proofs
+
+- `A-X` blocks `A-X`; `A-X` does **not** block `B-X`. Isolation did not disable contention.
+- The same workspace *name* under two clients is two workspaces, because identity is derived from organization + client + workspace.
+- A task id, run id or approval id from the other client reads as absent -- and the *unscoped* read still works, which is why the engine always scopes.
+- Deciding another client's approval raises; their queue is untouched.
+- A secret refusal does not carry the value it refused.
+- Adding an ALLOW to A's policy does not reach B, and adding a DENY to B's does not reach A.
+- Exhausting A's daily budget leaves B working; crossing midnight resets each separately; restarting preserves each.
+
+### Capability status
+
+| Capability | State | Evidence |
+|---|---|---|
+| Two full client contexts in one engine and store | **EXERCISED_REAL** | concurrent processes, both sides killed |
+| Identical local identifiers stay distinct entities | **EXERCISED_REAL** | same task, repo, resource, branch, workspace name |
+| Lease isolation by `(workspace_id, resource)` | **EXERCISED_REAL** | claims on the same resource name succeed for both |
+| Task, run, approval reads scoped by tenant | CONTRACT_TESTED | id-substitution tests |
+| State mutation scoped by tenant | CONTRACT_TESTED | cross-boundary transition refused |
+| Policy per client | CONTRACT_TESTED | opposite `repo.push` verdicts, edits do not cross |
+| Budget per client | CONTRACT_TESTED | exhaustion, midnight, restart |
+| Secret scope per workspace | CONTRACT_TESTED | each resolves only its own |
+| Observability scoped, aggregates safe | CONTRACT_TESTED | health and events carry no other tenant |
+| No module-level state holds tenant data | CONTRACT_TESTED | AST audit with an explicit allowlist |
+| Failure in one client does not freeze the other | **EXERCISED_REAL** | kills on both sides, both kept working |
+
+### Limitations
+
+Both clients use the filesystem task provider and the deterministic agent. The
+tenancy boundary is proven; what is not proven is two clients against two
+different *real* providers at once, which needs M6 and M7 unblocked.
+
+The two clients share one process tree started by one harness. A deployment
+where tenants are configured by different people, with different config files
+and different credentials, is the next step in realism -- the boundary tested
+here is the engine's, not the operator's.
+
+---
+
 ## Milestone 9 — real concurrency between processes
 
 `max_workers > 1` is a setting. Concurrency is a fact about processes, and until

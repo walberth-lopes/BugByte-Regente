@@ -28,7 +28,7 @@ from ..core.model import (Dependency, Event, ExternalRef, Run, RunState, Task, W
 from ..core.policy import AutonomyLevel
 from ..core.risk import RiskEngine, RiskLevel
 from ..core.scheduling import Candidate, Limits, Plan, plan
-from ..core.states import (_AVANCOS, TaskState, engine_can_advance,
+from ..core.states import (_AVANCOS, ACTIVE, TaskState, engine_can_advance,
                            is_terminus, resumable_from)
 from ..ports import AdapterError
 from ..ports.support import NotificationProvider
@@ -167,7 +167,7 @@ class Orchestrator:
                 continue
             destination = supervisor.resume_state(task.state)
             if destination is not task.state:
-                self.store.transition(task.id, destination, actor="supervisor",
+                self._transition(task.id, destination, actor="supervisor",
                                        reason="worker interrompido")
             rel.recovered += (task.key,)
             self._record("recuperada", task_id=task.id, run_id=run.id,
@@ -210,7 +210,7 @@ class Orchestrator:
         it is used. See `DECISION_ROUTES`.
         """
         for approval in self.store.decided_approvals(self.workspace.id):
-            task = self.store.task(approval.task_id)
+            task = self.store.task(approval.task_id, self.workspace.id)
             if task is None or task.state is not TaskState.WAITING_HUMAN:
                 continue
 
@@ -375,6 +375,20 @@ class Orchestrator:
         return t
 
     # ---- 3. analise -----------------------------------------------------
+    def _transition(self, task_id: str, destination: TaskState, actor: str,
+                    reason: str = "", **extra):
+        """Move a task, always saying which tenant is asking.
+
+        A helper rather than a convention, because a convention is a comment.
+        `store.transition` accepts an optional workspace and a call site that
+        forgets it can move ANOTHER client's task -- which is exactly what
+        happened: reads were scoped and writes were not, ten lines apart, so a
+        client that could not see a task could still cancel it.
+        """
+        return self.store.transition(task_id, destination, actor=actor,
+                                     reason=reason,
+                                     workspace_id=self.workspace.id, **extra)
+
     def _moved_by_another(self, task_id: str, destination: TaskState,
                           actor: str, reason: str,
                           expected: TaskState | None = None, **extra) -> bool:
@@ -391,7 +405,11 @@ class Orchestrator:
         else touched: it re-reads the row and only forgives the case where the
         task genuinely moved on.
         """
-        before = self.store.task(task_id)
+        before = self.store.task(task_id, self.workspace.id)
+        if before is None:
+            # Either the task is gone, or it belongs to another tenant and this
+            # engine simply cannot see it. Both mean: not ours to move.
+            return False
         if (expected is not None and before is not None
                 and before.state is not expected):
             # The task is not where this worker last saw it, so the decision to
@@ -410,11 +428,11 @@ class Orchestrator:
             # take a whole tick down for the crime of agreeing.
             return False
         try:
-            self.store.transition(task_id, destination, actor=actor,
-                                   reason=reason, **extra)
+            self._transition(task_id, destination, actor=actor,
+                             reason=reason, **extra)
             return True
         except InvalidTransition:
-            after = self.store.task(task_id)
+            after = self.store.task(task_id, self.workspace.id)
             if after is not None and before is not None and after.state is not before.state:
                 self._record("corrida_perdida", task_id=task_id,
                             summary=f"outro worker ja moveu para {after.state.value}")
@@ -476,7 +494,7 @@ class Orchestrator:
             if not status.available:
                 t.data["bloqueada_por"] = "origem"
                 self.store.save_task(t)
-                self.store.transition(
+                self._transition(
                     t.id, TaskState.BLOCKED, actor="planner",
                     reason=f"a origem diz {t.data.get('estado_externo') or status.value}")
                 rel.analyzed += 1
@@ -533,7 +551,7 @@ class Orchestrator:
                 self._record("error", task_id=task_id, summary=str(e)[:300])
 
     def _run_one(self, task_id: str, rel: TickReport) -> None:
-        task = self.store.task(task_id)
+        task = self.store.task(task_id, self.workspace.id)
         run = Run(id=ids.new_id(ids.RUN), task_id=task.id, workspace_id=self.workspace.id,
                   agent="coder", state=RunState.RUNNING, started_at=self.clock())
 
@@ -575,7 +593,7 @@ class Orchestrator:
         self.store.save_run(run)          # now an update: the row already exists
         self.store.mark_dispatch(self.workspace.id,
                                  self.clock().strftime("%Y-%m-%d"))
-        self.store.transition(task.id, TaskState.IMPLEMENTING, actor=run.agent,
+        self._transition(task.id, TaskState.IMPLEMENTING, actor=run.agent,
                                reason="worker iniciou")
         rel.dispatched += (task.key,)
         self._record("despachada", task_id=task.id, run_id=run.id,
@@ -627,11 +645,30 @@ class Orchestrator:
 
     def _abandon(self, task_id: str, run: Run, held: list[str],
                  rel: TickReport) -> None:
-        """This run lost ownership while working. Write nothing about the task.
+        """This run lost ownership while working. Write nothing about the work.
 
-        The run itself is recorded -- what happened is always recorded -- but
-        the task is left exactly as its current owner left it. Releasing the
-        leases is scoped by owner, so it cannot take away the new owner's.
+        Nothing this run produced is written, and the run itself is recorded --
+        what happened is always recorded.
+
+        The task, though, cannot simply be left. Losing possession has two very
+        different causes and only one of them leaves the task in good hands:
+
+          - another worker TOOK the resources: it owns the task and will drive
+            it, and this run must not interfere;
+          - the lease merely EXPIRED with nobody else picking it up: the task is
+            then sitting in an active state that the scheduler skips, owned by a
+            run that just marked itself interrupted, and recovery cannot reach
+            it either -- recovery finds dead workers by matching expired leases
+            against active runs, and this path has already released the leases
+            and ended the run.
+
+        The second case stranded a task for good. Found under two tenants
+        contending, and it is not a tenancy defect at all: it needed a mission
+        that outlived its lease with nobody waiting, which is rare enough to
+        have survived a thousand-tick soak and forty contention rounds.
+
+        So the task goes back to the queue only when no other active run owns
+        it. If somebody else does, it is theirs and this run keeps its hands off.
         """
         for resource in held:
             self.store.release_lease(resource, run.id, self.workspace.id)
@@ -643,6 +680,20 @@ class Orchestrator:
         rel.errors += (f"{run.id}: ownership lost",)
         self._record("posse_perdida", task_id=task_id, run_id=run.id,
                     summary=run.reason)
+
+        task = self.store.task(task_id, self.workspace.id)
+        if task is None or task.state not in ACTIVE:
+            return
+        taken_by_another = any(r.task_id == task_id and r.id != run.id
+                               for r in self.store.active_runs(self.workspace.id))
+        if taken_by_another:
+            return
+        destination = supervisor.resume_state(task.state)
+        if destination is not task.state:
+            self._moved_by_another(
+                task.id, destination, actor="supervisor",
+                reason="posse perdida e ninguem assumiu; volta para a fila")
+            rel.recovered += (task.key,)
 
     # ---- 6. colheita ----------------------------------------------------
     def _collect(self, task_id: str, run: Run, resultado, held: list[str],
@@ -662,7 +713,7 @@ class Orchestrator:
                 or resultado.escalation_requested):
             run.state, run.reason = RunState.ABORTED, resultado.summary
             self.store.save_run(run)
-            self.store.transition(task_id, TaskState.WAITING_HUMAN, actor=run.agent,
+            self._transition(task_id, TaskState.WAITING_HUMAN, actor=run.agent,
                                    reason=resultado.summary)
             self._escalate(task_id, run, resultado, rel)
             return
@@ -670,8 +721,8 @@ class Orchestrator:
         if resultado.status is ProcessStatus.FINISHED:
             run.state, run.reason = RunState.SUCCEEDED, resultado.summary
             self.store.save_run(run)
-            task = self.store.task(task_id)
-            self.store.transition(task.id, TaskState.TESTING, actor=run.agent,
+            task = self.store.task(task_id, self.workspace.id)
+            self._transition(task.id, TaskState.TESTING, actor=run.agent,
                                    reason=resultado.summary)
             rel.completed += (task.key,)
             self._record("implementada", task_id=task.id, run_id=run.id,
@@ -696,14 +747,14 @@ class Orchestrator:
         that adds a stage adds its state there, and until then the road ends
         here honestly instead of silently.
         """
-        current = self.store.task(task.id)
+        current = self.store.task(task.id, self.workspace.id)
         if current is None or not is_terminus(current.state):
             return
 
         reason = (f"the work finished and reached {current.state.value}, which "
                   f"this engine has no stage to advance; it needs you rather "
                   f"than a queue that looks busy")
-        self.store.transition(current.id, TaskState.WAITING_HUMAN,
+        self._transition(current.id, TaskState.WAITING_HUMAN,
                                actor="orchestrator", reason=reason)
         approval = escalation.build(
             task=current,
@@ -723,7 +774,7 @@ class Orchestrator:
         run.state, run.reason = RunState.FAILED, reason
         self.store.save_run(run)
 
-        task = self.store.task(task_id)
+        task = self.store.task(task_id, self.workspace.id)
         task.attempts += 1
         self.store.save_task(task)
 
@@ -731,25 +782,25 @@ class Orchestrator:
         # degrau economizaria uma linha e apagaria da timeline o fato de que
         # houve falha -- que e exatamente o que alguem procura quando a mesma
         # task volta pela terceira vez.
-        self.store.transition(task.id, TaskState.FAILED, actor=run.agent, reason=reason)
+        self._transition(task.id, TaskState.FAILED, actor=run.agent, reason=reason)
 
         step_name = supervisor.next_recovery_step(task, self.budget)
-        if supervisor.no_progress(task, self.store.task_runs(task.id)).stop:
+        if supervisor.no_progress(task, self.store.task_runs(task.id, self.workspace.id)).stop:
             step_name = "escalar"
 
         if step_name == "escalar":
-            self.store.transition(task.id, TaskState.WAITING_HUMAN, actor="supervisor",
+            self._transition(task.id, TaskState.WAITING_HUMAN, actor="supervisor",
                                    reason=reason)
             self._escalate_failure(task, run, reason, step_name, rel)
         else:
-            self.store.transition(task.id, TaskState.READY, actor="supervisor",
+            self._transition(task.id, TaskState.READY, actor="supervisor",
                                    reason=f"{step_name} apos falha: {reason}"[:300])
             self._record("falhou", task_id=task.id, run_id=run.id,
                         summary=f"{reason[:160]} -> {step_name}")
 
     # ---- escalonamento ---------------------------------------------------
     def _escalate(self, task_id: str, run: Run, resultado, rel: TickReport) -> None:
-        task = self.store.task(task_id)
+        task = self.store.task(task_id, self.workspace.id)
         approval = escalation.build(
             task=task,
             what_happened=resultado.summary,
@@ -765,7 +816,7 @@ class Orchestrator:
                       rel: TickReport) -> None:
         attempts = tuple(
             f"{r.agent}: {r.reason or r.state.value}"[:160]
-            for r in self.store.task_runs(task.id)[-3:])
+            for r in self.store.task_runs(task.id, self.workspace.id)[-3:])
         approval = escalation.build(
             task=task,
             what_happened=f"{task.attempts} tentativas falharam. Ultima: {reason}"[:400],
