@@ -58,7 +58,7 @@ class Store(Port):
     def task_by_key(self, workspace_id: str, provider: str, key: str) -> Task | None: ...
 
     @abstractmethod
-    def tasks(self, workspace_id: str, estados: list[TaskState] | None = None) -> list[Task]: ...
+    def tasks(self, workspace_id: str, states: list[TaskState] | None = None) -> list[Task]: ...
 
     @abstractmethod
     def transition(self, task_id: str, destination: TaskState, actor: str,
@@ -109,13 +109,13 @@ class Store(Port):
     def approval(self, approval_id: str) -> Approval | None: ...
 
     @abstractmethod
-    def decide_approval(self, approval_id: str, choice: str, per: str,
+    def decide_approval(self, approval_id: str, choice: str, by: str,
                         note: str = "") -> Approval: ...
 
     # ---- locks -----------------------------------------------------------
     @abstractmethod
     def acquire_lease(self, resource: str, owner: str, workspace_id: str,
-                      segundos: int) -> Lease | None:
+                      seconds: int) -> Lease | None:
         """Returns None when a live lease belongs to another owner. Never waits.
 
         The lock is per (workspace, resource). A resource of the same name in two
@@ -123,7 +123,7 @@ class Store(Port):
         """
 
     @abstractmethod
-    def renew_lease(self, resource: str, owner: str, segundos: int,
+    def renew_lease(self, resource: str, owner: str, seconds: int,
                      workspace_id: str | None = None) -> bool: ...
 
     @abstractmethod
@@ -135,7 +135,7 @@ class Store(Port):
 
     # ---- counters --------------------------------------------------------
     @abstractmethod
-    def dispatch_count(self, workspace_id: str, dia: str) -> int: ...
+    def dispatch_count(self, workspace_id: str, day: str) -> int: ...
 
     @abstractmethod
-    def mark_dispatch(self, workspace_id: str, dia: str) -> None: ...
+    def mark_dispatch(self, workspace_id: str, day: str) -> None: ...

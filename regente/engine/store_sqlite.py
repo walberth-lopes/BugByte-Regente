@@ -344,8 +344,8 @@ class SqliteStore(Store):
                   (SCHEMA_VERSION,))
 
     def verify(self) -> None:
-        linha = self._con.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
-        if linha is None:
+        line = self._con.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
+        if line is None:
             raise CorruptedState("database with no schema version: run `regente init`")
 
     # ---- tenancy ---------------------------------------------------------
@@ -399,11 +399,11 @@ class SqliteStore(Store):
     # ---- tasks -----------------------------------------------------------
 
     def _task_row(self, r: sqlite3.Row) -> Task:
-        externo = (ExternalRef(provider=r["provider"], key=r["external_key"], url=r["url"])
+        external = (ExternalRef(provider=r["provider"], key=r["external_key"], url=r["url"])
                    if r["provider"] else None)
         return Task(
             id=r["id"], workspace_id=r["workspace_id"], project_id=r["project_id"],
-            title=r["title"], state=TaskState(r["state"]), externo=externo,
+            title=r["title"], state=TaskState(r["state"]), external=external,
             description=r["description"], priority=r["priority"],
             risk=RiskLevel[r["risk"]] if r["risk"] else None,
             paused_at=TaskState(r["paused_at"]) if r["paused_at"] else None,
@@ -427,9 +427,9 @@ class SqliteStore(Store):
                        resources=excluded.resources, attempts=excluded.attempts,
                        updated_at=excluded.updated_at, data=excluded.data""",
                   (t.id, t.workspace_id, t.project_id, t.title, t.state.value, t.description,
-                   t.externo.provider if t.externo else None,
-                   t.externo.key if t.externo else None,
-                   t.externo.url if t.externo else None,
+                   t.external.provider if t.external else None,
+                   t.external.key if t.external else None,
+                   t.external.url if t.external else None,
                    t.priority, t.risk.name if t.risk else None,
                    t.paused_at.value if t.paused_at else None,
                    _j(list(t.resources)), t.attempts,
@@ -445,11 +445,11 @@ class SqliteStore(Store):
             (workspace_id, provider, key)).fetchone()
         return self._task_row(r) if r else None
 
-    def tasks(self, workspace_id: str, estados: list[TaskState] | None = None) -> list[Task]:
-        if estados:
-            marks = ",".join("?" * len(estados))
+    def tasks(self, workspace_id: str, states: list[TaskState] | None = None) -> list[Task]:
+        if states:
+            marks = ",".join("?" * len(states))
             q = f"SELECT * FROM tasks WHERE workspace_id=? AND state IN ({marks})"
-            args = [workspace_id] + [e.value for e in estados]
+            args = [workspace_id] + [e.value for e in states]
         else:
             q, args = "SELECT * FROM tasks WHERE workspace_id=?", [workspace_id]
         q += " ORDER BY priority, external_key, id"
@@ -617,7 +617,7 @@ class SqliteStore(Store):
         r = self._con.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
         return self._approval_row(r) if r else None
 
-    def decide_approval(self, approval_id: str, choice: str, per: str, note: str = "") -> Approval:
+    def decide_approval(self, approval_id: str, choice: str, by: str, note: str = "") -> Approval:
         with self._tx() as c:
             r = c.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
             if r is None:
@@ -629,25 +629,25 @@ class SqliteStore(Store):
             if valid and choice not in valid:
                 raise CorruptedState(
                     f"choice '{choice}' is not among the options: {', '.join(sorted(valid))}")
-            a.state, a.choice, a.decided_by = ApprovalState.DECIDED, choice, per
+            a.state, a.choice, a.decided_by = ApprovalState.DECIDED, choice, by
             a.decided_at, a.note = now(), note
             c.execute("""UPDATE approvals SET state=?, choice=?, decided_by=?,
                            decided_at=?, note=? WHERE id=?""",
-                      (a.state.value, choice, per, _iso(a.decided_at), note, approval_id))
+                      (a.state.value, choice, by, _iso(a.decided_at), note, approval_id))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
                       (ids.new_id(ids.EVENT), a.workspace_id, _iso(now()), "decisao_humana",
-                       a.task_id, a.run_id, per, f"escolheu '{choice}'",
+                       a.task_id, a.run_id, by, f"escolheu '{choice}'",
                        _j({"approval_id": approval_id, "note": note})))
         return a
 
     # ---- leases ----------------------------------------------------------
 
     def acquire_lease(self, resource: str, owner: str, workspace_id: str,
-                      segundos: int) -> Lease | None:
+                      seconds: int) -> Lease | None:
         """Grants if free, expired, or already held by the same owner (renewal)."""
         ts = now()
-        expira = ts + timedelta(seconds=segundos)
+        expira = ts + timedelta(seconds=seconds)
         with self._tx() as c:
             r = c.execute("SELECT * FROM leases WHERE workspace_id=? AND resource=?",
                           (workspace_id, resource)).fetchone()
@@ -664,21 +664,21 @@ class SqliteStore(Store):
         return Lease(resource=resource, owner=owner, expires_at=expira,
                      workspace_id=workspace_id, renewed_at=ts)
 
-    def renew_lease(self, resource: str, owner: str, segundos: int,
+    def renew_lease(self, resource: str, owner: str, seconds: int,
                      workspace_id: str | None = None) -> bool:
         ts = now()
         with self._tx() as c:
             if workspace_id:
                 cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
                                    WHERE workspace_id=? AND resource=? AND owner=?""",
-                                (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
+                                (_iso(ts + timedelta(seconds=seconds)), _iso(ts),
                                  workspace_id, resource, owner))
             else:
                 # With no workspace, the lease's owner is the filter. `owner` is a
                 # run id, already unique -- so this stays safe, just less explicit.
                 cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
                                    WHERE resource=? AND owner=?""",
-                                (_iso(ts + timedelta(seconds=segundos)), _iso(ts),
+                                (_iso(ts + timedelta(seconds=seconds)), _iso(ts),
                                  resource, owner))
             return cur.rowcount > 0
 

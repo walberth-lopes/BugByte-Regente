@@ -59,7 +59,7 @@ class Effect(str):
 
 
 #: Severity order. Used for "the most restrictive wins".
-_SEVERIDADE = {Effect.ALLOW: 0, Effect.HUMAN_APPROVAL: 1, Effect.DENY: 2}
+_SEVERITY = {Effect.ALLOW: 0, Effect.HUMAN_APPROVAL: 1, Effect.DENY: 2}
 
 
 #: Minimum autonomy level each action family requires. The key is the action
@@ -176,35 +176,35 @@ def required_level(kind: str) -> AutonomyLevel:
     deliberately.
     """
     best: AutonomyLevel | None = None
-    tamanho = -1
-    for prefixo, level in REQUIRED_LEVEL.items():
-        if (kind == prefixo or kind.startswith(prefixo + ".")) and len(prefixo) > tamanho:
-            best, tamanho = level, len(prefixo)
+    longest = -1
+    for prefix, level in REQUIRED_LEVEL.items():
+        if (kind == prefix or kind.startswith(prefix + ".")) and len(prefix) > longest:
+            best, longest = level, len(prefix)
     return best if best is not None else AutonomyLevel.L4
 
 
 @dataclass(slots=True)
 class PolicyEngine:
-    regras: tuple[Rule, ...] = ()
+    rules: tuple[Rule, ...] = ()
 
     @classmethod
-    def from_config(cls, brutas: list[dict[str, Any]] | None) -> PolicyEngine:
-        regras = []
-        for i, b in enumerate(brutas or []):
+    def from_config(cls, raw: list[dict[str, Any]] | None) -> PolicyEngine:
+        rules = []
+        for i, b in enumerate(raw or []):
             effect = str(b["effect"]).strip().upper()
-            if effect not in _SEVERIDADE:
+            if effect not in _SEVERITY:
                 raise ValueError(f"unknown effect in policy: {effect!r}")
-            regras.append(Rule(
+            rules.append(Rule(
                 name=b.get("name") or f"regra_{i}",
                 effect=effect,
                 match={k: v for k, v in (b.get("match") or {}).items()},
                 reason=b.get("reason", ""),
             ))
-        return cls(regras=tuple(regras))
+        return cls(rules=tuple(rules))
 
     def decide(self, ctx: PolicyContext) -> Decision:
         plan = ctx.as_dict()
-        matched = [r for r in self.regras if r.matches(plan)]
+        matched = [r for r in self.rules if r.matches(plan)]
 
         if not matched:
             return Decision(
@@ -214,8 +214,8 @@ class PolicyEngine:
             )
 
         # Invariant 2: the most restrictive wins, not the first nor the last.
-        winner = max(matched, key=lambda r: _SEVERIDADE[r.effect])
-        nomes = tuple(r.name for r in matched)
+        winner = max(matched, key=lambda r: _SEVERITY[r.effect])
+        names = tuple(r.name for r in matched)
 
         # The autonomy ceiling only tightens: it never turns DENY into ALLOW.
         exigido = required_level(ctx.action.kind)
@@ -225,12 +225,12 @@ class PolicyEngine:
                 reason=(f"'{ctx.action.kind}' requires autonomy {exigido.name} and "
                         f"this scope only goes up to {ctx.autonomy.name}"),
                 rule="teto_de_autonomia",
-                matched=nomes,
+                matched=names,
             )
 
         return Decision(
             effect=winner.effect,
             reason=winner.reason or f"rule '{winner.name}'",
             rule=winner.name,
-            matched=nomes,
+            matched=names,
         )

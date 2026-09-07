@@ -31,7 +31,7 @@ from ...ports.repository import (READ_CAPS, Branch, RepoCapability, RepoInfo, Re
 from ..tasks.transport import (Call, AuthFailure, RateLimited,
                                 NotFound, Observer, ProviderUnavailable,
                                 MalformedResponse)
-from .readonly import cli_e_leitura
+from .readonly import cli_is_read
 
 
 #: Fields requested in a LISTING. Trimmed: an organisation with hundreds of
@@ -56,7 +56,7 @@ class GitHubRepos(RepositoryProvider):
 
     def describe(self) -> dict[str, str]:
         return {"capability": self.capability.value, "adapter": self.name,
-                "modo": "somente-leitura", "org": self.org}
+                "mode": "read-only", "org": self.org}
 
     def verify(self) -> None:
         """Proves authentication and reach with the cheapest call there is."""
@@ -68,42 +68,42 @@ class GitHubRepos(RepositoryProvider):
         # Per WHOLE INVOCATION, not per verb. `repo list` reads; `repo delete`
         # deletes, and both start with `repo` -- that is how a `repo delete` got
         # through the gate on 06/09/2026.
-        ok, reason = cli_e_leitura(args)
+        ok, reason = cli_is_read(args)
         if not ok:
             raise ReadOnlyRefused(
                 f"'{self.cli_path} {' '.join(args)}' refused: {reason}. "
                 f"No mutation is executable in this milestone.")
 
-        inicio = time.monotonic()
+        started = time.monotonic()
         try:
             p = subprocess.run(
                 [self.cli_path, *args], capture_output=True,
                 encoding="utf-8", errors="replace", timeout=self.timeout)
         except subprocess.TimeoutExpired as e:
-            self._notify_observer(args, inicio, False, None, f"timeout after {self.timeout}s")
+            self._notify_observer(args, started, False, None, f"timeout after {self.timeout}s")
             raise ProviderUnavailable(f"cli timed out after {self.timeout}s") from e
         except FileNotFoundError as e:
-            self._notify_observer(args, inicio, False, None, "cli not found")
+            self._notify_observer(args, started, False, None, "cli not found")
             raise AdapterError(f"'{self.cli_path}' is not on the PATH") from e
 
         if p.returncode != 0:
             error = (p.stderr or "").strip()[:400]
-            baixo = error.lower()
-            self._notify_observer(args, inicio, False, None, error)
+            lowered = error.lower()
+            self._notify_observer(args, started, False, None, error)
             # Translating the failure is what lets the engine decide: retry,
             # wait or stop. A generic error forces everything to be treated alike.
-            if "authentication" in baixo or "not logged" in baixo or "401" in baixo:
+            if "authentication" in lowered or "not logged" in lowered or "401" in lowered:
                 raise AuthFailure(f"credential refused: {error[:200]}")
-            if "rate limit" in baixo or "429" in baixo:
+            if "rate limit" in lowered or "429" in lowered:
                 raise RateLimited(f"rate limit: {error[:200]}")
-            if "not found" in baixo or "404" in baixo:
+            if "not found" in lowered or "404" in lowered:
                 raise NotFound(f"does not exist or no access: {error[:200]}")
-            if any(m in baixo for m in ("timeout", "connection", "dial tcp",
+            if any(m in lowered for m in ("timeout", "connection", "dial tcp",
                                         "no such host", "502", "503", "504")):
                 raise ProviderUnavailable(f"unavailable: {error[:200]}")
             raise AdapterError(f"cli rc={p.returncode}: {error}")
 
-        self._notify_observer(args, inicio, True, 200, "")
+        self._notify_observer(args, started, True, 200, "")
         if not json_esperado:
             return p.stdout
         raw = (p.stdout or "").strip()
@@ -114,13 +114,13 @@ class GitHubRepos(RepositoryProvider):
         except ValueError as e:
             raise MalformedResponse(f"output is not JSON: {raw[:200]}") from e
 
-    def _notify_observer(self, args: list[str], inicio: float, ok: bool,
+    def _notify_observer(self, args: list[str], started: float, ok: bool,
                status: int | None, error: str) -> None:
         if not self.observer:
             return
         self.observer(Call(
             operation="cli", path=" ".join(args[:2]),
-            duration_ms=int((time.monotonic() - inicio) * 1000),
+            duration_ms=int((time.monotonic() - started) * 1000),
             success=ok, status=status,
             rate_limited="rate limit" in error.lower(), error=error[:200]))
 
@@ -149,11 +149,11 @@ class GitHubRepos(RepositoryProvider):
 
     # ---- discovery -------------------------------------------------------
 
-    def list_repositories(self, filtro: dict[str, Any] | None = None) -> list[RepoInfo]:
-        f = filtro or {}
-        args = ["repo", "list", self.org, "--limit", str(f.get("limite", self.list_limit)),
+    def list_repositories(self, filters: dict[str, Any] | None = None) -> list[RepoInfo]:
+        f = filters or {}
+        args = ["repo", "list", self.org, "--limit", str(f.get("limit", self.list_limit)),
                 "--json", LIST_FIELDS]
-        if f.get("sem_arquivados", True):
+        if f.get("no_archived", True):
             args.append("--no-archived")
         raw = self._cli(args)
         if not isinstance(raw, list):
@@ -167,21 +167,21 @@ class GitHubRepos(RepositoryProvider):
             raise AdapterError(f"detail returned {type(raw).__name__}, expected an object")
         return self._build(raw, partial=False)
 
-    def list_branches(self, key: str, filtro: dict[str, Any] | None = None) -> list[Branch]:
+    def list_branches(self, key: str, filters: dict[str, Any] | None = None) -> list[Branch]:
         target = key if "/" in key else f"{self.org}/{key}"
         base = self.get_repository(target).base_branch
-        per_page = int((filtro or {}).get("por_pagina", 100))
+        per_page = int((filters or {}).get("per_page", 100))
         raw = self._cli(["api", f"repos/{target}/branches?per_page={per_page}"])
         if not isinstance(raw, list):
             raise AdapterError("branch listing returned an unexpected shape")
-        default_value = (filtro or {}).get("padrao", "")
+        default_value = (filters or {}).get("pattern", "")
         output = []
         for b in raw:
             name = b.get("name") or ""
             if default_value and default_value.lower() not in name.lower():
                 continue
             output.append(Branch(name=name, sha=(b.get("commit") or {}).get("sha", ""),
-                                e_base=(name == base)))
+                                is_base=(name == base)))
         return sorted(output, key=lambda x: x.name)
 
     def read_file(self, key: str, path: str, ref: str | None = None) -> str:

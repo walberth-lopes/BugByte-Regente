@@ -101,7 +101,7 @@ class HttpTransport:
     base_url: str
     #: Returns (user, secret). Called on every request, on purpose: a rotated
     #: credential takes effect without restarting the engine.
-    credencial: Callable[[], tuple[str, str]]
+    credential: Callable[[], tuple[str, str]]
     timeout: int = 30
     max_attempts: int = 3
     observer: Observer | None = None
@@ -109,46 +109,46 @@ class HttpTransport:
 
     def _authorization(self) -> str:
         import base64
-        user, segredo = self.credencial()
-        if not user or not segredo:
+        user, secret = self.credential()
+        if not user or not secret:
             raise AuthFailure("credential missing or empty")
-        raw = f"{user}:{segredo}".encode("utf-8")
+        raw = f"{user}:{secret}".encode("utf-8")
         return "Basic " + base64.b64encode(raw).decode("ascii")
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         url = self.base_url.rstrip("/") + "/" + path.lstrip("/")
         if params:
-            limpos = {k: v for k, v in params.items() if v is not None}
-            url += "?" + urllib.parse.urlencode(limpos, doseq=True)
+            cleaned = {k: v for k, v in params.items() if v is not None}
+            url += "?" + urllib.parse.urlencode(cleaned, doseq=True)
 
-        inicio = time.monotonic()
+        started = time.monotonic()
         last: Exception | None = None
-        for tentativa in range(1, self.max_attempts + 1):
+        for attempt in range(1, self.max_attempts + 1):
             try:
                 data, status, req_id = self._one_attempt(url)
             except AuthFailure as e:
-                self._notify_observer(path, inicio, False, tentativa, error=str(e), status=401)
+                self._notify_observer(path, started, False, attempt, error=str(e), status=401)
                 raise
             except NotFound as e:
-                self._notify_observer(path, inicio, False, tentativa, error=str(e), status=404)
+                self._notify_observer(path, started, False, attempt, error=str(e), status=404)
                 raise
             except RateLimited as e:
                 last = e
-                if tentativa == self.max_attempts:
-                    self._notify_observer(path, inicio, False, tentativa, error=str(e),
+                if attempt == self.max_attempts:
+                    self._notify_observer(path, started, False, attempt, error=str(e),
                                 status=429, rate_limited=True)
                     raise
                 # Respect the provider's Retry-After; without it, exponential backoff.
                 time.sleep(e.retry_after_seconds if e.retry_after_seconds is not None
-                           else min(30.0, 2.0 ** tentativa))
+                           else min(30.0, 2.0 ** attempt))
             except ProviderUnavailable as e:
                 last = e
-                if tentativa == self.max_attempts:
-                    self._notify_observer(path, inicio, False, tentativa, error=str(e))
+                if attempt == self.max_attempts:
+                    self._notify_observer(path, started, False, attempt, error=str(e))
                     raise
-                time.sleep(min(15.0, 1.5 ** tentativa))
+                time.sleep(min(15.0, 1.5 ** attempt))
             else:
-                self._notify_observer(path, inicio, True, tentativa, status=status,
+                self._notify_observer(path, started, True, attempt, status=status,
                             request_id=req_id)
                 return data
         raise last or ProviderUnavailable("no attempts left")
@@ -175,9 +175,9 @@ class HttpTransport:
             if e.code == 404:
                 raise NotFound(f"HTTP 404: {url.split('?')[0]}") from e
             if e.code == 429:
-                espera = e.headers.get("Retry-After")
+                wait = e.headers.get("Retry-After")
                 raise RateLimited("HTTP 429: rate limit",
-                                   float(espera) if (espera or "").strip().isdigit() else None) from e
+                                   float(wait) if (wait or "").strip().isdigit() else None) from e
             if e.code >= 500:
                 raise ProviderUnavailable(f"HTTP {e.code}: {body}") from e
             raise AdapterError(f"HTTP {e.code}: {body}") from e
@@ -193,14 +193,14 @@ class HttpTransport:
         except (ValueError, UnicodeDecodeError) as e:
             raise MalformedResponse(f"body is not valid JSON: {e}") from e
 
-    def _notify_observer(self, path: str, inicio: float, ok: bool, attempts: int,
+    def _notify_observer(self, path: str, started: float, ok: bool, attempts: int,
                status: int | None = None, rate_limited: bool = False,
                request_id: str | None = None, error: str = "") -> None:
         if not self.observer:
             return
         self.observer(Call(
             operation="GET", path=path.split("?")[0],
-            duration_ms=int((time.monotonic() - inicio) * 1000),
+            duration_ms=int((time.monotonic() - started) * 1000),
             success=ok, status=status, attempts=attempts,
             rate_limited=rate_limited, request_id=request_id, error=error[:200]))
 
@@ -224,7 +224,7 @@ class SnapshotTransport:
     calls: list[str] = field(default_factory=list)
 
     @staticmethod
-    def nome_de(path: str, params: dict[str, Any] | None) -> str:
+    def name_for(path: str, params: dict[str, Any] | None) -> str:
         """Route + the parameters that change the response -> a stable file name."""
         base = path.strip("/").replace("/", "_")
         cursor = (params or {}).get("nextPageToken")
@@ -241,27 +241,27 @@ class SnapshotTransport:
         return base + ".json"
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        inicio = time.monotonic()
+        started = time.monotonic()
         self.calls.append(path)
         for rota, error in self.failures.items():
             if rota in path:
-                self._notify_observer(path, inicio, False, str(error))
+                self._notify_observer(path, started, False, str(error))
                 raise error
-        file = self.directory / self.nome_de(path, params)
+        file = self.directory / self.name_for(path, params)
         if not file.is_file():
-            self._notify_observer(path, inicio, False, "snapshot missing")
+            self._notify_observer(path, started, False, "snapshot missing")
             raise NotFound(f"no snapshot for {path} in {self.directory}")
         try:
             data = json.loads(file.read_text(encoding="utf-8"))
         except ValueError as e:
-            self._notify_observer(path, inicio, False, str(e))
+            self._notify_observer(path, started, False, str(e))
             raise MalformedResponse(f"{file.name}: {e}") from e
-        self._notify_observer(path, inicio, True, "")
+        self._notify_observer(path, started, True, "")
         return data
 
-    def _notify_observer(self, path: str, inicio: float, ok: bool, error: str) -> None:
+    def _notify_observer(self, path: str, started: float, ok: bool, error: str) -> None:
         if self.observer:
             self.observer(Call(
                 operation="GET", path=path.split("?")[0],
-                duration_ms=int((time.monotonic() - inicio) * 1000),
+                duration_ms=int((time.monotonic() - started) * 1000),
                 success=ok, status=200 if ok else None, error=error[:200]))

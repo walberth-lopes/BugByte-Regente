@@ -58,22 +58,22 @@ class Plan:
     in_cycle: tuple[str, ...] = ()
 
     @property
-    def vazio(self) -> bool:
+    def empty(self) -> bool:
         return not self.dispatch
 
 
 def plan(
     candidates: list[Candidate],
-    grafo: DependencyGraph,
+    graph: DependencyGraph,
     completed: set[str],
     running_now: dict[str, frozenset[str]],
     limits: Limits = Limits(),
     dispatched_today: int = 0,
-    nomes: dict[str, str] | None = None,
+    names: dict[str, str] | None = None,
 ) -> Plan:
     """`running_now` maps task_id -> resources it already holds.
 
-    `nomes` translates an internal id into the key a human recognises. A
+    `names` translates an internal id into the key a human recognises. A
     deferral reason quoting an opaque id forces the reader to go and query the
     database -- and the reason exists precisely to avoid that.
 
@@ -81,9 +81,9 @@ def plan(
     looks -- without it a tie makes the same tick pick different tasks on each
     run, and the engine keeps going back and forth without finishing anything.
     """
-    chave_de = (nomes or {})
-    locked = grafo.in_cycle()
-    unblocked = grafo.unblocked(completed)
+    key_of = (names or {})
+    locked = graph.in_cycle()
+    unblocked = graph.unblocked(completed)
 
     # Resources already taken by whoever is running. A live worker owns them.
     taken: set[str] = set()
@@ -102,7 +102,7 @@ def plan(
         if c.task_id in running_now:
             continue
         if c.task_id not in unblocked:
-            pending = sorted(chave_de.get(p, p) for p in grafo.parents(c.task_id) - completed)
+            pending = sorted(key_of.get(p, p) for p in graph.parents(c.task_id) - completed)
             deferred.append(Deferred(c.task_id, f"depends on {', '.join(pending) or 'work not completed'}"))
             continue
 

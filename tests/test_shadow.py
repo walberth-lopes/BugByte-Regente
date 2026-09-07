@@ -23,8 +23,8 @@ from regente.engine import shadow
 
 
 def _provider(tmp_path: Path) -> FilesystemTasks:
-    pasta = tmp_path / "tasks"
-    pasta.mkdir()
+    folder = tmp_path / "tasks"
+    folder.mkdir()
     body = [
         {"key": "K-1", "title": "first", "status": "TO DO", "description": "does something"},
         {"key": "K-2", "title": "second", "status": "TO DO",
@@ -32,9 +32,9 @@ def _provider(tmp_path: Path) -> FilesystemTasks:
         {"key": "K-3", "title": "third", "status": "DONE", "description": "already finished"},
     ]
     for d in body:
-        (pasta / f"{d['key']}.yaml").write_text(
+        (folder / f"{d['key']}.yaml").write_text(
             yaml.safe_dump(d, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return FilesystemTasks(pasta)
+    return FilesystemTasks(folder)
 
 
 def test_shadow_run_produces_a_plan(tmp_path):

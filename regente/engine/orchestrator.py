@@ -44,8 +44,8 @@ def _sanitize(key: str) -> str:
     sanitising, a task's area vanishes somewhere in an unexpected tree -- or,
     worse, escapes the root.
     """
-    limpo = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in key)
-    return limpo.strip("-.") or "no-key"
+    cleaned = "".join(c if (c.isalnum() or c in "-_.") else "-" for c in key)
+    return cleaned.strip("-.") or "no-key"
 
 
 @dataclass(slots=True)
@@ -72,24 +72,24 @@ class TickReport:
     def summary(self) -> str:
         if self.baseline:
             return f"{self.workspace}: baseline with {self.discovered} tasks; nothing dispatched"
-        partes = []
+        parts = []
         if self.recovered:
-            partes.append(f"{len(self.recovered)} recovered")
+            parts.append(f"{len(self.recovered)} recovered")
         if self.discovered:
-            partes.append(f"{self.discovered} new")
+            parts.append(f"{self.discovered} new")
         if self.dispatched:
-            partes.append(f"{len(self.dispatched)} dispatched")
+            parts.append(f"{len(self.dispatched)} dispatched")
         if self.completed:
-            partes.append(f"{len(self.completed)} completed")
+            parts.append(f"{len(self.completed)} completed")
         if self.changes:
-            partes.append(f"{len(self.changes)} changed at the source")
+            parts.append(f"{len(self.changes)} changed at the source")
         if self.unblocked_tasks:
-            partes.append(f"{len(self.unblocked_tasks)} released")
+            parts.append(f"{len(self.unblocked_tasks)} released")
         if self.escalated:
-            partes.append(f"{len(self.escalated)} need you")
+            parts.append(f"{len(self.escalated)} need you")
         if self.errors:
-            partes.append(f"{len(self.errors)} error(s)")
-        return f"{self.workspace}: " + (", ".join(partes) if partes else "nothing to do")
+            parts.append(f"{len(self.errors)} error(s)")
+        return f"{self.workspace}: " + (", ".join(parts) if parts else "nothing to do")
 
 
 @dataclass(slots=True)
@@ -164,10 +164,10 @@ class Orchestrator:
     # ---- 2. discovery ---------------------------------------------------
     def _discover(self, rel: TickReport) -> bool:
         """Returns True when this was the first pass (baseline)."""
-        ja_tinha = bool(self.store.tasks(self.workspace.id))
+        had_any = bool(self.store.tasks(self.workspace.id))
         external_items = self.tasks_provider.list_tasks()
 
-        chaves: dict[str, str] = {}   # external key -> task_id
+        keys: dict[str, str] = {}   # external key -> task_id
         for e in external_items:
             if e.status.finished:
                 # Work finished at the source does not become work here.
@@ -181,7 +181,7 @@ class Orchestrator:
                             status=e.status.value, anomalies=list(e.anomalies))
             else:
                 self._refresh(task, e, rel)
-            chaves[e.key] = task.id
+            keys[e.key] = task.id
             if e.anomalies:
                 rel.anomalies += tuple(f"{e.key}: {a}" for a in e.anomalies)
 
@@ -197,12 +197,12 @@ class Orchestrator:
             for v in e.links:
                 if not v.blocking:
                     continue
-                target = chaves.get(v.key)
-                if target and target != chaves[e.key]:
+                target = keys.get(v.key)
+                if target and target != keys[e.key]:
                     self.store.link_dependency(Dependency(
-                        task_id=chaves[e.key], depends_on=target, kind=v.kind,
+                        task_id=keys[e.key], depends_on=target, kind=v.kind,
                         reason=f"declared by {self.tasks_provider.name}"))
-        return not ja_tinha
+        return not had_any
 
     def _refresh(self, task: Task, e: ExternalTask, rel: TickReport) -> None:
         """Re-reads what changed at the source. The engine does NOT inherit its state.
@@ -235,7 +235,7 @@ class Orchestrator:
             id=ids.new_id(ids.TASK), workspace_id=self.workspace.id,
             project_id=e.project or self.project_id, title=e.title,
             state=TaskState.DISCOVERED,
-            externo=ExternalRef(provider=self.tasks_provider.name, key=e.key, url=e.url),
+            external=ExternalRef(provider=self.tasks_provider.name, key=e.key, url=e.url),
             description=e.description, priority=e.priority,
             resources=tuple(e.resources),
             data={**dict(e.data), "situacao_externa": e.status.value,
@@ -316,23 +316,23 @@ class Orchestrator:
 
     def plan(self) -> Plan:
         """Exposed so the UI and the tests can see the decision without running it."""
-        todas = self.store.tasks(self.workspace.id)
-        completed = {t.id for t in todas if t.state is TaskState.DONE}
-        ativos = self.store.active_runs(self.workspace.id)
-        por_id = {t.id: t for t in todas}
+        all_tasks = self.store.tasks(self.workspace.id)
+        completed = {t.id for t in all_tasks if t.state is TaskState.DONE}
+        active = self.store.active_runs(self.workspace.id)
+        by_id = {t.id: t for t in all_tasks}
         running_now = {
-            r.task_id: frozenset(por_id[r.task_id].resources)
-            for r in ativos if r.task_id in por_id
+            r.task_id: frozenset(by_id[r.task_id].resources)
+            for r in active if r.task_id in by_id
         }
         candidates = [
             Candidate(task_id=t.id, priority=t.priority,
                       resources=frozenset(t.resources), key=t.key)
-            for t in todas if t.state is TaskState.READY
+            for t in all_tasks if t.state is TaskState.READY
         ]
-        hoje = now().strftime("%Y-%m-%d")
+        today = now().strftime("%Y-%m-%d")
         return plan(candidates, self._graph(), completed, running_now,
-                       self.limits, self.store.dispatch_count(self.workspace.id, hoje),
-                       nomes={t.id: t.key for t in todas})
+                       self.limits, self.store.dispatch_count(self.workspace.id, today),
+                       names={t.id: t.key for t in all_tasks})
 
     def _dispatch(self, rel: TickReport) -> None:
         p = self.plan()
@@ -383,7 +383,7 @@ class Orchestrator:
         request = RunRequest(
             run_id=run.id, task_id=task.id, agent=run.agent,
             goal=task.title, area=area,
-            contexto={"descricao": task.description, "chave": task.key,
+            context={"descricao": task.description, "chave": task.key,
                       "risco": task.risk.name if task.risk else "LOW",
                       "resources": list(task.resources)},
             limit_iterations=self.budget.max_iterations,
@@ -392,47 +392,47 @@ class Orchestrator:
             limit_seconds=self.budget.max_seconds)
 
         try:
-            resultado = self.runner.run(request)
+            result = self.runner.run(request)
         except Exception as e:   # noqa: BLE001
-            resultado = None
+            result = None
             run.reason = f"{type(e).__name__}: {e}"[:300]
 
-        self._collect(task.id, run, resultado, held, rel)
+        self._collect(task.id, run, result, held, rel)
 
     # ---- 6. collection --------------------------------------------------
-    def _collect(self, task_id: str, run: Run, resultado, held: list[str],
+    def _collect(self, task_id: str, run: Run, result, held: list[str],
                rel: TickReport) -> None:
         for r in held:
             self.store.release_lease(r, run.id, self.workspace.id)
         run.ended_at = now()
 
-        if resultado is None:
+        if result is None:
             self._failed(task_id, run, run.reason or "the worker raised an exception", rel)
             return
 
-        run.cost_usd, run.tokens = resultado.cost_usd, resultado.tokens
-        run.tool_calls, run.iterations = resultado.tool_calls, resultado.iterations
+        run.cost_usd, run.tokens = result.cost_usd, result.tokens
+        run.tool_calls, run.iterations = result.tool_calls, result.iterations
 
-        if resultado.outcome == "precisa_humano":
-            run.state, run.reason = RunState.ABORTED, resultado.summary
+        if result.outcome == "precisa_humano":
+            run.state, run.reason = RunState.ABORTED, result.summary
             self.store.save_run(run)
             self.store.transition(task_id, TaskState.WAITING_HUMAN, actor=run.agent,
-                                   reason=resultado.summary)
-            self._escalate(task_id, run, resultado, rel)
+                                   reason=result.summary)
+            self._escalate(task_id, run, result, rel)
             return
 
-        if resultado.ok:
-            run.state, run.reason = RunState.SUCCEEDED, resultado.summary
+        if result.ok:
+            run.state, run.reason = RunState.SUCCEEDED, result.summary
             self.store.save_run(run)
             task = self.store.task(task_id)
             self.store.transition(task.id, TaskState.TESTING, actor=run.agent,
-                                   reason=resultado.summary)
+                                   reason=result.summary)
             rel.completed += (task.key,)
             self._record("implementada", task_id=task.id, run_id=run.id,
-                        summary=resultado.summary[:200])
+                        summary=result.summary[:200])
             return
 
-        self._failed(task_id, run, resultado.summary, rel, outcome=resultado.outcome)
+        self._failed(task_id, run, result.summary, rel, outcome=result.outcome)
 
     def _failed(self, task_id: str, run: Run, reason: str, rel: TickReport,
                 outcome: str = "error") -> None:
@@ -464,12 +464,12 @@ class Orchestrator:
                         summary=f"{reason[:160]} -> {step_name}")
 
     # ---- escalation ------------------------------------------------------
-    def _escalate(self, task_id: str, run: Run, resultado, rel: TickReport) -> None:
+    def _escalate(self, task_id: str, run: Run, result, rel: TickReport) -> None:
         task = self.store.task(task_id)
-        p = resultado.question or {}
+        p = result.question or {}
         approval = escalation.build(
             task=task,
-            what_happened=p.get("o_que_aconteceu", resultado.summary),
+            what_happened=p.get("o_que_aconteceu", result.summary),
             why_it_matters=p.get("por_que_importa", "the agent stopped without being able to decide on its own"),
             attempts=tuple(p.get("tentativas", ())),
             recommendation=p.get("recomendacao", escalation.FOLLOW.id),
@@ -493,13 +493,13 @@ class Orchestrator:
         self._publish(approval, task, rel)
 
     def _escalate_cycle(self, p: Plan, rel: TickReport) -> None:
-        chaves = [self.store.task(i).key for i in p.in_cycle]
+        keys = [self.store.task(i).key for i in p.in_cycle]
         task = self.store.task(p.in_cycle[0])
         if any(a.task_id == task.id for a in self.store.open_approvals(self.workspace.id)):
             return   # already asked; do not repeat it every tick
         approval = escalation.build(
             task=task,
-            what_happened=f"circular dependencies between {', '.join(chaves)}",
+            what_happened=f"circular dependencies between {', '.join(keys)}",
             why_it_matters="none of these tasks can start while the cycle exists",
             attempts=("built the graph from the links declared at the source",),
             recommendation=escalation.INVESTIGATE.id,
@@ -534,7 +534,7 @@ class Orchestrator:
         except ValueError:
             return ExternalStatus.UNKNOWN
 
-    def escopo(self, agent: str = "engine", task_id: str | None = None,
+    def scope(self, agent: str = "engine", task_id: str | None = None,
                run_id: str | None = None, project: str = "*") -> Scope:
         return Scope(workspace_id=self.workspace.id, workspace=self.workspace.name,
                       project=project, autonomy=self.workspace.max_autonomy,

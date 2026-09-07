@@ -61,9 +61,9 @@ What is missing is not code, it is **declared data**. In order of preference:
 The same 100 tasks, the same evidence, changing one axis at a time:
 
 ```
-autonomy ceiling     L0 → PRECISA_HUMANO 1       L2 → CANDIDATO 1
-declared map         without → ALVO_AMBIGUO 2, CANDIDATO 1
-                     with 1 entry → ALVO_AMBIGUO 1, CANDIDATO 2
+autonomy ceiling     L0 → NEEDS_HUMAN 1        L2 → CANDIDATE 1
+declared map         without → AMBIGUOUS_TARGET 2, CANDIDATE 1
+                     with 1 entry → AMBIGUOUS_TARGET 1, CANDIDATE 2
 ```
 
 One line of map turned an ambiguity into an executable candidate, with the
@@ -92,11 +92,11 @@ number would hide them.
 Against the real board, with no declared map, at L0:
 
 ```
-SEM_TRABALHO    36   the source says somebody is already on it
-SEM_ALVO        61   ← the bottleneck: the declaration that is missing
-ALVO_AMBIGUO     2   the engine refuses to break the tie
-PRECISA_HUMANO   1   good evidence, but the autonomy ceiling is L0
-Mutations        0
+NO_WORK             36   the source says somebody is already on it
+NO_TARGET           61   ← the bottleneck: the declaration that is missing
+AMBIGUOUS_TARGET     2   the engine refuses to break the tie
+NEEDS_HUMAN          1   good evidence, but the autonomy ceiling is L0
+Mutations            0
 ```
 
 **The bottleneck is not the engine.** It is the information nobody declares.

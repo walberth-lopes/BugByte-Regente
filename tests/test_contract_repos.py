@@ -22,7 +22,7 @@ import pytest
 
 from regente.adapters.repos.git_local import GitLocal, _org_repo
 from regente.adapters.repos.github import GitHubRepos
-from regente.adapters.repos.readonly import cli_e_leitura, git_e_leitura
+from regente.adapters.repos.readonly import cli_is_read, git_is_read
 from regente.ports import AdapterError, ReadOnlyRefused
 from regente.ports.repository import RepoCapability, RepoRef, RepositoryProvider
 
@@ -32,7 +32,7 @@ def _git(cwd: Path, *args: str) -> None:
                    capture_output=True, encoding="utf-8", errors="replace")
 
 
-def _cria_repo(root: Path, diretorio: str, remoto: str | None,
+def _make_repo(root: Path, diretorio: str, remoto: str | None,
                base: str = "main", branches: tuple[str, ...] = ()) -> Path:
     """Creates a REAL git repository. Nothing here is simulated."""
     p = root / diretorio
@@ -59,10 +59,10 @@ def _cria_repo(root: Path, diretorio: str, remoto: str | None,
 def clones(tmp_path) -> Path:
     root = tmp_path / "clones"
     root.mkdir()
-    _cria_repo(root, "api", "https://github.com/acme/servico-api.git",
+    _make_repo(root, "api", "https://github.com/acme/servico-api.git",
                branches=("feat/K-1-coisa", "fix/K-2-outra"))
-    _cria_repo(root, "web", "git@github.com:acme/web.git", base="master")
-    _cria_repo(root, "sem-remoto", None)
+    _make_repo(root, "web", "git@github.com:acme/web.git", base="master")
+    _make_repo(root, "sem-remoto", None)
     return root
 
 
@@ -99,13 +99,13 @@ def test_identity_vem_of_remote_not_of_directory(provider):
     """
     por_dir = {r.data["directory"]: r for r in provider.list_repositories()}
     assert por_dir["api"].ref.key == "acme/servico-api"
-    assert por_dir["api"].data.get("diretorio_diverge_do_repo") is True
+    assert por_dir["api"].data.get("directory_differs_from_repo") is True
     assert por_dir["web"].ref.key == "acme/web"
 
 
 def test_identity_is_unique(provider):
-    chaves = [r.ref.key for r in provider.list_repositories()]
-    assert len(chaves) == len(set(chaves))
+    keys = [r.ref.key for r in provider.list_repositories()]
+    assert len(keys) == len(set(keys))
 
 
 def test_identity_carries_the_provider(provider):
@@ -125,15 +125,15 @@ def test_resource_is_scoped_pelo_workspace(provider):
 
 def test_without_remote_ainda_tem_identity(provider):
     """The absence of a remote must not become the absence of a repository."""
-    chaves = {r.ref.key for r in provider.list_repositories()}
-    assert any(k.startswith("local/") for k in chaves)
+    keys = {r.ref.key for r in provider.list_repositories()}
+    assert any(k.startswith("local/") for k in keys)
 
 
 def test_get_returns_the_same_that_the_list(provider):
-    da_lista = provider.list_repositories()[0]
-    um = provider.get_repository(da_lista.ref.key)
-    assert um.ref == da_lista.ref
-    assert um.base_branch == da_lista.base_branch
+    from_list = provider.list_repositories()[0]
+    um = provider.get_repository(from_list.ref.key)
+    assert um.ref == from_list.ref
+    assert um.base_branch == from_list.base_branch
 
 
 def test_repositorio_missing_raises(provider):
@@ -155,20 +155,20 @@ def test_branch_current_not_is_confused_with_the_base(provider, clones):
     """Of the 12 real clones examined, 11 were on a work branch."""
     _git(clones / "api", "checkout", "-q", "feat/K-1-coisa")
     r = provider.get_repository("acme/servico-api")
-    assert r.data["branch_corrente"] == "feat/K-1-coisa"
+    assert r.data["current_branch"] == "feat/K-1-coisa"
     assert r.base_branch == "main"
 
 
 def test_list_branches_without_duplicating_local_is_remote(provider):
-    nomes = [b.name for b in provider.list_branches("acme/servico-api")]
-    assert len(nomes) == len(set(nomes))
-    assert "feat/K-1-coisa" in nomes
-    assert sum(1 for b in provider.list_branches("acme/servico-api") if b.e_base) == 1
+    names = [b.name for b in provider.list_branches("acme/servico-api")]
+    assert len(names) == len(set(names))
+    assert "feat/K-1-coisa" in names
+    assert sum(1 for b in provider.list_branches("acme/servico-api") if b.is_base) == 1
 
 
 def test_filter_of_branch(provider):
-    achadas = provider.list_branches("acme/servico-api", {"padrao": "K-1"})
-    assert [b.name for b in achadas] == ["feat/K-1-coisa"]
+    found = provider.list_branches("acme/servico-api", {"pattern": "K-1"})
+    assert [b.name for b in found] == ["feat/K-1-coisa"]
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ def test_git_refuses_invocation_that_writes(provider, clones, invocation):
 ])
 def test_cli_refuses_invocation_that_writes(invocation):
     """`repo delete` crossed a verb-level allowlist on 06/09/2026. Never again."""
-    ok, reason = cli_e_leitura(invocation)
+    ok, reason = cli_is_read(invocation)
     assert not ok, f"'{' '.join(invocation)}' passou pelo portao"
     assert reason
 
@@ -250,7 +250,7 @@ def test_cli_refuses_invocation_that_writes(invocation):
     ["api", "repos/x/y"], ["api", "--method", "GET", "repos/x"], ["auth", "status"],
 ])
 def test_cli_allows_read(invocation):
-    ok, reason = cli_e_leitura(invocation)
+    ok, reason = cli_is_read(invocation)
     assert ok, f"'{' '.join(invocation)}' recusado: {reason}"
 
 
@@ -260,7 +260,7 @@ def test_cli_allows_read(invocation):
     ["show", "HEAD:README.md"], ["config", "--get", "x"],
 ])
 def test_git_allows_read(invocation):
-    ok, reason = git_e_leitura(invocation)
+    ok, reason = git_is_read(invocation)
     assert ok, f"'git {' '.join(invocation)}' recusado: {reason}"
 
 
@@ -288,9 +288,9 @@ def test_timeout_becomes_error_of_adapter(provider, clones, monkeypatch):
     the wrong machine, with nobody understanding why.
 
     """
-    def estoura(*a, **k):
+    def blow_up(*a, **k):
         raise subprocess.TimeoutExpired(cmd="git", timeout=0.1)
-    monkeypatch.setattr(subprocess, "run", estoura)
+    monkeypatch.setattr(subprocess, "run", blow_up)
     with pytest.raises(AdapterError, match="timed out"):
         provider._git(clones / "api", "rev-parse", "HEAD")
 

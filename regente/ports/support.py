@@ -49,8 +49,8 @@ class Message:
 class Completion:
     text: str
     model: str = ""
-    tokens_entrada: int = 0
-    tokens_saida: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     cost_usd: float = 0.0
     data: dict[str, Any] = field(default_factory=dict)
 
@@ -77,8 +77,8 @@ class LLMProvider(Port):
     capability = Capability.LLM
 
     @abstractmethod
-    def complete(self, mensagens: list[Message], spec: ModelSpec) -> Completion: ...
+    def complete(self, messages: list[Message], spec: ModelSpec) -> Completion: ...
 
-    def custo_estimado(self, tokens_entrada: int, tokens_saida: int,
+    def estimated_cost(self, input_tokens: int, output_tokens: int,
                        spec: ModelSpec) -> float:
         return 0.0

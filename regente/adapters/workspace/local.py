@@ -75,19 +75,19 @@ class GitWorktree(WorkspaceProvider):
             raise AdapterError(f"no clone configured for '{repo}'")
         clone = self.clones[repo]
         destination = self.root / key
-        nome_branch = branch or f"regente/{key}"
+        branch_name = branch or f"regente/{key}"
         # Resuming: the worktree already exists and carries the previous
         # attempt's WIP commits. Recreating it would lose the work -- it is
         # returned as it is.
         if (destination / ".git").exists():
-            return WorkArea(id=key, path=str(destination), branch=nome_branch, repo=repo)
+            return WorkArea(id=key, path=str(destination), branch=branch_name, repo=repo)
         destination.parent.mkdir(parents=True, exist_ok=True)
         # Fetch before deriving: a worktree created from a stale base produces a
         # PR full of conflicts nobody asked for.
         self._git(clone, "fetch", "--quiet", "origin")
-        self._git(clone, "worktree", "add", "-b", nome_branch, str(destination),
+        self._git(clone, "worktree", "add", "-b", branch_name, str(destination),
                   base or "origin/HEAD")
-        return WorkArea(id=key, path=str(destination), branch=nome_branch, repo=repo)
+        return WorkArea(id=key, path=str(destination), branch=branch_name, repo=repo)
 
     def discard(self, area: WorkArea) -> None:
         clone = self.clones.get(area.repo or "")

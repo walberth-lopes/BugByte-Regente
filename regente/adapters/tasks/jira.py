@@ -158,7 +158,7 @@ class JiraTasks(TaskProvider):
 
     def describe(self) -> dict[str, str]:
         return {"capability": self.capability.value, "adapter": self.name,
-                "modo": "somente-leitura", "site": self.site}
+                "mode": "read-only", "site": self.site}
 
     def verify(self) -> None:
         """Proves the credential and the reach with the cheapest call there is."""
@@ -171,10 +171,10 @@ class JiraTasks(TaskProvider):
 
     # ---- reading ---------------------------------------------------------
 
-    def list_tasks(self, filtro: dict[str, Any] | None = None) -> list[ExternalTask]:
-        f = filtro or {}
+    def list_tasks(self, filters: dict[str, Any] | None = None) -> list[ExternalTask]:
+        f = filters or {}
         jql = f.get("jql") or self.jql
-        if f.get("apenas_minhas"):
+        if f.get("mine_only"):
             jql = f"assignee = currentUser() AND ({jql})"
 
         items: list[ExternalTask] = []
@@ -211,7 +211,7 @@ class JiraTasks(TaskProvider):
             output.append(Comment(
                 author=((c.get("author") or {}).get("displayName") or "?"),
                 text=_text_from(c.get("body")),
-                criado_em=str(c.get("created") or ""),
+                created_at=str(c.get("created") or ""),
                 id=str(c.get("id") or "")))
         return output
 
@@ -225,7 +225,7 @@ class JiraTasks(TaskProvider):
             f"{self.name} is mounted read-only; '{operation}' is not executable "
             f"in this milestone. No mutation of the external system.")
 
-    def update_task(self, key: str, campos: dict[str, Any]) -> None:
+    def update_task(self, key: str, fields: dict[str, Any]) -> None:
         self._refuse("update_task")
 
     def transition_task(self, key: str, destination: str) -> None:
@@ -240,70 +240,70 @@ class JiraTasks(TaskProvider):
     # ---- normalisation ---------------------------------------------------
 
     def _normalize(self, raw: dict[str, Any], partial: bool = False) -> ExternalTask:
-        campos = raw.get("fields") or {}
+        fields = raw.get("fields") or {}
         key = str(raw.get("key") or "")
         if not key:
             raise AdapterError("issue without a 'key' -- impossible to give it an identity")
 
-        status = campos.get("status") or {}
-        nome_status = str(status.get("name") or "")
+        status = fields.get("status") or {}
+        status_name = str(status.get("name") or "")
         category = str((status.get("statusCategory") or {}).get("key") or "")
-        status = STATUS_MAP.get(nome_status.strip().upper())
+        status = STATUS_MAP.get(status_name.strip().upper())
         if status is None:
             status = CATEGORY_MAP.get(category, ExternalStatus.UNKNOWN)
 
-        prioridade_nome = str((campos.get("priority") or {}).get("name") or "")
-        priority = PRIORITY_MAP.get(prioridade_nome.strip().upper(), DEFAULT_PRIORITY)
+        priority_name = str((fields.get("priority") or {}).get("name") or "")
+        priority = PRIORITY_MAP.get(priority_name.strip().upper(), DEFAULT_PRIORITY)
 
-        links = self._links_of(campos)
-        labels = tuple(str(x) for x in (campos.get("labels") or []))
+        links = self._links_of(fields)
+        labels = tuple(str(x) for x in (fields.get("labels") or []))
 
         return ExternalTask(
             key=key,
-            title=str(campos.get("summary") or ""),
+            title=str(fields.get("summary") or ""),
             status=status,
-            external_status=nome_status,
-            description=_text_from(campos.get("description")),
+            external_status=status_name,
+            description=_text_from(fields.get("description")),
             url=f"{self.site.rstrip('/')}/browse/{key}" if self.site else None,
             priority=priority,
-            project=str((campos.get("project") or {}).get("key") or ""),
-            assignee=((campos.get("assignee") or {}).get("displayName") or None),
+            project=str((fields.get("project") or {}).get("key") or ""),
+            assignee=((fields.get("assignee") or {}).get("displayName") or None),
             links=links,
-            resources=self._resources_of(key, campos),
+            resources=self._resources_of(key, fields),
             labels=labels,
             partial=partial,
             data={
-                "tipo": str((campos.get("issuetype") or {}).get("name") or ""),
-                "subtarefa": bool((campos.get("issuetype") or {}).get("subtask")),
+                "tipo": str((fields.get("issuetype") or {}).get("name") or ""),
+                "subtarefa": bool((fields.get("issuetype") or {}).get("subtask")),
                 "categoria_status": category,
-                "atualizada_em": str(campos.get("updated") or ""),
-                "prioridade_externa": prioridade_nome,
+                "atualizada_em": str(fields.get("updated") or ""),
+                "prioridade_externa": priority_name,
             })
 
-    def _links_of(self, campos: dict[str, Any]) -> tuple[TaskRef, ...]:
+    def _links_of(self, fields: dict[str, Any]) -> tuple[TaskRef, ...]:
         output: list[TaskRef] = []
 
-        pai = campos.get("parent") or {}
+        pai = fields.get("parent") or {}
         if pai.get("key"):
             # Hierarchy, not order: the subtask does NOT wait for its parent to finish.
             output.append(TaskRef(key=str(pai["key"]), kind=PARENT))
 
-        for link in (campos.get("issuelinks") or []):
-            tipo_externo = str((link.get("type") or {}).get("name") or "")
-            kind = LINK_MAP.get(tipo_externo, RELATED)
-            dentro, fora = link.get("inwardIssue"), link.get("outwardIssue")
-            if dentro and dentro.get("key"):
+        for link in (fields.get("issuelinks") or []):
+            external_kind = str((link.get("type") or {}).get("name") or "")
+            kind = LINK_MAP.get(external_kind, RELATED)
+            inward, outward = link.get("inwardIssue"), link.get("outwardIssue")
+            if inward and inward.get("key"):
                 # "this issue <inward> that one". For Blocks: "is blocked by".
-                output.append(TaskRef(key=str(dentro["key"]), kind=kind))
-            elif fora and fora.get("key"):
+                output.append(TaskRef(key=str(inward["key"]), kind=kind))
+            elif outward and outward.get("key"):
                 # "this issue <outward> that one". For Blocks: "blocks" -- the one
                 # that depends is the OTHER issue, and it will record its own
                 # inward. Recording it as blocking here would invert the edge.
-                output.append(TaskRef(key=str(fora["key"]),
+                output.append(TaskRef(key=str(outward["key"]),
                                      kind=RELATED if kind == BLOCKS else kind))
         return tuple(output)
 
-    def _resources_of(self, key: str, campos: dict[str, Any]) -> tuple[str, ...]:
+    def _resources_of(self, key: str, fields: dict[str, Any]) -> tuple[str, ...]:
         """Mutual-exclusion key for the scheduler.
 
         A task provider does not know which files will be touched -- inventing
@@ -321,6 +321,6 @@ class JiraTasks(TaskProvider):
         if self.resources_by == "nenhum":
             return ()
         if self.resources_by == "project":
-            return (f"project:{(campos.get('project') or {}).get('key') or '?'}",)
-        pai = (campos.get("parent") or {}).get("key")
+            return (f"project:{(fields.get('project') or {}).get('key') or '?'}",)
+        pai = (fields.get("parent") or {}).get("key")
         return (f"parent:{pai}",) if pai else (f"issue:{key}",)

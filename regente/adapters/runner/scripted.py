@@ -34,7 +34,7 @@ class ScriptedRunner(AgentRunner):
     default_value: dict[str, Any] = field(default_factory=lambda: {"ok": True, "resumo": "no change"})
 
     def run(self, request: RunRequest) -> RunResult:
-        key = request.contexto.get("chave", request.task_id)
+        key = request.context.get("chave", request.task_id)
         d = self.script.get(key, self.default_value)
         # The area exists and belongs to the worker: writing in it proves the
         # isolation worked, and leaves a trace to inspect after the tick.
@@ -70,7 +70,7 @@ class CommandRunner(AgentRunner):
         payload = json.dumps({
             "run_id": request.run_id, "task_id": request.task_id, "agente": request.agent,
             "objetivo": request.goal, "area": request.area.path,
-            "branch": request.area.branch, "contexto": request.contexto,
+            "branch": request.area.branch, "contexto": request.context,
             "limites": {"iteracoes": request.limit_iterations,
                         "tool_calls": request.limit_tool_calls,
                         "custo_usd": request.limit_cost_usd,

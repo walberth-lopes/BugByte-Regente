@@ -71,11 +71,11 @@ def test_two_clientes_in_same_database_not_if_see(tmp_path):
     a.tick(); a.tick()
     b.tick(); b.tick()
 
-    chaves_a = {t.key for t in store.tasks("wks_a")}
-    chaves_b = {t.key for t in store.tasks("wks_b")}
-    assert chaves_a == {"A-1", "A-2"}
-    assert chaves_b == {"B-1"}
-    assert not (chaves_a & chaves_b)
+    keys_a = {t.key for t in store.tasks("wks_a")}
+    keys_b = {t.key for t in store.tasks("wks_b")}
+    assert keys_a == {"A-1", "A-2"}
+    assert keys_b == {"B-1"}
+    assert not (keys_a & keys_b)
 
 
 def test_same_key_externa_in_two_clientes_sao_tasks_distinct(tmp_path):
@@ -115,8 +115,8 @@ def test_plan_of_a_client_ignores_work_of_other(tmp_path):
     a._analyze(type("R", (), {"analyzed": 0})())
     b._analyze(type("R", (), {"analyzed": 0})())
 
-    chaves = {store.task(i).key for i in a.plan().dispatch}
-    assert chaves <= {"A-1", "A-2"}
+    keys = {store.task(i).key for i in a.plan().dispatch}
+    assert keys <= {"A-1", "A-2"}
 
 
 def test_lease_of_a_client_not_blocks_the_other(tmp_path):
@@ -222,8 +222,8 @@ def test_clientes_with_providers_different_coexist(tmp_path):
     do_b = store.tasks("wks_b")
     assert do_b and all(t.key.startswith("SG-") for t in do_b)
     # And the identity records WHICH provider each task came from.
-    assert {t.externo.provider for t in store.tasks("wks_a")} == {"filesystem"}
-    assert {t.externo.provider for t in do_b} == {"jira"}
+    assert {t.external.provider for t in store.tasks("wks_a")} == {"filesystem"}
+    assert {t.external.provider for t in do_b} == {"jira"}
 
 
 # ---------------------------------------------------------------------------

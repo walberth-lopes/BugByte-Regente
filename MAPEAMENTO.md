@@ -159,7 +159,7 @@ Read from the provider, **never assumed**. Order of attempts: `origin/HEAD` →
 `HEAD`: of the 12 real clones, **11 were on a work branch**, and reading `HEAD`
 would derive new work from somebody else's half-finished code.
 
-A repository with no base is `REPO_INUTILIZAVEL` — it receives no work.
+A repository with no base is `REPO_UNUSABLE` — it receives no work.
 
 ## Capabilities
 
@@ -169,7 +169,7 @@ audits.
 
 The local adapter declares everything for reading **except** `READ_PULL_REQUESTS`:
 plain git has no pull requests, that is a concept of the hosting service.
-Declaring the absence is what lets the chain stop at `SEM_CAPACIDADE` before
+Declaring the absence is what lets the chain stop at `NO_CAPABILITY` before
 spending a cycle.
 
 ## Classified findings — Milestone 4
@@ -183,4 +183,4 @@ spending a cycle.
 | Schema bump with no migration path | **MISSING CAPABILITY** | the `MIGRATIONS` ladder in the store |
 | A task does not declare which repository it runs in | **MISSING CAPABILITY** | see [ALVO.md](ALVO.md) |
 | Local directory ≠ repository name | **DATA QUALITY** | detected and flagged, never fixed |
-| `scamchecker-crawler-engine` with no base branch | **DATA QUALITY** | becomes `REPO_INUTILIZAVEL` |
+| `scamchecker-crawler-engine` with no base branch | **DATA QUALITY** | becomes `REPO_UNUSABLE` |

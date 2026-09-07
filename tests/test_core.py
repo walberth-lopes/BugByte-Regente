@@ -49,13 +49,13 @@ def test_escalating_is_always_possible():
 
 
 def test_waiting_human_returns_to_where_paused():
-    assert can(S.WAITING_HUMAN, S.MERGING, pausado_em=S.APPROVED)
-    assert can(S.WAITING_HUMAN, S.APPROVED, pausado_em=S.APPROVED)
+    assert can(S.WAITING_HUMAN, S.MERGING, paused_at=S.APPROVED)
+    assert can(S.WAITING_HUMAN, S.APPROVED, paused_at=S.APPROVED)
 
 
 def test_human_not_teleport_task():
     """Approving a deploy is not the same as declaring the task finished."""
-    assert not can(S.WAITING_HUMAN, S.DONE, pausado_em=S.IMPLEMENTING)
+    assert not can(S.WAITING_HUMAN, S.DONE, paused_at=S.IMPLEMENTING)
     assert S.DONE not in resumable_from(S.IMPLEMENTING)
 
 
@@ -72,7 +72,7 @@ RULES = [
 ]
 
 
-def motor_policy() -> PolicyEngine:
+def policy_engine() -> PolicyEngine:
     return PolicyEngine.from_config(RULES)
 
 
@@ -83,36 +83,36 @@ def ctx(kind: str, environment: str = "staging",
 
 
 def test_action_without_rule_is_denied():
-    d = motor_policy().decide(ctx("cloud.provision"))
+    d = policy_engine().decide(ctx("cloud.provision"))
     assert d.effect == Effect.DENY
     assert "no rule allows" in d.reason
 
 
 def test_read_passes():
-    assert motor_policy().decide(ctx("repo.read")).allowed
+    assert policy_engine().decide(ctx("repo.read")).allowed
 
 
 def test_production_asks_human():
-    d = motor_policy().decide(ctx("repo.merge", "production"))
+    d = policy_engine().decide(ctx("repo.merge", "production"))
     assert d.needs_human
 
 
 def test_deny_beats_allow():
     """A permissive rule does not cancel out a prohibition."""
-    regras = RULES + [{"name": "liberou_tudo", "effect": "ALLOW", "match": {"action": "*"}}]
-    d = PolicyEngine.from_config(regras).decide(ctx("db.write"))
+    rules = RULES + [{"name": "liberou_tudo", "effect": "ALLOW", "match": {"action": "*"}}]
+    d = PolicyEngine.from_config(rules).decide(ctx("db.write"))
     assert d.effect == Effect.DENY
     assert d.rule == "sem_banco"
 
 
 def test_ceiling_of_autonomy_tightens_allow():
-    d = motor_policy().decide(ctx("repo.merge", "staging", autonomy=AutonomyLevel.L2))
+    d = policy_engine().decide(ctx("repo.merge", "staging", autonomy=AutonomyLevel.L2))
     assert d.needs_human
     assert d.rule == "teto_de_autonomia"
 
 
 def test_ceiling_not_loosens_deny():
-    d = motor_policy().decide(ctx("db.write", autonomy=AutonomyLevel.L4))
+    d = policy_engine().decide(ctx("db.write", autonomy=AutonomyLevel.L4))
     assert d.effect == Effect.DENY
 
 
@@ -158,7 +158,7 @@ def test_factor_of_client_adds_is_not_replaces():
 
 # ---- graph ---------------------------------------------------------------
 
-def grafo_diamante() -> DependencyGraph:
+def diamond_graph() -> DependencyGraph:
     """A and B in parallel; C depends on both. D and E in series, apart."""
     g = DependencyGraph()
     g.link("C", "A")
@@ -168,20 +168,20 @@ def grafo_diamante() -> DependencyGraph:
 
 
 def test_parallel_is_series_coexist():
-    g = grafo_diamante()
+    g = diamond_graph()
     ready = g.unblocked(set())
     assert ready == frozenset({"A", "B", "D"})
     assert "C" not in ready and "E" not in ready
 
 
 def test_dependency_releases_when_parents_finish():
-    g = grafo_diamante()
+    g = diamond_graph()
     assert "C" not in g.unblocked({"A"})
     assert "C" in g.unblocked({"A", "B"})
 
 
 def test_layers_show_the_parallelism():
-    assert grafo_diamante().layers() == [["A", "B", "D"], ["C", "E"]]
+    assert diamond_graph().layers() == [["A", "B", "D"], ["C", "E"]]
 
 
 def test_cycle_is_reported_is_not_blowing_up():
@@ -196,11 +196,11 @@ def test_cycle_is_reported_is_not_blowing_up():
 # ---- scheduler -----------------------------------------------------------
 
 def test_dispatches_in_parallel_when_not_ha_conflict():
-    g = grafo_diamante()
-    cands = [Candidate("A", resources=frozenset({"repo:x"})),
+    g = diamond_graph()
+    candidates = [Candidate("A", resources=frozenset({"repo:x"})),
              Candidate("B", resources=frozenset({"repo:y"})),
              Candidate("D", resources=frozenset({"repo:z"}))]
-    p = plan(cands, g, set(), {}, Limits(max_workers=3))
+    p = plan(candidates, g, set(), {}, Limits(max_workers=3))
     assert set(p.dispatch) == {"A", "B", "D"}
 
 
@@ -209,9 +209,9 @@ def test_not_parallelize_who_touches_the_same_resource():
     g = DependencyGraph()
     for n in "AB":
         g.add(n)
-    cands = [Candidate("A", priority=1, resources=frozenset({"migration:api"})),
+    candidates = [Candidate("A", priority=1, resources=frozenset({"migration:api"})),
              Candidate("B", priority=2, resources=frozenset({"migration:api"}))]
-    p = plan(cands, g, set(), {}, Limits(max_workers=4))
+    p = plan(candidates, g, set(), {}, Limits(max_workers=4))
     assert p.dispatch == ("A",)
     assert any("resource busy" in a.reason for a in p.deferred)
 
@@ -226,11 +226,11 @@ def test_respects_worker_already_running():
 
 def test_ceiling_of_slots():
     g = DependencyGraph()
-    cands = []
+    candidates = []
     for n in "ABCD":
         g.add(n)
-        cands.append(Candidate(n, resources=frozenset({f"repo:{n}"})))
-    assert len(plan(cands, g, set(), {}, Limits(max_workers=2)).dispatch) == 2
+        candidates.append(Candidate(n, resources=frozenset({f"repo:{n}"})))
+    assert len(plan(candidates, g, set(), {}, Limits(max_workers=2)).dispatch) == 2
 
 
 def test_ceiling_daily():
@@ -246,10 +246,10 @@ def test_order_is_stable():
     g = DependencyGraph()
     for n in "ABC":
         g.add(n)
-    cands = [Candidate("C", priority=5, key="C", resources=frozenset({"r:c"})),
+    candidates = [Candidate("C", priority=5, key="C", resources=frozenset({"r:c"})),
              Candidate("A", priority=1, key="A", resources=frozenset({"r:a"})),
              Candidate("B", priority=1, key="B", resources=frozenset({"r:b"}))]
-    p = plan(cands, g, set(), {}, Limits(max_workers=3))
+    p = plan(candidates, g, set(), {}, Limits(max_workers=3))
     assert p.dispatch == ("A", "B", "C")
 
 

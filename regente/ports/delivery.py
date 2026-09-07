@@ -18,7 +18,7 @@ class Check:
     url: str = ""
 
     @property
-    def rodando(self) -> bool:
+    def running(self) -> bool:
         return self.state in {"QUEUED", "IN_PROGRESS", "PENDING"}
 
     @property
@@ -38,11 +38,11 @@ class PipelineStatus:
 
     @property
     def concluido(self) -> bool:
-        return bool(self.checks) and not any(c.rodando for c in self.checks)
+        return bool(self.checks) and not any(c.running for c in self.checks)
 
     @property
     def falhou(self) -> tuple[str, ...]:
-        return tuple(c.name for c in self.checks if c.conclusion and not c.verde and not c.rodando)
+        return tuple(c.name for c in self.checks if c.conclusion and not c.verde and not c.running)
 
 
 class CICDProvider(Port):

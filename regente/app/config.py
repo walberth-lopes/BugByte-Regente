@@ -74,14 +74,14 @@ class Config:
     #: target, this map is what keeps the engine from guessing.
     targets: dict[str, dict[str, str]] = field(default_factory=dict)
     risk_factors: tuple[dict[str, Any], ...] = ()
-    modelos: dict[str, dict[str, Any]] = field(default_factory=dict)
+    models: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: Shadow: the engine decides and records, but performs no external write.
     #: It is born on. Turning it off is the owner's explicit decision, never a
     #: default.
     shadow: bool = True
 
     @property
-    def banco(self) -> Path:
+    def database(self) -> Path:
         return self.root / "regente.db"
 
     @property
@@ -107,9 +107,9 @@ def load(path: str | Path) -> Config:
     if not isinstance(raw, dict):
         raise ValueError(f"{p}: the file must be a mapping")
 
-    faltando = [c for c in REQUIRED_FIELDS if not raw.get(c)]
-    if faltando:
-        raise ValueError(f"{p}: required fields are missing: {', '.join(faltando)}")
+    missing = [c for c in REQUIRED_FIELDS if not raw.get(c)]
+    if missing:
+        raise ValueError(f"{p}: required fields are missing: {', '.join(missing)}")
 
     providers_brutos = raw.get("providers") or {}
     providers = {k: AdapterConf.de(v, f"providers.{k}") for k, v in providers_brutos.items()}
@@ -119,12 +119,12 @@ def load(path: str | Path) -> Config:
 
     root = Path(raw.get("root") or (p.parent / ".regente")).expanduser()
     lim = raw.get("limits") or {}
-    orc = raw.get("budget") or {}
+    budget = raw.get("budget") or {}
 
     policies = raw.get("policies")
-    caminho_policies = (p.parent / policies).resolve() if policies else None
-    if caminho_policies and not caminho_policies.is_file():
-        raise ValueError(f"{p}: policies file does not exist: {caminho_policies}")
+    policies_path = (p.parent / policies).resolve() if policies else None
+    if policies_path and not policies_path.is_file():
+        raise ValueError(f"{p}: policies file does not exist: {policies_path}")
 
     return Config(
         organization=str(raw["organization"]),
@@ -145,17 +145,17 @@ def load(path: str | Path) -> Config:
             max_workers=int(lim.get("max_workers", 2)),
             max_dispatches_per_day=int(lim.get("max_dispatches_per_day", 8))),
         budget=Budget(
-            max_iterations=int(orc.get("max_iterations", 24)),
-            max_tool_calls=int(orc.get("max_tool_calls", 120)),
-            max_cost_usd=float(orc.get("max_cost_usd", 5.0)),
-            max_seconds=int(orc.get("max_seconds", 2700)),
-            max_attempts=int(orc.get("max_attempts", 3))),
-        policies=caminho_policies,
+            max_iterations=int(budget.get("max_iterations", 24)),
+            max_tool_calls=int(budget.get("max_tool_calls", 120)),
+            max_cost_usd=float(budget.get("max_cost_usd", 5.0)),
+            max_seconds=int(budget.get("max_seconds", 2700)),
+            max_attempts=int(budget.get("max_attempts", 3))),
+        policies=policies_path,
         lease_seconds=int(raw.get('lease_seconds', 900)),
         secrets=tuple(str(x) for x in (raw.get('secrets') or ())),
         targets={k: dict(v) for k, v in (raw.get('targets') or {}).items()},
         risk_factors=tuple(raw.get("risk_factors") or ()),
-        modelos=dict(raw.get("models") or {}),
+        models=dict(raw.get("models") or {}),
         shadow=bool(raw.get("shadow", True)),
     )
 
@@ -164,7 +164,7 @@ def load_policies(path: Path | None) -> list[dict[str, Any]]:
     if path is None:
         return []
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    regras = raw.get("rules")
-    if not isinstance(regras, list):
+    rules = raw.get("rules")
+    if not isinstance(rules, list):
         raise ValueError(f"{path}: expected a list in 'rules'")
-    return regras
+    return rules

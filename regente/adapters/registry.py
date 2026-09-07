@@ -17,27 +17,27 @@ from typing import Any, Callable
 
 from ..ports import Capability, Port
 
-Fabrica = Callable[[dict[str, Any]], Port]
-_REGISTRO: dict[tuple[Capability, str], Fabrica] = {}
+Factory = Callable[[dict[str, Any]], Port]
+_REGISTRY: dict[tuple[Capability, str], Factory] = {}
 
 
-def register(cap: Capability, name: str, fabrica: Fabrica) -> None:
-    _REGISTRO[(cap, name)] = fabrica
+def register(cap: Capability, name: str, factory: Factory) -> None:
+    _REGISTRY[(cap, name)] = factory
 
 
 def create(cap: Capability, name: str, options: dict[str, Any] | None = None) -> Port:
     key = (cap, name)
-    if key not in _REGISTRO:
-        available = sorted(n for (c, n) in _REGISTRO if c == cap)
+    if key not in _REGISTRY:
+        available = sorted(n for (c, n) in _REGISTRY if c == cap)
         raise KeyError(
             f"there is no adapter '{name}' for {cap.value}. "
             f"Available: {', '.join(available) or 'none'}")
-    return _REGISTRO[key](options or {})
+    return _REGISTRY[key](options or {})
 
 
 def available(cap: Capability | None = None) -> dict[str, list[str]]:
     output: dict[str, list[str]] = {}
-    for (c, n) in sorted(_REGISTRO, key=lambda k: (k[0].value, k[1])):
+    for (c, n) in sorted(_REGISTRY, key=lambda k: (k[0].value, k[1])):
         if cap is None or c == cap:
             output.setdefault(c.value, []).append(n)
     return output
@@ -73,24 +73,24 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
     from .tasks.transport import HttpTransport, SnapshotTransport
 
     observer = o.get("observer")
-    modo = o.get("transport", "http")
-    if modo == "instantaneo":
+    mode = o.get("transport", "http")
+    if mode == "instantaneo":
         from pathlib import Path
         transport = SnapshotTransport(
             directory=Path(o["snapshots"]), observer=observer)
-    elif modo == "http":
+    elif mode == "http":
         site = o["site"].rstrip("/")
         secrets = o["secrets"]            # SecretProvider, injected by the composition
-        ref_usuario = o.get("user_ref") or "env:JIRA_EMAIL"
+        ref_user = o.get("user_ref") or "env:JIRA_EMAIL"
         ref_token = o.get("token_ref") or "env:JIRA_API_TOKEN"
         transport = HttpTransport(
             base_url=site,
-            credencial=lambda: (secrets.resolve(ref_usuario), secrets.resolve(ref_token)),
+            credential=lambda: (secrets.resolve(ref_user), secrets.resolve(ref_token)),
             timeout=int(o.get("timeout", 30)),
-            max_attempts=int(o.get("max_tentativas", 3)),
+            max_attempts=int(o.get("max_attempts", 3)),
             observer=observer)
     else:
-        raise KeyError(f"unknown transport for jira: {modo!r}. Use http or instantaneo")
+        raise KeyError(f"unknown transport for jira: {mode!r}. Use http or instantaneo")
 
     return JiraTasks(
         transport=transport,

@@ -52,14 +52,14 @@ class ScopedSecrets(SecretProvider):
                 f"workspace '{self.workspace}' did not declare the reference "
                 f"{reference!r}; declared: {sorted(self.allowed_from) or 'none'}")
 
-        esquema, _, resto = reference.partition(":")
-        if esquema == "env":
+        scheme, _, resto = reference.partition(":")
+        if scheme == "env":
             value = os.environ.get(resto, "")
             if not value:
                 raise SecretMissing(
                     f"environment variable {resto} is not set or is empty")
             return value
-        if esquema == "arquivo":
+        if scheme == "arquivo":
             path = Path(resto).expanduser()
             if not path.is_file():
                 raise SecretMissing(f"secret file does not exist: {path}")
@@ -68,7 +68,7 @@ class ScopedSecrets(SecretProvider):
                 raise SecretMissing(f"secret file is empty: {path}")
             return value
         raise SecretMissing(
-            f"unknown reference scheme: {esquema!r}. Use env: or arquivo:")
+            f"unknown reference scheme: {scheme!r}. Use env: or arquivo:")
 
     def available(self, reference: str) -> bool:
         try:

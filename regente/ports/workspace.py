@@ -55,7 +55,7 @@ class WorkspaceProvider(Port):
 class RunRequest:
     """What the engine hands to a worker.
 
-    `contexto` arrives already assembled and reduced: the engine collects what is
+    `context` arrives already assembled and reduced: the engine collects what is
     needed and nothing more. Dumping the whole project in here is what makes an
     agent expensive, slow and imprecise all at once.
     """
@@ -64,7 +64,7 @@ class RunRequest:
     agent: str
     goal: str
     area: WorkArea
-    contexto: dict[str, Any] = field(default_factory=dict)
+    context: dict[str, Any] = field(default_factory=dict)
     #: Actions this worker may even attempt. The Policy Engine still decides
     #: each call; this list merely avoids offering the agent what it could never
     #: use.

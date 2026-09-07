@@ -134,7 +134,7 @@ class FilesystemTasks(TaskProvider):
         data = self._read(self._path_for(key))
         return [Comment(author=str(_field(c, "author", "autor") or "?"),
                         text=str(_field(c, "text", "texto") or ""),
-                        criado_em=str(c.get("em", "")), id=str(c.get("id", "")))
+                        created_at=str(c.get("em", "")), id=str(c.get("id", "")))
                 for c in (_field(data, "comments", "comentarios") or [])]
 
     # ---- writing ---------------------------------------------------------
@@ -147,10 +147,10 @@ class FilesystemTasks(TaskProvider):
                        encoding="utf-8")
         tmp.replace(path)
 
-    def update_task(self, key: str, campos: dict[str, Any]) -> None:
+    def update_task(self, key: str, fields: dict[str, Any]) -> None:
         path = self._path_for(key)
         data = self._read(path)
-        data.update(campos)
+        data.update(fields)
         self._write(path, data)
 
     def transition_task(self, key: str, destination: str) -> None:

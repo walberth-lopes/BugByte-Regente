@@ -136,11 +136,11 @@ class TargetResolver:
         findings: dict[str, list[Evidence]] = {}
         strengths: dict[str, int] = {}
 
-        def mark(repo: RepoInfo | None, ev: Evidence, peso: int) -> None:
+        def mark(repo: RepoInfo | None, ev: Evidence, weight: int) -> None:
             if repo is None:
                 return
             findings.setdefault(repo.ref.key, []).append(ev)
-            strengths[repo.ref.key] = max(strengths.get(repo.ref.key, 0), peso)
+            strengths[repo.ref.key] = max(strengths.get(repo.ref.key, 0), weight)
 
         # --- 1. declared -------------------------------------------------
         if task.key in self.by_task:
@@ -160,13 +160,13 @@ class TargetResolver:
 
         # --- 2. observed in the world ------------------------------------
         # Whole-word matching: `SG-11` must not match `SG-110`.
-        alvo_re = re.compile(rf"\b{re.escape(task.key.upper())}\b")
+        target_re = re.compile(rf"\b{re.escape(task.key.upper())}\b")
         for key, items in (branches or {}).items():
             repo = by_key.get(key)
             if repo is None:
                 continue
             for b in items:
-                if alvo_re.search(b.name.upper()):
+                if target_re.search(b.name.upper()):
                     mark(repo, Evidence("branch", f"'{b.name}' names {task.key}"),
                           WEIGHT_BRANCH)
                     break

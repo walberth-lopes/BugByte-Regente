@@ -22,18 +22,18 @@ APPROVAL = "apv"
 ACTION = "act"
 
 
-def new_id(prefixo: str) -> str:
-    return f"{prefixo}_{uuid.uuid4().hex[:12]}"
+def new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
-def prefix_of(identificador: str) -> str:
-    return identificador.split("_", 1)[0] if "_" in identificador else ""
+def prefix_of(identifier: str) -> str:
+    return identifier.split("_", 1)[0] if "_" in identifier else ""
 
 
-def expect_prefix(identificador: str, prefixo_esperado: str) -> str:
-    obtido = prefix_of(identificador)
-    if obtido != prefixo_esperado:
+def expect_prefix(identifier: str, expected_prefix: str) -> str:
+    got = prefix_of(identifier)
+    if got != expected_prefix:
         raise ValueError(
-            f"expected a '{prefixo_esperado}' id and got '{obtido}': {identificador}"
+            f"expected a '{expected_prefix}' id and got '{got}': {identifier}"
         )
-    return identificador
+    return identifier

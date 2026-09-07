@@ -48,15 +48,15 @@ CLI_READ_INVOCATIONS: frozenset[tuple[str, str | None]] = frozenset({
 })
 
 
-def git_e_leitura(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
+def git_is_read(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
     """Returns (allowed, reason for refusal)."""
     if not args:
         return False, "empty invocation"
     cmd, resto = args[0], list(args[1:])
 
-    proibidas = [a for a in resto if a in GIT_WRITE_FLAGS]
-    if proibidas:
-        return False, f"write flag: {', '.join(proibidas)}"
+    forbidden = [a for a in resto if a in GIT_WRITE_FLAGS]
+    if forbidden:
+        return False, f"write flag: {', '.join(forbidden)}"
 
     if cmd in GIT_ALWAYS_READ:
         return True, ""
@@ -89,7 +89,7 @@ def git_e_leitura(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
     return False, f"'git {cmd}' is not on the read list"
 
 
-def cli_e_leitura(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
+def cli_is_read(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
     """Returns (allowed, reason for refusal)."""
     if not args:
         return False, "empty invocation"
@@ -104,10 +104,10 @@ def cli_e_leitura(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
             if base not in CLI_WRITE_FLAGS:
                 continue
             if base in ("--method", "-X"):
-                metodo = (a.split("=", 1)[1] if "=" in a
+                method = (a.split("=", 1)[1] if "=" in a
                           else (args[i + 1] if i + 1 < len(args) else "")).upper()
-                if metodo and metodo != "GET":
-                    return False, f"method {metodo} is not a read"
+                if method and method != "GET":
+                    return False, f"method {method} is not a read"
                 continue
             # -f/-F/--input make the CLI send a POST even without --method.
             return False, f"'{base}' turns the call into a write"

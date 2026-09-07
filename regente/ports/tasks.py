@@ -139,7 +139,7 @@ class ExternalTask:
 class Comment:
     author: str
     text: str
-    criado_em: str = ""
+    created_at: str = ""
     id: str = ""
 
 
@@ -147,7 +147,7 @@ class TaskProvider(Port):
     capability = Capability.TASKS
 
     @abstractmethod
-    def list_tasks(self, filtro: dict[str, Any] | None = None) -> list[ExternalTask]:
+    def list_tasks(self, filters: dict[str, Any] | None = None) -> list[ExternalTask]:
         """Work visible now. An error rises as AdapterError, never an empty list."""
 
     @abstractmethod
@@ -160,7 +160,7 @@ class TaskProvider(Port):
     # Separated on purpose: a read-only adapter can exist without implementing
     # any of them, and the Policy Engine is still what authorises the call.
 
-    def update_task(self, key: str, campos: dict[str, Any]) -> None:
+    def update_task(self, key: str, fields: dict[str, Any]) -> None:
         raise NotImplementedError
 
     def transition_task(self, key: str, destination: str) -> None:

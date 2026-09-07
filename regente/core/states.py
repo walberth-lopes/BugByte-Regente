@@ -70,10 +70,10 @@ _ESCAPES: frozenset[TaskState] = frozenset({
 #: It is the worst possible failure mode for an engine that promises to resume
 #: on its own, because nothing flags it: no error, no queue, just a task that
 #: never moves again.
-_DEVOLVEM_A_FILA: frozenset[TaskState] = ACTIVE
+_RETURN_TO_QUEUE: frozenset[TaskState] = ACTIVE
 
 #: Progress transitions. The emergency exits are added on top afterwards.
-_AVANCOS: dict[TaskState, frozenset[TaskState]] = {
+_ADVANCES: dict[TaskState, frozenset[TaskState]] = {
     S.DISCOVERED:    frozenset({S.ANALYZING}),
     S.ANALYZING:     frozenset({S.READY}),
     S.READY:         frozenset({S.ASSIGNED}),
@@ -109,13 +109,13 @@ def allowed_from(source: TaskState) -> frozenset[TaskState]:
     """Every legal destination reachable from `source`."""
     if source in TERMINAL:
         return frozenset()
-    output = _AVANCOS[source] | (_ESCAPES - {source})
-    if source in _DEVOLVEM_A_FILA:
+    output = _ADVANCES[source] | (_ESCAPES - {source})
+    if source in _RETURN_TO_QUEUE:
         output |= {S.READY}
     return output
 
 
-def resumable_from(pausado_em: TaskState) -> frozenset[TaskState]:
+def resumable_from(paused_at: TaskState) -> frozenset[TaskState]:
     """Legal destinations when leaving WAITING_HUMAN, given where it paused.
 
     The human can: say carry on (the state of origin itself), say redo it (what
@@ -123,28 +123,28 @@ def resumable_from(pausado_em: TaskState) -> frozenset[TaskState]:
     task into a state it could not reach on its own -- approving a deploy is not
     the same as declaring the task finished.
     """
-    if pausado_em in TERMINAL:
+    if paused_at in TERMINAL:
         return frozenset()
-    return frozenset({pausado_em}) | _AVANCOS[pausado_em] | (_ESCAPES - {S.WAITING_HUMAN})
+    return frozenset({paused_at}) | _ADVANCES[paused_at] | (_ESCAPES - {S.WAITING_HUMAN})
 
 
-def can(source: TaskState, destination: TaskState, pausado_em: TaskState | None = None) -> bool:
+def can(source: TaskState, destination: TaskState, paused_at: TaskState | None = None) -> bool:
     if source is S.WAITING_HUMAN:
-        if pausado_em is None:
+        if paused_at is None:
             # With no memory of where it paused, only the exits that do not
             # depend on it remain. Returning the task to the flow would mean
             # guessing.
             return destination in (_ESCAPES - {S.WAITING_HUMAN})
-        return destination in resumable_from(pausado_em)
+        return destination in resumable_from(paused_at)
     return destination in allowed_from(source)
 
 
-def require(source: TaskState, destination: TaskState, pausado_em: TaskState | None = None) -> None:
+def require(source: TaskState, destination: TaskState, paused_at: TaskState | None = None) -> None:
     """Validate or raise. The only door through which a transition enters the engine."""
-    if not can(source, destination, pausado_em):
-        contexto = f" (paused at {pausado_em.value})" if pausado_em else ""
+    if not can(source, destination, paused_at):
+        context = f" (paused at {paused_at.value})" if paused_at else ""
         raise InvalidTransition(
-            f"{source.value} -> {destination.value} is not a valid transition{contexto}"
+            f"{source.value} -> {destination.value} is not a valid transition{context}"
         )
 
 

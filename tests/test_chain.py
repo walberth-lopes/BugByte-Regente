@@ -143,20 +143,20 @@ def test_target_that_not_exists_in_provider_is_ignored():
 # Cadeia
 # ---------------------------------------------------------------------------
 
-def build(tasks, repos=None, resolvedor=None, autonomy=AutonomyLevel.L2,
+def build(tasks, repos=None, resolver=None, autonomy=AutonomyLevel.L2,
           branches=None, environment="staging"):
     return chain.build(
-        workspace_nome="ws", workspace_id="wks_1", tasks=tasks,
+        workspace_name="ws", workspace_id="wks_1", tasks=tasks,
         repos=repos if repos is not None else REPOS,
-        resolvedor=resolvedor or TargetResolver(),
+        resolver=resolver or TargetResolver(),
         policy=PolicyEngine.from_config(RULES), risk=RiskEngine(),
         autonomy=autonomy, branches=branches, environment=environment)
 
 
 def test_chain_completa_produces_candidate():
-    r = build([task("K-1")], resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))
+    r = build([task("K-1")], resolver=TargetResolver(by_task={"K-1": "acme/api"}))
     p = r.steps[0]
-    assert p.elo is Stage.CANDIDATO
+    assert p.link is Stage.CANDIDATE
     assert p.repo.ref.key == "acme/api"
     assert p.base_branch == "main"
     assert p.work_branch == "regente/k-1"
@@ -167,63 +167,63 @@ def test_chain_completa_produces_candidate():
 
 def test_to_in_first_stage_when_not_ha_work():
     r = build([task("K-1", status=ExternalStatus.IN_PROGRESS)])
-    assert r.steps[0].elo is Stage.SEM_TRABALHO
+    assert r.steps[0].link is Stage.NO_WORK
 
 
 def test_to_in_without_target():
-    assert build([task("K-1")]).steps[0].elo is Stage.SEM_ALVO
+    assert build([task("K-1")]).steps[0].link is Stage.NO_TARGET
 
 
 def test_to_in_ambiguous():
     r = build([task("K-1")],
               branches={"acme/api": [Branch(name="feat/K-1-x")],
                         "acme/web": [Branch(name="fix/K-1-y")]})
-    assert r.steps[0].elo is Stage.ALVO_AMBIGUO
+    assert r.steps[0].link is Stage.AMBIGUOUS_TARGET
 
 
 def test_repositorio_archived_not_receives_work():
     repos = [repo("acme/api", archived=True)]
     r = build([task("K-1")], repos=repos,
-              resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))
-    assert r.steps[0].elo is Stage.REPO_INUTILIZAVEL
+              resolver=TargetResolver(by_task={"K-1": "acme/api"}))
+    assert r.steps[0].link is Stage.REPO_UNUSABLE
 
 
 def test_repositorio_without_branch_base_not_receives_work():
     """Deriving from the wrong base produces a conflict PR nobody asked for."""
     repos = [repo("acme/api", base="")]
     r = build([task("K-1")], repos=repos,
-              resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))
-    assert r.steps[0].elo is Stage.REPO_INUTILIZAVEL
+              resolver=TargetResolver(by_task={"K-1": "acme/api"}))
+    assert r.steps[0].link is Stage.REPO_UNUSABLE
 
 
 def test_capacidade_missing_to_the_chain_before_of_spending_a_cycle():
     repos = [repo("acme/api", caps=frozenset({RepoCapability.READ_METADATA}))]
     r = build([task("K-1")], repos=repos,
-              resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))
+              resolver=TargetResolver(by_task={"K-1": "acme/api"}))
     p = r.steps[0]
-    assert p.elo is Stage.SEM_CAPACIDADE
+    assert p.link is Stage.NO_CAPABILITY
     assert "clone" in p.reason or "read_files" in p.reason
 
 
 def test_ceiling_of_autonomy_becomes_request_to_human():
-    r = build([task("K-1")], resolvedor=TargetResolver(by_task={"K-1": "acme/api"}),
+    r = build([task("K-1")], resolver=TargetResolver(by_task={"K-1": "acme/api"}),
               autonomy=AutonomyLevel.L0)
-    assert r.steps[0].elo is Stage.PRECISA_HUMANO
+    assert r.steps[0].link is Stage.NEEDS_HUMAN
 
 
 def test_policy_blocks_production():
-    r = build([task("K-1")], resolvedor=TargetResolver(by_task={"K-1": "acme/api"}),
+    r = build([task("K-1")], resolver=TargetResolver(by_task={"K-1": "acme/api"}),
               environment="production")
     p = r.steps[0]
-    assert p.elo is Stage.BARRADO_POR_POLICY
+    assert p.link is Stage.BLOCKED_BY_POLICY
     assert p.decision.rule == "nada_em_producao"
 
 
 def test_resource_is_scoped_by_workspace_in_chain():
-    r1 = build([task("K-1")], resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))
+    r1 = build([task("K-1")], resolver=TargetResolver(by_task={"K-1": "acme/api"}))
     r2 = chain.build(
-        workspace_nome="ws2", workspace_id="wks_2", tasks=[task("K-1")], repos=REPOS,
-        resolvedor=TargetResolver(by_task={"K-1": "acme/api"}),
+        workspace_name="ws2", workspace_id="wks_2", tasks=[task("K-1")], repos=REPOS,
+        resolver=TargetResolver(by_task={"K-1": "acme/api"}),
         policy=PolicyEngine.from_config(RULES), risk=RiskEngine(),
         autonomy=AutonomyLevel.L2)
     assert r1.steps[0].resources != r2.steps[0].resources
@@ -232,15 +232,15 @@ def test_resource_is_scoped_by_workspace_in_chain():
 def test_report_tells_where_the_chain_stopped():
     r = build([task("K-1"), task("K-2", status=ExternalStatus.IN_REVIEW),
                task("K-3")],
-              resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))
-    assert r.by_stage["CANDIDATO"] == 1
-    assert r.by_stage["SEM_TRABALHO"] == 1
-    assert r.by_stage["SEM_ALVO"] == 1
+              resolver=TargetResolver(by_task={"K-1": "acme/api"}))
+    assert r.by_stage["CANDIDATE"] == 1
+    assert r.by_stage["NO_WORK"] == 1
+    assert r.by_stage["NO_TARGET"] == 1
     assert len(r.candidates) == 1
 
 
 def test_text_of_report_mostra_evidence():
-    r = build([task("K-1")], resolvedor=TargetResolver(by_task={"K-1": "acme/api"}))
+    r = build([task("K-1")], resolver=TargetResolver(by_task={"K-1": "acme/api"}))
     t = chain.render(r)
     assert "EXECUTION CANDIDATES (1)" in t
     assert "acme/api" in t

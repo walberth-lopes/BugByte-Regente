@@ -101,7 +101,7 @@ class Task:
     project_id: str
     title: str
     state: TaskState = TaskState.DISCOVERED
-    externo: ExternalRef | None = None
+    external: ExternalRef | None = None
     description: str = ""
     priority: int = 100                       # lower runs first
     risk: RiskLevel | None = None
@@ -119,7 +119,7 @@ class Task:
     @property
     def key(self) -> str:
         """How the task appears to a human."""
-        return self.externo.key if self.externo else self.id
+        return self.external.key if self.external else self.id
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +240,7 @@ class ActionRecord:
     run_id: str | None = None
     rule: str | None = None
     reason: str = ""
-    resultado: str = ""
+    result: str = ""
     duration_ms: int = 0
     cost_usd: float = 0.0
     tokens: int = 0

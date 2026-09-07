@@ -137,7 +137,7 @@ class Branch:
     name: str
     sha: str = ""
     #: True when this is the repository's integration branch.
-    e_base: bool = False
+    is_base: bool = False
     updated_at: str = ""
 
 
@@ -151,7 +151,7 @@ class FileChange:
 
 @dataclass(frozen=True, slots=True)
 class PullRequest:
-    numero: int
+    number: int
     repo: RepoRef
     title: str
     url: str
@@ -162,8 +162,8 @@ class PullRequest:
     head_sha: str = ""
     branch: str = ""
     base: str = ""
-    rascunho: bool = False
-    autor: str = ""
+    draft: bool = False
+    author: str = ""
     additions: int = 0
     deletions: int = 0
     files: tuple[FileChange, ...] = ()
@@ -172,8 +172,8 @@ class PullRequest:
 
 @dataclass(frozen=True, slots=True)
 class Review:
-    autor: str
-    veredito: str          # APPROVED | CHANGES_REQUESTED | COMMENTED
+    author: str
+    verdict: str          # APPROVED | CHANGES_REQUESTED | COMMENTED
     commit_sha: str = ""
     body: str = ""
     id: str = ""
@@ -188,26 +188,26 @@ class RepositoryProvider(Port):
     # ---- discovery and reading -------------------------------------------
 
     @abstractmethod
-    def list_repositories(self, filtro: dict[str, Any] | None = None) -> list[RepoInfo]:
+    def list_repositories(self, filters: dict[str, Any] | None = None) -> list[RepoInfo]:
         """Visible repositories. An error rises as AdapterError, never an empty list."""
 
     @abstractmethod
     def get_repository(self, key: str) -> RepoInfo:
         """Full detail of a repository, by the provider's key."""
 
-    def list_branches(self, key: str, filtro: dict[str, Any] | None = None) -> list[Branch]:
+    def list_branches(self, key: str, filters: dict[str, Any] | None = None) -> list[Branch]:
         return []
 
     def read_file(self, key: str, path: str, ref: str | None = None) -> str:
         raise NotImplementedError
 
-    def list_pull_requests(self, filtro: dict[str, Any] | None = None) -> list[PullRequest]:
+    def list_pull_requests(self, filters: dict[str, Any] | None = None) -> list[PullRequest]:
         return []
 
-    def get_pull_request(self, key: str, numero: int) -> PullRequest:
+    def get_pull_request(self, key: str, number: int) -> PullRequest:
         raise NotImplementedError
 
-    def list_reviews(self, key: str, numero: int) -> list[Review]:
+    def list_reviews(self, key: str, number: int) -> list[Review]:
         return []
 
     # ---- writing: contract declared, nothing implemented -----------------
@@ -234,14 +234,14 @@ class RepositoryProvider(Port):
                             title: str, body: str) -> PullRequest:
         raise NotImplementedError
 
-    def submit_review(self, key: str, numero: int, head_sha: str,
-                      body: str, veredito: str) -> Review:
+    def submit_review(self, key: str, number: int, head_sha: str,
+                      body: str, verdict: str) -> Review:
         """`head_sha` is mandatory in the signature so that no adapter can
         publish 'against whatever head exists now'. The adapter must re-read the
         head and abort if it changed: a review that is born stale is worse than
         no review at all."""
         raise NotImplementedError
 
-    def merge_pull_request(self, key: str, numero: int, metodo: str = "squash",
+    def merge_pull_request(self, key: str, number: int, method: str = "squash",
                            esperado_sha: str | None = None) -> None:
         raise NotImplementedError

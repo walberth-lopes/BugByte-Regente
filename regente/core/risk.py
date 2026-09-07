@@ -99,8 +99,8 @@ BASE_FACTORS: tuple[Factor, ...] = (
 )
 
 
-def _values_for(contexto: dict[str, Any], field: str) -> list[str]:
-    v = contexto.get(field)
+def _values_for(context: dict[str, Any], field: str) -> list[str]:
+    v = context.get(field)
     if v is None:
         return []
     if isinstance(v, (list, tuple, set)):
@@ -108,28 +108,28 @@ def _values_for(contexto: dict[str, Any], field: str) -> list[str]:
     return [str(v)]
 
 
-def _fires(fator: Factor, contexto: dict[str, Any]) -> str | None:
+def _fires(factor: Factor, context: dict[str, Any]) -> str | None:
     """Returns the evidence if the factor fired, or None."""
-    if fator.greater_than is not None:
-        raw = contexto.get(fator.field)
+    if factor.greater_than is not None:
+        raw = context.get(factor.field)
         try:
             n = float(raw)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
-        return f"{fator.field}={raw} > {fator.greater_than:g}" if n > fator.greater_than else None
+        return f"{factor.field}={raw} > {factor.greater_than:g}" if n > factor.greater_than else None
 
-    if fator.equal_to is not None:
-        return f"{fator.field}={fator.equal_to}" if contexto.get(fator.field) == fator.equal_to else None
+    if factor.equal_to is not None:
+        return f"{factor.field}={factor.equal_to}" if context.get(factor.field) == factor.equal_to else None
 
-    for value in _values_for(contexto, fator.field):
+    for value in _values_for(context, factor.field):
         target = value.lower()
-        for default_value in fator.matches:
+        for default_value in factor.matches:
             p = default_value.lower()
             # A pattern without a wildcard matches by substring: 'auth' has to
             # catch 'src/auth/handler.py' without every rule becoming '*auth*'.
             bateu = fnmatch.fnmatch(target, p) if ("*" in p or "?" in p) else (p in target)
             if bateu:
-                return f"{fator.field}={value}"
+                return f"{factor.field}={value}"
     return None
 
 
@@ -141,9 +141,9 @@ class RiskEngine:
     @classmethod
     def from_config(cls, extras: list[dict[str, Any]] | None = None) -> RiskEngine:
         """Client factors ADD to the base ones -- they never replace them."""
-        adicionais: list[Factor] = []
+        extra: list[Factor] = []
         for raw in extras or []:
-            adicionais.append(Factor(
+            extra.append(Factor(
                 name=raw["name"],
                 level=RiskLevel[str(raw.get("level", "MEDIUM")).upper()],
                 field=raw.get("field", "paths"),
@@ -151,20 +151,20 @@ class RiskEngine:
                 greater_than=raw.get("greater_than"),
                 equal_to=raw.get("equal_to"),
             ))
-        return cls(factors=BASE_FACTORS + tuple(adicionais))
+        return cls(factors=BASE_FACTORS + tuple(extra))
 
-    def assess(self, contexto: dict[str, Any]) -> RiskAssessment:
-        """`contexto` carries: action, environment, category, paths, lines, files.
+    def assess(self, context: dict[str, Any]) -> RiskAssessment:
+        """`context` carries: action, environment, category, paths, lines, files.
 
         Missing information never lowers risk -- it merely fails to raise it.
         The caller is responsible for filling in `paths`; a truncated snapshot
         must be declared as a signal of its own by whoever produced it.
         """
         signals: list[Signal] = []
-        for fator in self.factors:
-            evidence = _fires(fator, contexto)
+        for factor in self.factors:
+            evidence = _fires(factor, context)
             if evidence:
-                signals.append(Signal(fator.name, fator.level, evidence))
+                signals.append(Signal(factor.name, factor.level, evidence))
 
         level = max((s.level for s in signals), default=self.floor)
         return RiskAssessment(level=level, signals=tuple(signals))

@@ -25,13 +25,13 @@ class Console(NotificationProvider):
                link: str | None = None) -> None:
         # The urgency keys stay in Portuguese: they are the port's vocabulary.
         mark = {"alta": "!!", "normal": " *", "baixa": "  "}.get(urgency, " *")
-        linha = f"{mark} {title} -- {body}"
+        line = f"{mark} {title} -- {body}"
         # `errors='replace'` because the Windows console is not UTF-8 by default
         # and a title with an accent must not bring the tick down.
         try:
-            print(linha, file=sys.stderr)
+            print(line, file=sys.stderr)
         except UnicodeEncodeError:
-            print(linha.encode("ascii", "replace").decode("ascii"), file=sys.stderr)
+            print(line.encode("ascii", "replace").decode("ascii"), file=sys.stderr)
         if self.journal:
             carimbo = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             self.journal.parent.mkdir(parents=True, exist_ok=True)

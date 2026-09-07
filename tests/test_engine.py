@@ -136,8 +136,8 @@ def test_dependency_declared_becomes_graph(bench):
 
     orq._analyze(type("R", (), {"analyzed": 0})())
     plan = orq.plan()
-    chaves = {store.task(i).key for i in plan.dispatch}
-    assert chaves == {"A-1", "A-2"}, "A-3 depende das outras duas"
+    keys = {store.task(i).key for i in plan.dispatch}
+    assert keys == {"A-1", "A-2"}, "A-3 depende das outras duas"
 
 
 def test_resource_shared_serializes(bench):
@@ -222,7 +222,7 @@ def test_worker_dead_returns_the_task_to_the_queue(bench):
     from regente.core.model import Run
     run = Run(id=new_id(RUN), task_id=task.id, workspace_id="wks_teste", agent="coder")
     store.save_run(run)
-    store.acquire_lease("repo:a", run.id, "wks_teste", segundos=1)
+    store.acquire_lease("repo:a", run.id, "wks_teste", seconds=1)
     store._con.execute("UPDATE leases SET expires_at=? WHERE resource=?",
                        ("2000-01-01T00:00:00.000000Z", "repo:a"))
 
@@ -313,8 +313,8 @@ def test_decision_human_is_recorded_is_resumes(bench):
     orq.tick()
 
     a = store.open_approvals("wks_teste")[0]
-    decidido = store.decide_approval(a.id, "seguir", per="walberth", note="manter compat")
-    assert decidido.choice == "seguir"
+    decided = store.decide_approval(a.id, "seguir", by="walberth", note="manter compat")
+    assert decided.choice == "seguir"
     assert not store.open_approvals("wks_teste")
 
     task = store.task(a.task_id)
@@ -331,7 +331,7 @@ def test_choice_outside_of_options_is_refused(bench):
     orq.tick()
     a = store.open_approvals("wks_teste")[0]
     with pytest.raises(Exception):
-        store.decide_approval(a.id, "opcao_inventada", per="walberth")
+        store.decide_approval(a.id, "opcao_inventada", by="walberth")
 
 
 def test_worker_that_blowing_up_not_bringing_down_the_tick(bench):
@@ -358,10 +358,10 @@ def test_timeline_tells_the_story(bench):
     orq.tick()
 
     task = store.tasks("wks_teste")[0]
-    tipos = [e.kind for e in store.events("wks_teste", task_id=task.id, limit=50)]
-    assert "descoberta" in tipos
-    assert "despachada" in tipos
-    assert tipos.count("transicao") >= 4
+    kinds = [e.kind for e in store.events("wks_teste", task_id=task.id, limit=50)]
+    assert "descoberta" in kinds
+    assert "despachada" in kinds
+    assert kinds.count("transicao") >= 4
 
 
 def test_every_transition_leaves_trail(bench):
@@ -430,10 +430,10 @@ def test_not_dispatches_work_that_already_tem_someone(bench):
     rel = orq.tick()
 
     assert rel.dispatched == ("A-1",)
-    porchave = {t.key: t for t in store.tasks("wks_teste")}
-    assert porchave["A-2"].state is TaskState.BLOCKED
-    assert porchave["A-3"].state is TaskState.BLOCKED
-    assert porchave["A-2"].data["bloqueada_por"] == "origem"
+    by_key = {t.key: t for t in store.tasks("wks_teste")}
+    assert by_key["A-2"].state is TaskState.BLOCKED
+    assert by_key["A-3"].state is TaskState.BLOCKED
+    assert by_key["A-2"].data["bloqueada_por"] == "origem"
 
 
 def test_status_unknown_not_is_dispatched(bench):

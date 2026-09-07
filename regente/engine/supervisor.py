@@ -47,17 +47,17 @@ class StopVerdict:
     next_action: str = "seguir"
 
 
-def over_budget(run: Run, orc: Budget, when: datetime | None = None) -> StopVerdict:
+def over_budget(run: Run, budget: Budget, when: datetime | None = None) -> StopVerdict:
     ts = when or now()
-    if run.iterations > orc.max_iterations:
-        return StopVerdict(True, f"{run.iterations} iterations (cap {orc.max_iterations})", "escalar")
-    if run.tool_calls > orc.max_tool_calls:
-        return StopVerdict(True, f"{run.tool_calls} tool calls (cap {orc.max_tool_calls})", "escalar")
-    if run.cost_usd > orc.max_cost_usd:
-        return StopVerdict(True, f"US$ {run.cost_usd:.2f} spent (cap {orc.max_cost_usd:.2f})", "escalar")
+    if run.iterations > budget.max_iterations:
+        return StopVerdict(True, f"{run.iterations} iterations (cap {budget.max_iterations})", "escalar")
+    if run.tool_calls > budget.max_tool_calls:
+        return StopVerdict(True, f"{run.tool_calls} tool calls (cap {budget.max_tool_calls})", "escalar")
+    if run.cost_usd > budget.max_cost_usd:
+        return StopVerdict(True, f"US$ {run.cost_usd:.2f} spent (cap {budget.max_cost_usd:.2f})", "escalar")
     elapsed = (ts - run.started_at).total_seconds()
-    if elapsed > orc.max_seconds:
-        return StopVerdict(True, f"{int(elapsed)}s elapsed (cap {orc.max_seconds}s)", "trocar_estrategia")
+    if elapsed > budget.max_seconds:
+        return StopVerdict(True, f"{int(elapsed)}s elapsed (cap {budget.max_seconds}s)", "trocar_estrategia")
     return StopVerdict(False)
 
 
@@ -67,8 +67,8 @@ def _signature(text: str) -> str:
     Without this, 'timeout after 30.2s' and 'timeout after 31.7s' look like
     different errors and the repetition detector never fires.
     """
-    limpo = "".join(c for c in text.lower() if not c.isdigit())
-    return hashlib.sha1(" ".join(limpo.split()).encode("utf-8")).hexdigest()[:12]
+    cleaned = "".join(c for c in text.lower() if not c.isdigit())
+    return hashlib.sha1(" ".join(cleaned.split()).encode("utf-8")).hexdigest()[:12]
 
 
 @dataclass(slots=True)
@@ -79,12 +79,12 @@ class LoopDetector:
     error, same file, same test, same decision.
     """
     limit: int = 3
-    _marcas: dict[str, int] = field(default_factory=dict)
+    _marks: dict[str, int] = field(default_factory=dict)
 
     def register(self, kind: str, detail: str) -> int:
         key = f"{kind}:{_signature(detail)}"
-        self._marcas[key] = self._marcas.get(key, 0) + 1
-        return self._marcas[key]
+        self._marks[key] = self._marks.get(key, 0) + 1
+        return self._marks[key]
 
     def repeated(self, kind: str, detail: str) -> StopVerdict:
         n = self.register(kind, detail)
@@ -108,18 +108,18 @@ def no_progress(task: Task, runs: list[Run], window: int = 3) -> StopVerdict:
     return StopVerdict(False)
 
 
-def next_recovery_step(task: Task, orc: Budget) -> str:
+def next_recovery_step(task: Task, budget: Budget) -> str:
     """The recovery ladder, based on how many times the task has already failed."""
     if task.attempts <= 0:
         return "retentar"
-    if task.attempts < orc.max_attempts - 1:
+    if task.attempts < budget.max_attempts - 1:
         return "trocar_estrategia"
     return "escalar"
 
 
-def backoff_delay(attempts: int, base_segundos: int = 60, teto_segundos: int = 1800) -> timedelta:
+def backoff_delay(attempts: int, base_seconds: int = 60, cap_seconds: int = 1800) -> timedelta:
     """Exponential with a cap. The cap exists so a task does not vanish for hours."""
-    return timedelta(seconds=min(teto_segundos, base_segundos * (2 ** max(0, attempts))))
+    return timedelta(seconds=min(cap_seconds, base_seconds * (2 ** max(0, attempts))))
 
 
 def resume_state(state: TaskState) -> TaskState:

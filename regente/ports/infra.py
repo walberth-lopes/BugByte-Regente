@@ -31,7 +31,7 @@ class Resource:
 @dataclass(frozen=True, slots=True)
 class LogEntry:
     ts: str
-    severidade: str
+    severity: str
     text: str
     source: str = ""
 
@@ -40,7 +40,7 @@ class LogEntry:
 class Metric:
     name: str
     value: float
-    unidade: str = ""
+    unit: str = ""
     ts: str = ""
 
 
@@ -54,11 +54,11 @@ class CloudProvider(Port):
     @abstractmethod
     def inspect_resource(self, resource_id: str) -> Resource: ...
 
-    def get_logs(self, resource_id: str, desde: str | None = None,
+    def get_logs(self, resource_id: str, since: str | None = None,
                  limit: int = 200) -> list[LogEntry]:
         return []
 
-    def get_metrics(self, resource_id: str, nomes: list[str] | None = None) -> list[Metric]:
+    def get_metrics(self, resource_id: str, names: list[str] | None = None) -> list[Metric]:
         return []
 
     # ---- writing ---------------------------------------------------------
@@ -82,7 +82,7 @@ class Table:
     name: str
     schema: str = ""
     colunas: tuple[Column, ...] = ()
-    linhas_aprox: int | None = None
+    approx_rows: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

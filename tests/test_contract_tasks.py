@@ -35,9 +35,9 @@ KEYS = json.loads((SNAPSHOTS / "KEYS.json").read_text(encoding="utf-8"))
 # The implementations under contract
 # ---------------------------------------------------------------------------
 
-def _monta_filesystem(tmp_path: Path) -> tuple[TaskProvider, str]:
-    pasta = tmp_path / "tasks"
-    pasta.mkdir()
+def _build_filesystem(tmp_path: Path) -> tuple[TaskProvider, str]:
+    folder = tmp_path / "tasks"
+    folder.mkdir()
     body = [
         {"key": "K-1", "titulo": "primeira", "estado": "TO DO", "prioridade": 10,
          "descricao": "faz alguma coisa", "labels": ["um"]},
@@ -47,18 +47,18 @@ def _monta_filesystem(tmp_path: Path) -> tuple[TaskProvider, str]:
          "relacionadas": ["K-1"], "descricao": "mais uma"},
     ]
     for d in body:
-        (pasta / f"{d['key']}.yaml").write_text(
+        (folder / f"{d['key']}.yaml").write_text(
             yaml.safe_dump(d, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return FilesystemTasks(pasta), "K-1"
+    return FilesystemTasks(folder), "K-1"
 
 
-def _monta_jira(tmp_path: Path) -> tuple[TaskProvider, str]:
+def _build_jira(tmp_path: Path) -> tuple[TaskProvider, str]:
     return (JiraTasks(transport=SnapshotTransport(directory=SNAPSHOTS),
                       site="https://exemplo.atlassian.net"),
             KEYS["issue_individual"])
 
 
-PROVIDERS = {"filesystem": _monta_filesystem, "jira": _monta_jira}
+PROVIDERS = {"filesystem": _build_filesystem, "jira": _build_jira}
 
 
 @pytest.fixture(params=sorted(PROVIDERS))
@@ -87,18 +87,18 @@ def test_list_returns_tasks(provider):
 
 def test_identity_is_unique(provider):
     port, _ = provider
-    chaves = [t.key for t in port.list_tasks()]
-    assert len(chaves) == len(set(chaves)), f"chaves duplicadas: {chaves}"
+    keys = [t.key for t in port.list_tasks()]
+    assert len(keys) == len(set(keys)), f"duplicate keys: {keys}"
 
 
 def test_get_returns_the_same_task_that_the_list(provider):
     port, key = provider
     um = port.get_task(key)
     assert um.key == key
-    da_lista = {t.key: t for t in port.list_tasks()}
-    if key in da_lista:
-        assert da_lista[key].title == um.title
-        assert da_lista[key].status is um.status
+    from_list = {t.key: t for t in port.list_tasks()}
+    if key in from_list:
+        assert from_list[key].title == um.title
+        assert from_list[key].status is um.status
 
 
 def test_task_missing_raises_is_not_returns_none(provider):
@@ -127,10 +127,10 @@ def test_status_raw_is_preserved(provider):
 def test_status_desconhecido_not_is_coerced(provider):
     """The sin this test prevents: mapping the unknown onto its neighbour."""
     port, _ = provider
-    desconhecidas = [t for t in port.list_tasks()
+    unmapped = [t for t in port.list_tasks()
                      if t.status is ExternalStatus.UNKNOWN]
-    assert desconhecidas, "a fixture precisa conter um status nao mapeado"
-    for t in desconhecidas:
+    assert unmapped, "a fixture precisa conter um status nao mapeado"
+    for t in unmapped:
         assert t.external_status, "DESCONHECIDA sem o status cru e indiagnosticavel"
         assert any("unmapped status" in a for a in t.anomalies)
 
@@ -252,11 +252,11 @@ def test_failure_of_authentication_not_is_retried():
     from regente.adapters.tasks.transport import HttpTransport
     attempts = []
 
-    def credencial():
+    def credential():
         attempts.append(1)
         raise AuthFailure("credencial ausente")
 
-    t = HttpTransport(base_url="https://exemplo.invalido", credencial=credencial,
+    t = HttpTransport(base_url="https://exemplo.invalido", credential=credential,
                        max_attempts=5)
     with pytest.raises(AuthFailure):
         t.get("/rest/api/3/myself")
@@ -304,5 +304,5 @@ def test_every_call_produces_registry_diagnosable():
 def test_registry_not_carries_body_nor_credential():
     vistas = []
     _jira(observer=vistas.append).list_tasks()
-    campos = {f for c in vistas for f in c.__slots__}
-    assert not (campos & {"corpo", "body", "credencial", "token", "autorizacao"})
+    fields = {f for c in vistas for f in c.__slots__}
+    assert not (fields & {"corpo", "body", "credencial", "token", "autorizacao"})

@@ -30,7 +30,7 @@ from ..ports.workspace import AgentRunner, WorkspaceProvider
 from .config import Config, load_policies
 
 
-def _stable_id(prefixo: str, *partes: str) -> str:
+def _stable_id(prefix: str, *parts: str) -> str:
     """A deterministic id derived from the name.
 
     Reopening the same workspace has to return the same id, otherwise every
@@ -38,8 +38,8 @@ def _stable_id(prefixo: str, *partes: str) -> str:
     the database. The names fed to it are therefore load-bearing values.
     """
     import hashlib
-    mark = hashlib.sha1("/".join(partes).encode("utf-8")).hexdigest()[:12]
-    return f"{prefixo}_{mark}"
+    mark = hashlib.sha1("/".join(parts).encode("utf-8")).hexdigest()[:12]
+    return f"{prefix}_{mark}"
 
 
 @dataclass(slots=True)
@@ -138,7 +138,7 @@ class Engine:
 
 def build(cfg: Config) -> Engine:
     cfg.root.mkdir(parents=True, exist_ok=True)
-    store = SqliteStore(cfg.banco)
+    store = SqliteStore(cfg.database)
     store.migrate()
 
     org_id = _stable_id(ids.ORG, cfg.organization)
@@ -233,13 +233,13 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
 
     expect_prefix("state root", lambda: (cfg.root.mkdir(parents=True, exist_ok=True), str(cfg.root))[1])
 
-    def banco() -> str:
-        s = SqliteStore(cfg.banco)
+    def database() -> str:
+        s = SqliteStore(cfg.database)
         s.migrate()
         s.verify()
         s.close()
-        return str(cfg.banco)
-    expect_prefix("database", banco)
+        return str(cfg.database)
+    expect_prefix("database", database)
 
     for key, cap in (("tasks", Capability.TASKS),
                        ("repository", Capability.REPOSITORY),

@@ -61,13 +61,13 @@ class ShadowReport:
 def execute(
     provider: TaskProvider,
     limits: Limits,
-    filtro: dict | None = None,
+    filters: dict | None = None,
     me: str | None = None,
 ) -> ShadowReport:
     r = ShadowReport(provider=provider.name)
 
     try:
-        external_items: list[ExternalTask] = provider.list_tasks(filtro)
+        external_items: list[ExternalTask] = provider.list_tasks(filters)
     except AdapterError as e:
         r.provider_errors += 1
         r.anomalies += (f"provider failed: {e}",)
@@ -95,9 +95,9 @@ def execute(
 
     # Graph with the SAME rule as the engine: only a blocking link becomes an edge.
     known = {t.key for t in alive}
-    grafo = DependencyGraph()
+    graph = DependencyGraph()
     for t in alive:
-        grafo.add(t.key)
+        graph.add(t.key)
     for t in alive:
         for v in t.links:
             if not v.blocking:
@@ -106,7 +106,7 @@ def execute(
             if v.key not in known:
                 r.dependencies_out_of_scope += 1
                 continue
-            grafo.link(t.key, v.key)
+            graph.link(t.key, v.key)
             r.dependencies += 1
 
     # A task somebody is already working on is not a candidate, but stays in the
@@ -122,21 +122,21 @@ def execute(
     # Nothing completed: the shadow has no history. The plan shows what the
     # engine would do on the FIRST tick against this board.
     #
-    # Named `plano`, not `plan`: assigning to `plan` would make the name local
-    # to this function, and the call on the right-hand side would then raise
+    # Not named `plan`: assigning to that name would make it local to this
+    # function, and the call on the right-hand side would then raise
     # UnboundLocalError against the `plan` imported from core.scheduling.
-    plano = plan(candidates, grafo, completed=set(), running_now={},
-                    limits=limits, nomes={t.key: t.key for t in alive})
-    r.plan = plano
-    r.ready = len(plano.dispatch)
-    r.blocked = len(plano.deferred)
-    r.in_cycle = plano.in_cycle
-    for a in plano.deferred:
+    plan_result = plan(candidates, graph, completed=set(), running_now={},
+                    limits=limits, names={t.key: t.key for t in alive})
+    r.plan = plan_result
+    r.ready = len(plan_result.dispatch)
+    r.blocked = len(plan_result.deferred)
+    r.in_cycle = plan_result.in_cycle
+    for a in plan_result.deferred:
         # Group by CAUSE, not by text: "resource busy: parent:SG-1" and
         # "resource busy: parent:SG-2" are the same diagnosis.
         r.deferral_reasons[a.reason.split(":")[0].strip()] += 1
 
-    layers = grafo.layers()
+    layers = graph.layers()
     r.parallel_groups = len(layers)
     r.largest_group = max((len(c) for c in layers), default=0)
 
@@ -145,37 +145,37 @@ def execute(
     return r
 
 
-def render(r: ShadowReport, limite_anomalias: int = 12) -> str:
-    def linha(rotulo: str, value) -> str:
-        return f"  {rotulo:<28} {value}"
+def render(r: ShadowReport, anomaly_limit: int = 12) -> str:
+    def line(label: str, value) -> str:
+        return f"  {label:<28} {value}"
 
     output = [
         "TASK PROVIDER SHADOW REPORT",
         "",
-        linha("Provider", r.provider),
-        linha("Mutations performed", f"{r.mutations}   <- has to be 0"),
+        line("Provider", r.provider),
+        line("Mutations performed", f"{r.mutations}   <- has to be 0"),
         "",
-        linha("Tasks discovered", r.discovered),
-        linha("Relevant", r.relevant),
-        linha("Ignored (finished)", r.ignored),
-        linha("Normalized successfully", r.normalized),
-        linha("Normalization errors", r.normalization_errors),
+        line("Tasks discovered", r.discovered),
+        line("Relevant", r.relevant),
+        line("Ignored (finished)", r.ignored),
+        line("Normalized successfully", r.normalized),
+        line("Normalization errors", r.normalization_errors),
         "",
-        linha("Dependencies (blocking)", r.dependencies),
-        linha("Non-blocking ignored", r.non_blocking_links),
-        linha("Outside the JQL slice", r.dependencies_out_of_scope),
+        line("Dependencies (blocking)", r.dependencies),
+        line("Non-blocking ignored", r.non_blocking_links),
+        line("Outside the JQL slice", r.dependencies_out_of_scope),
         "",
-        linha("Ready", r.ready),
-        linha("Blocked", r.blocked),
-        linha("In progress (others)", r.in_progress),
-        linha("Parallel groups", r.parallel_groups),
-        linha("Largest parallel group", r.largest_group),
+        line("Ready", r.ready),
+        line("Blocked", r.blocked),
+        line("In progress (others)", r.in_progress),
+        line("Parallel groups", r.parallel_groups),
+        line("Largest parallel group", r.largest_group),
         "",
-        linha("Provider calls", r.calls),
-        linha("Provider errors", r.provider_errors),
+        line("Provider calls", r.calls),
+        line("Provider errors", r.provider_errors),
     ]
     if r.mine:
-        output.insert(6, linha("Mine", r.mine))
+        output.insert(6, line("Mine", r.mine))
 
     output += ["", "  BY NORMALISED STATUS"]
     for k, v in r.by_status.most_common():
@@ -201,9 +201,9 @@ def render(r: ShadowReport, limite_anomalias: int = 12) -> str:
 
     if r.anomalies:
         output += ["", f"  ANOMALIES ({len(r.anomalies)})"]
-        for a in r.anomalies[:limite_anomalias]:
+        for a in r.anomalies[:anomaly_limit]:
             output.append(f"    {a}")
-        if len(r.anomalies) > limite_anomalias:
-            output.append(f"    ... {len(r.anomalies) - limite_anomalias} more")
+        if len(r.anomalies) > anomaly_limit:
+            output.append(f"    ... {len(r.anomalies) - anomaly_limit} more")
 
     return "\n".join(output)
