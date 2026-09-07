@@ -139,6 +139,88 @@ Each item carries a decision, not a diagnosis: what happened, why it matters,
 what the agent already tried, options, recommendation, risk. Logs stay in the
 event, on demand.
 
+## Continuous operation: time, failure and the way back
+
+The engine exists to work with nobody watching. Until milestone 8 that was an
+assumption, not a fact -- every earlier proof was a supervised invocation.
+
+### One clock, not two
+
+All of this engine's recovery is timestamp comparison: an expired lease proves
+the worker died, `updated_at` says how long the task has not moved, the day
+decides when the budget resets. If whoever stamps and whoever asks read
+different clocks, none of it works -- and it does not fail loudly, it fails
+silently.
+
+Which is what happened: a lease stamped by one clock, checked against another, a
+run stamped by a third. One run stayed `RUNNING` with a "live" lease for 103
+consecutive ticks -- four simulated days -- and health answered OK throughout.
+
+`SqliteStore` and `Orchestrator` now receive the same `clock`. Production passes
+nothing and gets the real clock, as before.
+
+### The engine never parks a task
+
+A legal transition and a transition somebody actually performs are different
+things, and the difference is invisible: the task sits in a state that looks
+busy, the scheduler skips it because it looks busy, and every later tick comes
+back clean forever.
+
+`ENGINE_ADVANCES` says which states this engine has code to leave.
+`is_terminus()` flags an active state it cannot leave. On reaching a terminus the
+task goes to a person -- with a written reason -- instead of sitting there
+looking busy. When a future milestone adds the stage, it adds the state there.
+
+### The door back
+
+Escalating is only useful if there is a way back. `regente decide` recorded the
+choice and printed that the next tick would resume the task; no tick ever read it
+back. Every escalation was a one-way door.
+
+The tick now consumes decisions. The destination comes from the state machine
+itself -- `resumable_from(paused_at)` -- never from a list written from memory. A
+decision the engine does not recognise moves the task too: an uninterpretable
+choice that moves nothing is the queue stopping silently all over again.
+
+### `regente health`
+
+Twelve questions answered **from disk**. If the engine dies at three in the
+morning, `regente health` at nine still answers -- a report assembled from a live
+process's memory would be empty exactly when it matters, and an empty report
+looks healthy.
+
+Four levels, and the order matters: `OK < ATTENTION < UNKNOWN < STUCK`.
+`UNKNOWN` sits above `ATTENTION` on purpose -- what the engine cannot see is more
+dangerous than what it sees and dislikes. `UNKNOWN` is never healthy.
+
+Exit code: 0 healthy, 1 attention or not examined, 2 stuck. Cron reads it without
+interpreting prose.
+
+### Growth: measured, with the log kept apart from the data
+
+The write-ahead log is churn, not growth: a checkpoint folds it back into the
+file and it shrinks. Reporting the two together would measure noise -- one run
+showed "3.4MB of database" for 108 events, of which 200KB was data and the rest
+log.
+
+`checkpoint()` is explicit maintenance policy and MOVES pages already committed;
+nothing is deleted. There is no retention that deletes a row.
+
+Measured over a thousand ticks: linear growth, 4.20 events/tick in the first half
+and 4.18 in the second; runs, leases and approvals bounded, not accumulating.
+
+### Fault injection
+
+The faults **wrap** real providers instead of replacing them. A mock returning
+canned failure tests the mock's idea of failure; a wrapper that lets the real
+adapter run and then interrupts it tests the engine. And the schedule is
+deterministic: a run that fails differently every time is no use for proving a
+fix.
+
+A worker dying raises no exception. An exception is a report, and a dead worker
+reports nothing -- the run stays RUNNING, the lease stays held until it expires,
+and recovery has to work it out for itself, from disk.
+
 ## The agent is an executor, never an authority
 
 The contract answers four questions and refuses five.

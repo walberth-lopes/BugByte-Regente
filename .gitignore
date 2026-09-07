@@ -19,3 +19,8 @@ sombra-sg/
 *-REPORT.txt
 *-report.txt
 reports/
+
+# soak and restart-proof scratch
+tests/.soak/
+tests/.restart/
+tests/child.py

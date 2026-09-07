@@ -23,7 +23,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
 
 from ..core import ids
 from ..core.errors import CorruptedState
@@ -381,6 +381,7 @@ def _v6_to_v7(c: sqlite3.Connection) -> None:
 _EVENT_KINDS = {
     "descoberta": "discovered", "despachada": "dispatched", "transicao": "transition",
     "escalou": "escalated", "decisao_humana": "human_decision",
+    "decisao_aplicada": "decision_applied",
     "recuperada": "recovered", "adiada": "deferred", "falhou": "failed",
     "implementada": "implemented", "mudou_na_origem": "changed_at_source",
     "tick_inicio": "tick_start", "tick_fim": "tick_end",
@@ -437,7 +438,20 @@ def _j(v: Any) -> str:
 class SqliteStore(Store):
     name = "sqlite"
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path,
+                 clock: Callable[[], datetime] = now):
+        """`clock` is injectable because the engine and its rows must agree.
+
+        They did not. Leases were stamped from one clock and checked against
+        another, so nothing ever expired: a soak run left a run RUNNING with a
+        "live" lease for 103 consecutive ticks. Runs were stamped from a third,
+        so a run started days ago measured as zero seconds old. Every one of
+        those is the same bug wearing different clothes -- two clocks in a
+        system whose recovery is entirely built on comparing timestamps.
+
+        Production passes nothing and gets the real clock, exactly as before.
+        """
+        self._now = clock
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.path), isolation_level=None,
@@ -646,12 +660,12 @@ class SqliteStore(Store):
 
             t.paused_at = source if destination is TaskState.WAITING_HUMAN else None
             t.state = destination
-            t.updated_at = now()
+            t.updated_at = self._now()
             self._save_task_row(c, t)
 
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, actor, summary, data)
                          VALUES(?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), t.workspace_id, _iso(now()), "transition",
+                      (ids.new_id(ids.EVENT), t.workspace_id, _iso(self._now()), "transition",
                        t.id, actor, f"{source.value} -> {destination.value}",
                        _j({"from": source.value, "to": destination.value,
                            "reason": reason, **(data or {})})))
@@ -778,7 +792,7 @@ class SqliteStore(Store):
                        a.recommendation, _iso(a.created_at)))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(now()), "escalated",
+                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(self._now()), "escalated",
                        a.task_id, a.run_id, "engine", a.what_happened,
                        _j({"approval_id": a.id, "risk": a.risk.name})))
 
@@ -804,13 +818,13 @@ class SqliteStore(Store):
                 raise CorruptedState(
                     f"choice '{choice}' is not among the options: {', '.join(sorted(valid))}")
             a.state, a.choice, a.decided_by = ApprovalState.DECIDED, choice, by
-            a.decided_at, a.note = now(), note
+            a.decided_at, a.note = self._now(), note
             c.execute("""UPDATE approvals SET state=?, choice=?, decided_by=?,
                            decided_at=?, note=? WHERE id=?""",
                       (a.state.value, choice, by, _iso(a.decided_at), note, approval_id))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(now()), "human_decision",
+                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(self._now()), "human_decision",
                        a.task_id, a.run_id, by, f"chose '{choice}'",
                        _j({"approval_id": approval_id, "note": note})))
         return a
@@ -818,9 +832,16 @@ class SqliteStore(Store):
     # ---- leases ----------------------------------------------------------
 
     def acquire_lease(self, resource: str, owner: str, workspace_id: str,
-                      seconds: int) -> Lease | None:
-        """Grants if free, expired, or already held by the same owner (renewal)."""
-        ts = now()
+                      seconds: int, when: datetime | None = None) -> Lease | None:
+        """Grants if free, expired, or already held by the same owner (renewal).
+
+        `when` exists because recovery depends on an expired lease, and whoever
+        asks "what expired?" has to read the SAME clock as whoever stamped the
+        expiry. Without it the two clocks drift apart and no lease ever expires:
+        one long run left a RUNNING run holding a "live" lease for 103
+        consecutive ticks -- four simulated days -- with nothing to show it.
+        """
+        ts = when or self._now()
         expires = ts + timedelta(seconds=seconds)
         with self._tx() as c:
             r = c.execute("SELECT * FROM leases WHERE workspace_id=? AND resource=?",
@@ -839,8 +860,9 @@ class SqliteStore(Store):
                      workspace_id=workspace_id, renewed_at=ts)
 
     def renew_lease(self, resource: str, owner: str, seconds: int,
-                     workspace_id: str | None = None) -> bool:
-        ts = now()
+                     workspace_id: str | None = None,
+                     when: datetime | None = None) -> bool:
+        ts = when or self._now()
         with self._tx() as c:
             if workspace_id:
                 cur = c.execute("""UPDATE leases SET expires_at=?, renewed_at=?
@@ -865,7 +887,7 @@ class SqliteStore(Store):
                 c.execute("DELETE FROM leases WHERE resource=? AND owner=?", (resource, owner))
 
     def expired_leases(self, workspace_id: str, when: datetime | None = None) -> list[Lease]:
-        ts = when or now()
+        ts = when or self._now()
         return [Lease(resource=r["resource"], owner=r["owner"], expires_at=_dt(r["expires_at"]),
                       workspace_id=r["workspace_id"], renewed_at=_dt(r["renewed_at"]))
                 for r in self._conn.execute(
@@ -886,7 +908,7 @@ class SqliteStore(Store):
         belong in a write path that runs on every tick: code moves, and a
         discovery that is right today can be wrong next month.
         """
-        ts = _iso(now())
+        ts = _iso(self._now())
         with self._tx() as c:
             row = c.execute("""SELECT confirmations, source FROM targets
                                WHERE workspace_id=? AND task_key=? AND repo_provider=?
@@ -925,7 +947,7 @@ class SqliteStore(Store):
             cur = c.execute("""UPDATE targets SET source='VALIDATED', confirmed_at=?
                                WHERE workspace_id=? AND task_key=? AND repo_provider=?
                                  AND repo_key=? AND source='DISCOVERED'""",
-                            (_iso(now()), workspace_id, task_key, provider, repo_key))
+                            (_iso(self._now()), workspace_id, task_key, provider, repo_key))
             return cur.rowcount > 0
 
     def targets(self, workspace_id: str, task_key: str | None = None) -> list[dict]:
@@ -962,13 +984,13 @@ class SqliteStore(Store):
                            repo_provider, repo_key, branch, commit_sha, created_at)
                          VALUES(?,?,?,?,?,?,?,?,?)""",
                       (did, workspace_id, task_key, run_id, provider, repo_key,
-                       branch, commit_sha, _iso(now())))
+                       branch, commit_sha, _iso(self._now())))
         return did
 
     def record_push(self, delivery_id: str, target: str) -> None:
         with self._tx() as c:
             c.execute("UPDATE deliveries SET pushed_at=?, push_target=? WHERE id=?",
-                      (_iso(now()), target, delivery_id))
+                      (_iso(self._now()), target, delivery_id))
 
     def record_pull_request(self, delivery_id: str, number: int, url: str,
                             head_sha: str) -> None:
@@ -981,7 +1003,7 @@ class SqliteStore(Store):
         with self._tx() as c:
             c.execute("""UPDATE deliveries SET pr_number=?, pr_url=?, pr_head_sha=?,
                            pr_opened_at=? WHERE id=?""",
-                      (int(number), url, head_sha, _iso(now()), delivery_id))
+                      (int(number), url, head_sha, _iso(self._now()), delivery_id))
 
     def record_ci(self, delivery_id: str, state: str, result: str | None,
                   reason: str, checks: list[dict]) -> None:
@@ -992,7 +1014,7 @@ class SqliteStore(Store):
         with self._tx() as c:
             c.execute("""UPDATE deliveries SET ci_state=?, ci_result=?, ci_reason=?,
                            ci_observed_at=?, ci_checks=? WHERE id=?""",
-                      (state, result, reason, _iso(now()), _j(checks), delivery_id))
+                      (state, result, reason, _iso(self._now()), _j(checks), delivery_id))
 
     def deliveries(self, workspace_id: str, task_key: str | None = None) -> list[dict]:
         q = "SELECT * FROM deliveries WHERE workspace_id=?"
@@ -1022,6 +1044,142 @@ class SqliteStore(Store):
         d = {k: r[k] for k in r.keys()}
         d["ci_checks"] = json.loads(r["ci_checks"] or "[]")
         return d
+
+    # ---- reading the state back, for health -----------------------------
+    #
+    # Every method here is read-only and answers from rows that survive the
+    # process. `regente health` has to work when the engine that wrote them is
+    # gone -- that is the whole point of it -- so nothing may be computed from
+    # anything the running process happens to remember.
+
+    def leases(self, workspace_id: str) -> list[Lease]:
+        """Every lease, live or expired. Expiry is the reader's judgement."""
+        return [Lease(resource=r["resource"], owner=r["owner"],
+                      expires_at=_dt(r["expires_at"]),
+                      workspace_id=r["workspace_id"], renewed_at=_dt(r["renewed_at"]))
+                for r in self._conn.execute(
+                    "SELECT * FROM leases WHERE workspace_id=? ORDER BY expires_at",
+                    (workspace_id,))]
+
+    def runs_in_state(self, workspace_id: str, state: str,
+                      limit: int = 500) -> list[Run]:
+        return [self._run_row(r) for r in self._conn.execute(
+            """SELECT * FROM runs WHERE workspace_id=? AND state=?
+               ORDER BY started_at DESC LIMIT ?""",
+            (workspace_id, state, limit))]
+
+    def tasks_idle_since(self, workspace_id: str,
+                         before: datetime) -> list[tuple[Task, datetime]]:
+        """Tasks whose state has not changed since `before`, oldest first.
+
+        `updated_at` is written by every transition, so this measures how long a
+        task has actually sat still -- not how long ago it was created.
+        """
+        rows = self._conn.execute(
+            """SELECT * FROM tasks WHERE workspace_id=? AND updated_at < ?
+               ORDER BY updated_at""",
+            (workspace_id, _iso(before))).fetchall()
+        return [(self._task_row(r), _dt(r["updated_at"])) for r in rows]
+
+    def event_counts(self, workspace_id: str, since: datetime,
+                     until: datetime | None = None) -> dict[str, int]:
+        """How many events of each kind landed in a window.
+
+        Growth and provider trouble are both read from here rather than from a
+        counter someone remembered to increment: the event log is written on the
+        path that actually did the work, so it cannot silently stop counting.
+        """
+        q = ("SELECT kind, COUNT(*) AS n FROM events "
+             "WHERE workspace_id=? AND ts >= ?")
+        args: list[Any] = [workspace_id, _iso(since)]
+        if until is not None:
+            q += " AND ts < ?"
+            args.append(_iso(until))
+        return {r["kind"]: r["n"] for r in self._conn.execute(q + " GROUP BY kind",
+                                                            args)}
+
+    def table_counts(self, workspace_id: str | None = None) -> dict[str, int]:
+        """Row counts per table, for growth. Scoped where a table has tenancy."""
+        counts: dict[str, int] = {}
+        present = {r[0] for r in self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        scoped = ("tasks", "runs", "events", "leases", "approvals", "actions",
+                  "deliveries", "targets", "counters")
+        for table in scoped:
+            if table not in present:
+                continue
+            columns = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})")}
+            if workspace_id and "workspace_id" in columns:
+                row = self._conn.execute(
+                    f"SELECT COUNT(*) AS n FROM {table} WHERE workspace_id=?",
+                    (workspace_id,)).fetchone()
+            else:
+                row = self._conn.execute(
+                    f"SELECT COUNT(*) AS n FROM {table}").fetchone()
+            counts[table] = row["n"]
+        return counts
+
+    def database_bytes(self) -> dict[str, int]:
+        """On-disk size, with the write-ahead log counted SEPARATELY.
+
+        One number would have been simpler and useless. A soak run reported
+        3.4MB of "database" for 108 events; the data was 200KB and the rest was
+        WAL that had not been checkpointed yet. Growth measured on the total is
+        growth measured on churn, and it would have hidden real data growth
+        behind noise -- or raised an alarm about a file that was about to
+        shrink on its own.
+        """
+        sizes = {"data": 0, "wal": 0, "shm": 0}
+        for key, suffix in (("data", ""), ("wal", "-wal"), ("shm", "-shm")):
+            p = Path(str(self.path) + suffix)
+            if p.exists():
+                sizes[key] = p.stat().st_size
+        sizes["total"] = sum(v for k, v in sizes.items() if k != "total")
+        return sizes
+
+    def checkpoint(self) -> dict[str, int]:
+        """Fold the write-ahead log into the database and truncate it.
+
+        An explicit maintenance policy, not a cleanup that deletes rows. Nothing
+        is lost: a checkpoint MOVES committed pages from the log into the file.
+
+        Worth doing on a schedule because a long unattended run that never
+        checkpoints keeps several megabytes of log on disk indefinitely -- and
+        because a crash leaves the log for the next process to replay, so a
+        checkpoint at a quiet moment is cheaper than one during recovery.
+        """
+        before = self.database_bytes()
+        try:
+            self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except sqlite3.OperationalError:
+            # A reader elsewhere can block a truncating checkpoint. That is not
+            # an error: the log stays, and the next attempt will do it.
+            pass
+        after = self.database_bytes()
+        return {"wal_before": before["wal"], "wal_after": after["wal"],
+                "data": after["data"]}
+
+    def decided_approvals(self, workspace_id: str,
+                          limit: int = 200) -> list[Approval]:
+        """Decisions a person made, newest first.
+
+        The tick uses this to resume work. Whether a decision has already been
+        acted on is answered by the task's own state rather than by a flag here:
+        a task that is no longer WAITING_HUMAN has moved on, and a flag would be
+        a second copy of that fact -- free to drift, and it would drift towards
+        applying a decision twice.
+        """
+        return [self._approval_row(r) for r in self._conn.execute(
+            """SELECT * FROM approvals WHERE workspace_id=? AND state=?
+               ORDER BY decided_at DESC LIMIT ?""",
+            (workspace_id, ApprovalState.DECIDED.value, limit))]
+
+    def oldest_open_approval(self, workspace_id: str) -> datetime | None:
+        row = self._conn.execute(
+            """SELECT MIN(created_at) AS oldest FROM approvals
+               WHERE workspace_id=? AND state=?""",
+            (workspace_id, ApprovalState.OPEN.value)).fetchone()
+        return _dt(row["oldest"]) if row and row["oldest"] else None
 
     def dispatch_count(self, workspace_id: str, day: str) -> int:
         r = self._conn.execute(

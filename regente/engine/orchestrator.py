@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 from ..core import ids
 from ..core.graph import DependencyGraph
@@ -27,7 +27,8 @@ from ..core.model import (Dependency, Event, ExternalRef, Run, RunState, Task, W
 from ..core.policy import AutonomyLevel
 from ..core.risk import RiskEngine, RiskLevel
 from ..core.scheduling import Candidate, Limits, Plan, plan
-from ..core.states import TaskState
+from ..core.states import (_ADVANCES, TaskState, engine_can_advance,
+                           is_terminus, resumable_from)
 from ..ports import AdapterError
 from ..ports.support import NotificationProvider
 from ..ports.tasks import ExternalTask, ExternalStatus, TaskProvider
@@ -103,6 +104,10 @@ class Orchestrator:
     runner: AgentRunner
     gate: Gate
     risk: RiskEngine
+    #: Where "now" comes from. Injectable because the day boundary decides when
+    #: a daily budget resets, and a test that waited for midnight would be a
+    #: test nobody runs. Production passes nothing and gets the real clock.
+    clock: Callable[[], datetime] = now
     limits: Limits = field(default_factory=Limits)
     budget: supervisor.Budget = field(default_factory=supervisor.Budget)
     notifier: NotificationProvider | None = None
@@ -117,6 +122,7 @@ class Orchestrator:
         self._record("tick_start", summary="tick started")
         try:
             self._recover(rel)
+            self._resume_decided(rel)
             first_pass = self._discover(rel)
             if first_pass:
                 rel.baseline = True
@@ -140,13 +146,15 @@ class Orchestrator:
         process: the engine may be running on another machine, and 'I cannot see
         the process' is a test that only works by accident.
         """
-        expired = {l.owner: l for l in self.store.expired_leases(self.workspace.id)}
+        expired = {l.owner: l
+                   for l in self.store.expired_leases(self.workspace.id,
+                                                     when=self.clock())}
         for run in self.store.active_runs(self.workspace.id):
             if run.id not in expired:
                 continue
             task = self.store.task(run.task_id)
             run.state = RunState.INTERRUPTED
-            run.ended_at = now()
+            run.ended_at = self.clock()
             run.reason = "lease expired: the worker did not renew"
             self.store.save_run(run)
             self.store.release_lease(run.id, run.id, self.workspace.id)
@@ -162,6 +170,98 @@ class Orchestrator:
             rel.recovered += (task.key,)
             self._record("recovered", task_id=task.id, run_id=run.id,
                         summary=f"worker dead; task comes back as {destination.value}")
+
+    def _resume_decided(self, rel: TickReport) -> None:
+        """Act on decisions a person already made.
+
+        Without this the escalation queue is a one-way door: `regente decide`
+        recorded the choice, printed that the next tick would resume the task,
+        and no tick ever read it back. Everything that ever escalated stayed in
+        WAITING_HUMAN for good, while the CLI said otherwise.
+
+        It went unnoticed because the unit test performed the resuming
+        transition itself, so it proved the store could record a decision and
+        proved nothing about the engine acting on one. A soak run found it by
+        running out of work.
+
+        Where a task goes is decided by the option chosen, not by guessing:
+
+          follow      -> onward if the engine has a stage; otherwise BLOCKED,
+                         which is honest where DONE would be a lie
+          investigate -> back to be worked again
+          block       -> out of the queue until someone unblocks it
+          cancel      -> closed
+
+        Every destination is checked against `resumable_from(paused_at)` before
+        it is used. See `DECISION_ROUTES`.
+        """
+        for approval in self.store.decided_approvals(self.workspace.id):
+            task = self.store.task(approval.task_id)
+            if task is None or task.state is not TaskState.WAITING_HUMAN:
+                continue
+
+            destination, why = self._destination_for(task, approval)
+            if destination is None:
+                continue
+            self.store.transition(task.id, destination,
+                                   actor=approval.decided_by or "human",
+                                   reason=why)
+            rel.unblocked_tasks += (task.key,)
+            self._record("decision_applied", task_id=task.id,
+                        run_id=approval.run_id,
+                        summary=f"{approval.choice} -> {destination.value}",
+                        approval_id=approval.id, choice=approval.choice)
+
+    #: What each decision means, as an ordered preference. The engine takes the
+    #: first destination the state machine actually permits from where the task
+    #: paused -- it never assumes one.
+    #:
+    #: Assuming was the bug. A first version sent every `investigar` to READY,
+    #: which is not reachable from a task paused in TESTING, and the tick died
+    #: with `InvalidTransition` on a perfectly ordinary decision. The state
+    #: machine already knows the answer; asking it is both shorter and correct.
+    DECISION_ROUTES = {
+        escalation.CANCEL.id: (TaskState.CANCELLED,),
+        escalation.BLOCK.id: (TaskState.BLOCKED,),
+        escalation.INVESTIGATE.id: (TaskState.READY, TaskState.IMPLEMENTING,
+                                    TaskState.FAILED, TaskState.BLOCKED),
+    }
+
+    def _destination_for(self, task: Task,
+                         approval) -> tuple[TaskState | None, str]:
+        """Where a decided task goes, and why, in words a person can check."""
+        choice = (approval.choice or "").lower()
+        paused = task.paused_at
+        who = approval.decided_by or "humano"
+        if paused is None:
+            # A pause with no record of where it came from cannot be resumed
+            # anywhere safely. Health reports this separately; here it is left
+            # alone rather than sent somewhere invented.
+            return None, ""
+
+        allowed = resumable_from(paused)
+
+        if choice in self.DECISION_ROUTES:
+            for candidate in self.DECISION_ROUTES[choice]:
+                if candidate in allowed:
+                    return candidate, f"{choice} por {who}: {paused.value} -> {candidate.value}"
+
+        # `seguir`, and anything the engine does not recognise. Unrecognised
+        # lands here on purpose: a decision that cannot be parsed must still
+        # move the task, or the queue silently stops draining -- which is the
+        # defect this whole path exists to fix.
+        if engine_can_advance(paused) and paused in allowed:
+            return paused, f"retomada em {paused.value} por {who}"
+        for candidate in _ADVANCES.get(paused, frozenset()):
+            if candidate in allowed and engine_can_advance(candidate):
+                return candidate, (f"follow, by {who}: {paused.value} -> "
+                                   f"{candidate.value}")
+        if TaskState.BLOCKED in allowed:
+            return (TaskState.BLOCKED,
+                    f"stopped by {who}: the work reached {paused.value} and this "
+                    f"engine has no next stage. It stays out of the queue, with a "
+                    f"reason, until the stage exists or somebody unblocks it")
+        return None, ""
 
     # ---- 2. discovery ---------------------------------------------------
     def _discover(self, rel: TickReport) -> bool:
@@ -221,7 +321,7 @@ class Orchestrator:
         task.data.update({"normalised_status": current_status,
                            "raw_status": e.external_status,
                            "labels": list(e.labels)})
-        task.updated_at = now()
+        task.updated_at = self.clock()
         self.store.save_task(task)
         if before and before != current_status:
             rel.changes += ((task.key, before, current_status),)
@@ -328,7 +428,7 @@ class Orchestrator:
                       resources=frozenset(t.resources), key=t.key)
             for t in all_tasks if t.state is TaskState.READY
         ]
-        today = now().strftime("%Y-%m-%d")
+        today = self.clock().strftime("%Y-%m-%d")
         return plan(candidates, self._graph(), completed, running_now,
                        self.limits, self.store.dispatch_count(self.workspace.id, today),
                        names={t.id: t.key for t in all_tasks})
@@ -351,14 +451,15 @@ class Orchestrator:
     def _run_one(self, task_id: str, rel: TickReport) -> None:
         task = self.store.task(task_id)
         run = Run(id=ids.new_id(ids.RUN), task_id=task.id, workspace_id=self.workspace.id,
-                  agent="coder", state=RunState.RUNNING)
+                  agent="coder", state=RunState.RUNNING, started_at=self.clock())
 
         # Lock BEFORE transitioning: if the lock fails, the task must not have
         # left READY -- otherwise it sits in ASSIGNED with no owner.
         held: list[str] = []
         for resource in task.resources:
             if self.store.acquire_lease(resource, run.id, self.workspace.id,
-                                        self.lease_seconds) is None:
+                                        self.lease_seconds,
+                                        when=self.clock()) is None:
                 for r in held:
                     self.store.release_lease(r, run.id, self.workspace.id)
                 self._record("deferred", task_id=task.id,
@@ -372,7 +473,8 @@ class Orchestrator:
                                           branch=f"regente/{task.key.lower()}")
         run.workspace_path, run.branch = area.path, area.branch
         self.store.save_run(run)
-        self.store.mark_dispatch(self.workspace.id, now().strftime("%Y-%m-%d"))
+        self.store.mark_dispatch(self.workspace.id,
+                                 self.clock().strftime("%Y-%m-%d"))
         self.store.transition(task.id, TaskState.IMPLEMENTING, actor=run.agent,
                                reason="worker started")
         rel.dispatched += (task.key,)
@@ -409,7 +511,7 @@ class Orchestrator:
                rel: TickReport) -> None:
         for r in held:
             self.store.release_lease(r, run.id, self.workspace.id)
-        run.ended_at = now()
+        run.ended_at = self.clock()
 
         if result is None:
             self._failed(task_id, run, run.reason or "the worker raised an exception", rel)
@@ -436,10 +538,47 @@ class Orchestrator:
             rel.completed += (task.key,)
             self._record("implemented", task_id=task.id, run_id=run.id,
                         summary=result.summary[:200])
+            # The process finished. Nothing in this engine advances a task out
+            # of TESTING yet -- the stages that would are later milestones. So
+            # the task is handed to a person instead of being left to look busy
+            # forever. Silence here was the defect: the scheduler skips an
+            # active task, nothing else touches it, and every tick afterwards
+            # is clean and empty.
+            self._park_or_escalate(task, run, rel)
             return
 
         self._failed(task_id, run, result.summary, rel,
                      outcome=result.status.value)
+
+    def _park_or_escalate(self, task: Task, run: Run, rel: TickReport) -> None:
+        """Refuse to leave a task where no tick can pick it up again.
+
+        The check asks the state machine which states this engine has code to
+        advance, rather than trusting a list written from memory. A milestone
+        that adds a stage adds its state there, and until then the road ends
+        here honestly instead of silently.
+        """
+        current = self.store.task(task.id)
+        if current is None or not is_terminus(current.state):
+            return
+
+        reason = (f"the work finished and reached {current.state.value}, which "
+                  f"this engine has no stage to advance; it needs you rather "
+                  f"than a queue that looks busy")
+        self.store.transition(current.id, TaskState.WAITING_HUMAN,
+                               actor="orchestrator", reason=reason)
+        approval = escalation.build(
+            task=current,
+            what_happened=f"{run.agent} finished and the task reached "
+                          f"{current.state.value}",
+            why_it_matters=reason,
+            attempts=(run.reason or "",),
+            recommendation=escalation.BLOCK.id,
+            risk=current.risk or RiskLevel.MEDIUM,
+            run_id=run.id)
+        self._publish(approval, current, rel)
+        self._record("terminus", task_id=current.id, run_id=run.id,
+                    summary=reason[:200], state=current.state.value)
 
     def _failed(self, task_id: str, run: Run, reason: str, rel: TickReport,
                 outcome: str = "ERROR") -> None:

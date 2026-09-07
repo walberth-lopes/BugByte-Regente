@@ -105,6 +105,41 @@ _ADVANCES: dict[TaskState, frozenset[TaskState]] = {
 }
 
 
+#: States this engine currently has code to move a task OUT of.
+#:
+#: Not the same thing as `_ADVANCES`, which says which transitions are *legal*.
+#: A transition can be perfectly legal and have nobody who performs it, and that
+#: gap is invisible: the task sits in a busy-looking state, the scheduler skips
+#: it because it appears to be in progress, and the engine reports quiet, clean
+#: ticks forever.
+#:
+#: That is not hypothetical. A soak run found every successfully dispatched task
+#: parked in `TESTING` on its fourth tick -- legal to leave, and no code in the
+#: project leaving it. The pipeline beyond `TESTING` belongs to milestones that
+#: do not exist yet, so the honest thing is for the engine to know where its own
+#: road ends and say so, rather than drive tasks off it.
+#:
+#: When a later milestone adds the stage that advances a state, it adds the
+#: state here. `test_states.py` checks the two sets against each other, so
+#: forgetting is loud.
+ENGINE_ADVANCES: frozenset[TaskState] = frozenset({
+    S.DISCOVERED, S.READY, S.ASSIGNED, S.IMPLEMENTING, S.FAILED, S.BLOCKED,
+    S.WAITING_HUMAN,
+})
+
+
+def engine_can_advance(state: TaskState) -> bool:
+    return state in ENGINE_ADVANCES
+
+
+def is_terminus(state: TaskState) -> bool:
+    """An active state the engine can enter and cannot leave.
+
+    The dangerous shape: it looks like work in progress and it is a dead end.
+    """
+    return state in ACTIVE and state not in ENGINE_ADVANCES
+
+
 def allowed_from(source: TaskState) -> frozenset[TaskState]:
     """Every legal destination reachable from `source`."""
     if source in TERMINAL:
@@ -119,13 +154,24 @@ def resumable_from(paused_at: TaskState) -> frozenset[TaskState]:
     """Legal destinations when leaving WAITING_HUMAN, given where it paused.
 
     The human can: say carry on (the state of origin itself), say redo it (what
-    that state could already reach) or close it out. They cannot teleport the
-    task into a state it could not reach on its own -- approving a deploy is not
-    the same as declaring the task finished.
+    that state could already reach), send it back to the queue, or close it out.
+    They cannot teleport the task into a state it could not reach on its own --
+    approving a deploy is not the same as declaring the task finished.
+
+    Returning to the queue was missing here, and the omission ran against what
+    the rule itself says: `allowed_from` already lets any active state go back
+    to READY, so escalating a task REDUCED the human's options below the ones
+    the engine had on its own. In practice that closed the only useful path
+    after an escalation -- saying redo it -- and the decision died with
+    InvalidTransition. Found by a long run, not by reading.
     """
     if paused_at in TERMINAL:
         return frozenset()
-    return frozenset({paused_at}) | _ADVANCES[paused_at] | (_ESCAPES - {S.WAITING_HUMAN})
+    exits = (frozenset({paused_at}) | _ADVANCES[paused_at]
+             | (_ESCAPES - {S.WAITING_HUMAN}))
+    if paused_at in _RETURN_TO_QUEUE:
+        exits |= {S.READY}
+    return exits
 
 
 def can(source: TaskState, destination: TaskState, paused_at: TaskState | None = None) -> bool:

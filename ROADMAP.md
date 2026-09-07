@@ -12,12 +12,13 @@ A milestone does not close without proof on disk.
 | **5** | **AgentRunner + validation loop** ✅ | mission selected, target resolved, clone isolated, agent run, test with a baseline, verdict and commit -- DECLARED and DISCOVERED proved end to end |
 | **6** | **CI + PR** ⚠ | the full path implemented and tested against the contract; **real remote proof blocked at `NEEDS_HUMAN`** for want of an eligible task |
 | **7** | **Real AgentRunner** ⚠ | the engine observes the world for itself and does not believe the agent; sandbox with no command execution; **real model blocked** for want of a credential the engine can resolve |
-| 8 | ReviewerAgent | a review pinned to the SHA reviewed, with a second pass on high risk |
-| 9 | CloudProvider | reading resources, logs and metrics |
-| 10 | Deploy to staging | governed deploy + smoke, with rollback |
-| 11 | Genuinely parallel workers | 2+ real workers at once with no collision |
-| 12 | Mature escalation | notification outside the terminal; a one-click decision |
-| 13 | **Second client** | another set of providers running **without touching `core/` or `engine/`** |
+| **8** | **Continuous operation under failure** ✅ | 1000 ticks, 43 restarts with no clean shutdown, 13 worker deaths and 13 recoveries, 142 provider outages, zero invariant violations |
+| 9 | ReviewerAgent | a review pinned to the SHA reviewed, with a second pass on high risk |
+| 10 | CloudProvider | reading resources, logs and metrics |
+| 11 | Deploy to staging | governed deploy + smoke, with rollback |
+| 12 | Genuinely parallel workers | 2+ real workers at once with no collision |
+| 13 | Mature escalation | notification outside the terminal; a one-click decision |
+| 14 | **Second client** | another set of providers running **without touching `core/` or `engine/`** |
 
 The second-client milestone is the only honest test of the architecture. Every
 other one can pass with an engine secretly coupled to the first client.

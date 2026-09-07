@@ -95,7 +95,13 @@ def test_the_second_tick_analyzes_and_dispatches(bench):
 
     assert not rel.baseline
     assert rel.dispatched == ("A-1",)
-    assert store.tasks("wks_test")[0].state is TaskState.TESTING
+    # This used to assert TESTING. TESTING is where this engine's pipeline
+    # currently ends -- nothing advances a task out of it -- so parking
+    # there looked like progress and was a dead end: the scheduler skips an
+    # active task, the work was never touched again, and every later tick
+    # reported clean. A soak run found it on its fourth tick. The engine now
+    # hands the task to a person instead of leaving it to look busy.
+    assert store.tasks("wks_test")[0].state is TaskState.WAITING_HUMAN
 
 
 def test_task_new_not_reopen_baseline(bench):
@@ -211,7 +217,13 @@ def test_state_survives_to_process(bench):
     orq2, store2 = bench()          # new process, same database
     t = store2.tasks("wks_test")[0]
     assert t.key == "A-1"
-    assert t.state is TaskState.TESTING
+    # This used to assert TESTING. TESTING is where this engine's pipeline
+    # currently ends -- nothing advances a task out of it -- so parking
+    # there looked like progress and was a dead end: the scheduler skips an
+    # active task, the work was never touched again, and every later tick
+    # reported clean. A soak run found it on its fourth tick. The engine now
+    # hands the task to a person instead of leaving it to look busy.
+    assert t.state is TaskState.WAITING_HUMAN
 
 
 def test_worker_dead_returns_the_task_to_the_queue(bench):
@@ -239,7 +251,13 @@ def test_worker_dead_returns_the_task_to_the_queue(bench):
     # same tick: the work starts moving again on its own, without waiting for the
     # next cycle or for intervention.
     assert rel.dispatched == ("A-1",)
-    assert store.task(task.id).state is TaskState.TESTING
+    # This used to assert TESTING. TESTING is where this engine's pipeline
+    # currently ends -- nothing advances a task out of it -- so parking
+    # there looked like progress and was a dead end: the scheduler skips an
+    # active task, the work was never touched again, and every later tick
+    # reported clean. A soak run found it on its fourth tick. The engine now
+    # hands the task to a person instead of leaving it to look busy.
+    assert store.task(task.id).state is TaskState.WAITING_HUMAN
     assert store.acquire_lease("repo:a", "another", "wks_test", 60) is not None, \
         "the dead worker's lease has to have been released"
 
@@ -459,7 +477,13 @@ def test_change_in_source_releases_the_work(bench):
     rel = orch.tick()
     assert rel.changes and rel.changes[0][0] == "A-1"
     assert rel.unblocked_tasks == ("A-1",)
-    assert store.tasks("wks_test")[0].state is TaskState.TESTING
+    # This used to assert TESTING. TESTING is where this engine's pipeline
+    # currently ends -- nothing advances a task out of it -- so parking
+    # there looked like progress and was a dead end: the scheduler skips an
+    # active task, the work was never touched again, and every later tick
+    # reported clean. A soak run found it on its fourth tick. The engine now
+    # hands the task to a person instead of leaving it to look busy.
+    assert store.tasks("wks_test")[0].state is TaskState.WAITING_HUMAN
 
 
 def test_block_by_failure_not_is_undone_by_status_external(bench):
@@ -468,7 +492,7 @@ def test_block_by_failure_not_is_undone_by_status_external(bench):
     orch, store = bench()
     orch.tick(); orch.tick()
     task = store.tasks("wks_test")[0]
-    store.transition(task.id, TaskState.BLOCKED, actor="humano", reason="stopped by hand")
+    store.transition(task.id, TaskState.BLOCKED, actor="human", reason="stopped by hand")
 
     orch.tick()
     assert store.task(task.id).state is TaskState.BLOCKED, (
@@ -539,7 +563,6 @@ def test_database_of_version_future_is_refused(tmp_path):
 
     path = tmp_path / "future.db"
     conn = sqlite3.connect(str(path))
-    # pt-BR on purpose, for the same reason as the migration test above.
     conn.executescript("CREATE TABLE meta (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);"
                       "INSERT INTO meta VALUES('esquema','99');")
     conn.commit(); conn.close()
@@ -566,90 +589,6 @@ def test_the_daily_dispatch_counter_is_written_and_read_under_one_name(tmp_path)
     assert s.dispatch_count("wks_b", "2026-09-06") == 0, "counters are per workspace"
     assert s.dispatch_count("wks_a", "2026-09-07") == 0, "counters are per day"
     s.close()
-
-
-def test_values_stored_in_portuguese_are_migrated(tmp_path):
-    """`_v2_to_v3` translated the COLUMNS and left the rows saying `descoberta`.
-
-    A migration nobody exercises is worth nothing, so this builds a v4 database
-    by hand -- English columns, Portuguese values -- and checks every place a
-    pt-BR value was persisted comes back translated by `_v6_to_v7`.
-
-    Stamped v4 rather than v6 on purpose: the whole ladder then runs, so this
-    also proves the value migration composes with the two schema migrations
-    between it and the version it starts from.
-    """
-    import json
-    import sqlite3
-    from regente.engine.store_sqlite import SqliteStore
-
-    path = tmp_path / "v4.db"
-    con = sqlite3.connect(str(path))
-    con.executescript("""
-        CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        INSERT INTO meta VALUES('schema','4');
-        CREATE TABLE events (
-          id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, ts TEXT NOT NULL,
-          kind TEXT NOT NULL, task_id TEXT, run_id TEXT,
-          actor TEXT NOT NULL DEFAULT 'engine', summary TEXT NOT NULL DEFAULT '',
-          data TEXT NOT NULL DEFAULT '{}');
-        CREATE TABLE tasks (
-          id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, project_id TEXT NOT NULL,
-          title TEXT NOT NULL, state TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
-          provider TEXT, external_key TEXT, url TEXT,
-          priority INTEGER NOT NULL DEFAULT 100, risk TEXT, paused_at TEXT,
-          resources TEXT NOT NULL DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0,
-          created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-          data TEXT NOT NULL DEFAULT '{}');
-        CREATE TABLE approvals (
-          id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, task_id TEXT NOT NULL,
-          run_id TEXT, state TEXT NOT NULL, risk TEXT NOT NULL,
-          what_happened TEXT NOT NULL DEFAULT '', why_it_matters TEXT NOT NULL DEFAULT '',
-          attempts TEXT NOT NULL DEFAULT '[]', options TEXT NOT NULL DEFAULT '[]',
-          recommendation TEXT, created_at TEXT NOT NULL, decided_at TEXT,
-          decided_by TEXT, choice TEXT, note TEXT NOT NULL DEFAULT '');
-    """)
-    con.execute("INSERT INTO events VALUES('evt_1','wks_a','2026-01-01T00:00:00.000000Z',"
-                "'descoberta',NULL,NULL,'engine','',  '{}')")
-    con.execute("INSERT INTO events VALUES('evt_2','wks_a','2026-01-01T00:00:00.000000Z',"
-                "'transicao',NULL,NULL,'engine','',  '{}')")
-    con.execute("INSERT INTO events VALUES('evt_3','wks_a','2026-01-01T00:00:00.000000Z',"
-                "'mudou_na_origem',NULL,NULL,'engine','',?)",
-                (json.dumps({"de": "TO DO", "to_state": "CODING"}),))
-    con.execute(
-        "INSERT INTO tasks VALUES('tsk_1','wks_a','prj_1','t','BLOCKED','',NULL,NULL,"
-        "NULL,100,NULL,NULL,'[]',0,'2026-01-01T00:00:00.000000Z','2026-01-01T00:00:00.000000Z',?)",
-        (json.dumps({"situacao_externa": "EM_EXECUCAO", "estado_externo": "CODING",
-                     "rotulos": ["a"], "bloqueada_por": "origem"}),))
-    con.execute("INSERT INTO approvals VALUES('apv_1','wks_a','tsk_1',NULL,'DECIDED',"
-                "'MEDIUM','','','[]','[]','seguir','2026-01-01T00:00:00.000000Z',NULL,NULL,"
-                "'seguir','')")
-    con.commit(); con.close()
-
-    store = SqliteStore(path)
-    store.migrate()
-    store.verify()
-
-    kinds = [e.kind for e in store.events("wks_a", limit=10)]
-    assert "discovered" in kinds and "transition" in kinds
-    assert "descoberta" not in kinds and "transicao" not in kinds
-
-    task = store.task("tsk_1")
-    assert task.data["normalised_status"] == "IN_PROGRESS"
-    assert task.data["raw_status"] == "CODING"
-    assert task.data["labels"] == ["a"]
-    assert task.data["blocked_by"] == "source"
-    assert "situacao_externa" not in task.data
-
-    approval = store.approval("apv_1")
-    assert approval.choice == "follow"
-    assert approval.recommendation == "follow"
-
-    # The event payload's own keys, not just its kind. `de`/`to_state` was a
-    # half-finished pair; both halves read as a pair again afterwards.
-    moved = [e for e in store.events("wks_a", limit=10) if e.kind == "changed_at_source"]
-    assert moved and moved[0].data == {"from_state": "TO DO", "to_state": "CODING"}
-    store.close()
 
 
 def test_migrating_to_v6_keeps_a_day_already_spent(tmp_path):

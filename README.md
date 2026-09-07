@@ -61,6 +61,7 @@ regente status    # what is happening, what needs you
 | `tick` | one cycle: recover, discover, analyse, plan, dispatch, collect |
 | `status` | the four questions: what is running, what needs you, what is stuck, what finished |
 | `plan` | what the scheduler would do now — without executing |
+| `health` | what is running, what is stuck and for how long — read from disk, so it answers even after the engine dies |
 | `needs-me` | the queue of human decisions, with a briefing |
 | `decide` | records your decision on an item in the queue |
 | `log` | the trail: every transition, with actor and reason |

@@ -227,10 +227,20 @@ def test_5_6_7_reaching_for_authority_through_a_file_is_a_violation(area, path, 
     reacher = DeterministicAgent(script={"K-1": {
         "status": "FINISHED", "claim": "COMPLETE", "summary": "configured",
         "edits": {path: content}}})
-    # The sentinel is required for the `.git/` cases: those files are outside
-    # the working tree, so `git status` reports nothing however hard it looks.
-    sentinel = obs.sentinel_for(mission_for(area), area.parent)
-    result = execute(loop(reacher, area, sentinel=sentinel), area)
+    # Two different mechanisms, and the test has to supply both or it proves
+    # only one. `.git/` files are outside the working tree, so `git status`
+    # reports nothing about them and a fingerprint is the only witness. The CI
+    # file IS in the working tree, and it is caught by the path list -- which
+    # has to be passed in, because the engine does not know a CI provider's
+    # filenames and must not.
+    #
+    # An earlier version passed neither and went green anyway: the sentinel was
+    # guarding all of `.git`, and the engine's own `git status` rewrites
+    # `.git/index`. The test was watching the watcher.
+    sentinel = obs.sentinel_for(mission_for(area), area.parent,
+                                authority_paths=(".github/workflows",))
+    result = execute(loop(reacher, area, sentinel=sentinel,
+                          authority_paths=(".github/workflows",)), area)
 
     assert result.verdict is Verdict.NEEDS_HUMAN
     assert any(v.kind == "authority_path" for v in result.violations)
