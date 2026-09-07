@@ -68,6 +68,11 @@ class Config:
     #: que o SecretProvider usa como escopo -- o que nao esta aqui, este
     #: workspace nao alcanca, nem por engano de configuracao.
     secrets: tuple[str, ...] = ()
+    #: Ajudantes de credencial: nome -> comando. Uma LISTA FECHADA, escrita por
+    #: quem configura o workspace. A referencia `helper:nome` escolhe entre
+    #: eles; ela nunca carrega o comando, porque entao quem escreve uma
+    #: referencia escreveria o que o processo executa.
+    helpers: dict[str, tuple[str, ...]] = field(default_factory=dict)
     #: Onde cada trabalho roda, declarado. E a capacidade que falta no provedor
     #: de tasks -- medido: o campo natural estava vazio em 100 de 100 issues, e
     #: o sinal mais forte disponivel cobria 14. Enquanto a origem nao emitir o
@@ -157,6 +162,8 @@ def load(path: str | Path) -> Config:
         policies=caminho_policies,
         lease_seconds=int(raw.get('lease_seconds', 900)),
         secrets=tuple(str(x) for x in (raw.get('secrets') or ())),
+        helpers={str(k): tuple(str(a) for a in v)
+                 for k, v in (raw.get('helpers') or {}).items()},
         targets={k: dict(v) for k, v in (raw.get('targets') or {}).items()},
         risk_factors=tuple(raw.get("risk_factors") or ()),
         watched_sources=tuple(str(x) for x in (raw.get("watched_sources") or ())),

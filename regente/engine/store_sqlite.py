@@ -30,6 +30,7 @@ from typing import Any, Callable, Iterator
 from ..core import ids
 from ..core.errors import AlreadyExists, CorruptedState
 from ..core.access import Ability, AccessGrant, PrincipalRef
+from ..core.credential import Credential, SecretRef, uses_from
 from ..core.model import (ActionRecord, Approval, ApprovalState, Dependency, Event,
                           ExternalRef, Lease, Option, Project, Repository, Run,
                           RunState, Task, Workspace, now)
@@ -192,12 +193,38 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_grants_vivo
 CREATE INDEX IF NOT EXISTS ix_grants_workspace
   ON access_grants(workspace_id, granted_at);
 
+-- Credenciais: a AUTORIDADE de usar um segredo, nunca o segredo.
+--
+-- `secret_ref` guarda um ENDERECO (`env:NOME`, `helper:comando`). O material
+-- nunca chega aqui: se um token couber nesta tabela, o desenho esta errado --
+-- um banco vai para backup, para anexo de bug e para captura de tela.
+--
+-- Nao ha coluna de status. Expirar nao e um evento que alguem escreve, e o
+-- tempo passando; uma coluna criaria duas verdades, e a que fica errada e
+-- sempre a coluna.
+CREATE TABLE IF NOT EXISTS credentials (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+  name TEXT NOT NULL, provider TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'token',
+  secret_ref TEXT NOT NULL,
+  capabilities TEXT NOT NULL DEFAULT '[]',
+  granted_by TEXT NOT NULL, granted_at TEXT NOT NULL,
+  expires_at TEXT,
+  revoked_by TEXT NOT NULL DEFAULT '', revoked_at TEXT,
+  note TEXT NOT NULL DEFAULT '');
+-- No maximo UMA credencial viva por (workspace, provider, nome). Duas vivas
+-- para o mesmo uso significariam duas verdades sobre qual segredo vale.
+CREATE UNIQUE INDEX IF NOT EXISTS ix_cred_viva
+  ON credentials(workspace_id, provider, name) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_cred_workspace
+  ON credentials(workspace_id, granted_at);
+
 CREATE TABLE IF NOT EXISTS counters (
   workspace_id TEXT NOT NULL, day TEXT NOT NULL, name TEXT NOT NULL,
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "10"
+SCHEMA_VERSION = "11"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -367,6 +394,34 @@ def _v6_to_v7(c: sqlite3.Connection) -> None:
                   "ADD COLUMN ci_observations INTEGER NOT NULL DEFAULT 0")
 
 
+def _v10_to_v11(c: sqlite3.Connection) -> None:
+    """Cria a tabela de credenciais. VAZIA.
+
+    Nao ha de onde deduzir credencial alguma: ate aqui o que existia era uma
+    lista de referencias no YAML, sem dono, sem validade e sem quem autorizou.
+    Transformar essa lista em concessoes inventaria autor e data para cada uma.
+
+    Depois desta migracao, nenhum uso governado de segredo funciona ate que uma
+    credencial seja registrada. Isso e uma quebra de comportamento, e e a certa.
+    """
+    c.execute("""CREATE TABLE IF NOT EXISTS credentials (
+                   id TEXT PRIMARY KEY,
+                   client_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                   name TEXT NOT NULL, provider TEXT NOT NULL,
+                   kind TEXT NOT NULL DEFAULT 'token',
+                   secret_ref TEXT NOT NULL,
+                   capabilities TEXT NOT NULL DEFAULT '[]',
+                   granted_by TEXT NOT NULL, granted_at TEXT NOT NULL,
+                   expires_at TEXT,
+                   revoked_by TEXT NOT NULL DEFAULT '', revoked_at TEXT,
+                   note TEXT NOT NULL DEFAULT '')""")
+    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS ix_cred_viva
+                 ON credentials(workspace_id, provider, name)
+                 WHERE revoked_at IS NULL""")
+    c.execute("""CREATE INDEX IF NOT EXISTS ix_cred_workspace
+                 ON credentials(workspace_id, granted_at)""")
+
+
 def _v9_to_v10(c: sqlite3.Connection) -> None:
     """Cria a tabela de concessoes. VAZIA -- e essa e a resposta honesta.
 
@@ -446,6 +501,7 @@ MIGRATIONS: dict[str, tuple[str, Any]] = {
     "7": ("8", _v7_to_v8),
     "8": ("9", _v8_to_v9),
     "9": ("10", _v9_to_v10),
+    "10": ("11", _v10_to_v11),
 }
 
 
@@ -736,6 +792,90 @@ class SqliteStore(Store):
     def workspaces(self) -> list[Workspace]:
         return [self._workspace_row(r) for r in
                 self._con.execute("SELECT * FROM workspaces ORDER BY name")]
+
+    # ---- credenciais ------------------------------------------------------
+
+    def _credential_row(self, r) -> Credential:
+        return Credential(
+            id=r["id"], client_id=r["client_id"],
+            workspace_id=r["workspace_id"], name=r["name"],
+            provider=r["provider"], kind=r["kind"],
+            secret_ref=SecretRef.parse(r["secret_ref"]),
+            capabilities=uses_from(json.loads(r["capabilities"])),
+            granted_by=r["granted_by"], granted_at=_dt(r["granted_at"]),
+            expires_at=_dt(r["expires_at"]), revoked_by=r["revoked_by"],
+            revoked_at=_dt(r["revoked_at"]), note=r["note"])
+
+    def open_credential(self, credential: Credential) -> bool:
+        """Registra. `False` quando ja ha uma viva para o mesmo uso.
+
+        A recusa vem do indice unico, dentro da transacao. Duas registradas ao
+        mesmo tempo chegam as duas ate aqui; e o banco que decide, e a outra sai
+        como conflito em vez de virar uma segunda verdade sobre qual segredo
+        vale para aquele provider.
+        """
+        try:
+            with self._tx() as c:
+                c.execute(
+                    """INSERT INTO credentials(id, client_id, workspace_id, name,
+                         provider, kind, secret_ref, capabilities, granted_by,
+                         granted_at, expires_at, revoked_by, revoked_at, note)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (credential.id, credential.client_id,
+                     credential.workspace_id, credential.name,
+                     credential.provider, credential.kind,
+                     credential.secret_ref.text,
+                     _j(sorted(u.value for u in credential.capabilities)),
+                     credential.granted_by, _iso(credential.granted_at),
+                     _iso(credential.expires_at), credential.revoked_by,
+                     _iso(credential.revoked_at), credential.note))
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def revoke_credential(self, workspace_id: str, credential_id: str,
+                          revoked_by: str, when: datetime | None = None,
+                          reason: str = "") -> bool:
+        """Revoga a credencial VIVA daquele workspace.
+
+        O `WHERE` carrega o workspace e o estado: revogar de outro tenant nao
+        casa, e revogar duas vezes nao reescreve a primeira revogacao -- a data
+        e o autor originais sao o que a investigacao le.
+        """
+        with self._tx() as c:
+            cur = c.execute(
+                """UPDATE credentials SET revoked_at=?, revoked_by=?,
+                     note = CASE WHEN ?='' THEN note ELSE note || ' | revogada: ' || ? END
+                   WHERE workspace_id=? AND id=? AND revoked_at IS NULL""",
+                (_iso(when or self._now()), revoked_by, reason, reason,
+                 workspace_id, credential_id))
+            return cur.rowcount > 0
+
+    def credentials(self, workspace_id: str, provider: str | None = None,
+                    include_revoked: bool = False) -> list[Credential]:
+        """Credenciais deste workspace. Sempre escopadas, sempre por parametro."""
+        q = "SELECT * FROM credentials WHERE workspace_id=?"
+        args: list[Any] = [workspace_id]
+        if provider is not None:
+            q += " AND provider=?"
+            args.append(provider)
+        if not include_revoked:
+            q += " AND revoked_at IS NULL"
+        return [self._credential_row(r)
+                for r in self._con.execute(q + " ORDER BY granted_at", args)]
+
+    def credential(self, workspace_id: str,
+                   credential_id: str) -> Credential | None:
+        """Uma credencial, JA escopada. Nao existe leitura por id sozinho.
+
+        Conhecer o id de uma credencial de outro cliente nao pode ser o
+        suficiente para le-la, e a forma de garantir isso e nao oferecer a
+        chamada sem o escopo.
+        """
+        r = self._con.execute(
+            "SELECT * FROM credentials WHERE workspace_id=? AND id=?",
+            (workspace_id, credential_id)).fetchone()
+        return self._credential_row(r) if r else None
 
     # ---- concessoes de acesso -------------------------------------------
 

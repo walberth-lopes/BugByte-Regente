@@ -43,12 +43,24 @@ class Ability(str, Enum):
     GRANT = "workspace.access.grant"
     REVOKE = "workspace.access.revoke"
     LIST = "workspace.access.list"
+    #: Administrar CREDENCIAIS e uma autoridade separada de administrar
+    #: PESSOAS. Quem entra na equipe nao ganha, por tabela, o direito de
+    #: apontar para onde as credenciais do cliente vivem.
+    CREDENTIAL_GRANT = "workspace.credential.grant"
+    CREDENTIAL_REVOKE = "workspace.credential.revoke"
+    CREDENTIAL_LIST = "workspace.credential.list"
 
 
 #: O conjunto de quem administra acesso. Nomeado porque "administrador" e uma
 #: palavra que cada pessoa entende de um jeito, e porque um papel precisa ser
 #: uma ENTRADA para a policy, nunca um atalho que a substitua.
 ADMIN = frozenset({Ability.GRANT, Ability.REVOKE, Ability.LIST})
+
+#: Quem cuida das credenciais do workspace. Separado de `ADMIN` de proposito:
+#: administrar pessoas e administrar segredos sao trabalhos diferentes, e juntar
+#: os dois num papel so e como a autoridade cresce sem ninguem decidir isso.
+KEEPER = frozenset({Ability.CREDENTIAL_GRANT, Ability.CREDENTIAL_REVOKE,
+                    Ability.CREDENTIAL_LIST})
 
 #: Quem so responde a fila humana.
 OPERATOR = frozenset({Ability.DECIDE})
@@ -57,7 +69,8 @@ OPERATOR = frozenset({Ability.DECIDE})
 ROLES: dict[str, frozenset[Ability]] = {
     "operator": OPERATOR,
     "admin": ADMIN,
-    "owner": ADMIN | OPERATOR,
+    "keeper": KEEPER,
+    "owner": ADMIN | OPERATOR | KEEPER,
 }
 
 

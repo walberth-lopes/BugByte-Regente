@@ -31,6 +31,11 @@ revogacao que preserva a historia. O terminal passou a se identificar pela conta
 do sistema operacional -- identificador estavel, emissor nomeado -- em vez de um
 nome lido de variavel de ambiente.
 
+O marco 15 fez para credenciais o que o 14 fez para pessoas: acesso a segredo
+deixou de ser uma lista no YAML e virou credencial registrada, com autor,
+capacidades explicitas, validade e revogacao. O material nunca entra no dominio
+-- o que o motor guarda e um endereco.
+
 O que segue faltando e **identidade real no navegador**. Nao ha provedor
 corporativo neste ambiente: sem OIDC, sem SSO, sem dominio. O `dev-token`
 continua sendo o unico mecanismo da tela, continua se anunciando como de

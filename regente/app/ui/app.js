@@ -494,6 +494,43 @@ document.addEventListener("click", async (ev) => {
     return;
   }
 
+  const revogarCred = ev.target.closest("button.choice.revoke-cred");
+  if (revogarCred) {
+    const slot = document.querySelector('.outcome[data-for="cred"]')
+      || document.createElement("div");
+    const r = await fetch(
+      `/api/workspaces/${encodeURIComponent(ws())}/credentials/${
+        encodeURIComponent(revogarCred.dataset.id)}`,
+      { method: "DELETE", headers: headers() });
+    slot.className = r.ok ? "outcome good" : "outcome bad";
+    slot.textContent = r.ok ? "revogada; relendo…" : `${r.status} · recusado`;
+    await render();
+    return;
+  }
+
+  if (ev.target.id === "registrar-cred") {
+    const slot = document.querySelector('.outcome[data-for="cred"]');
+    const dias = parseInt(document.getElementById("cred-dias").value, 10);
+    const r = await post(`/api/workspaces/${encodeURIComponent(ws())}/credentials`, {
+      name: document.getElementById("cred-nome").value.trim(),
+      provider: document.getElementById("cred-provider").value.trim(),
+      secret_ref: document.getElementById("cred-ref").value.trim(),
+      capabilities: document.getElementById("cred-caps").value
+        .split(",").map((x) => x.trim()).filter(Boolean),
+      expires_in_days: Number.isFinite(dias) ? dias : 0,
+    });
+    const diz = {
+      401: "esta sessao nao esta autenticada",
+      403: "esta identidade nao administra credenciais aqui, ou a policy recusou",
+      409: "ja existe credencial viva para este provider e nome",
+      422: "referencia ou capacidades invalidas",
+    }[r.status] || r.payload.detail || "recusado";
+    slot.className = r.ok ? "outcome good" : "outcome bad";
+    slot.textContent = r.ok ? "registrada; relendo…" : `${r.status} · ${diz}`;
+    await render();
+    return;
+  }
+
   if (ev.target.id === "conceder") {
     const slot = document.querySelector('.outcome[data-for="grant"]');
     const r = await post(`/api/workspaces/${encodeURIComponent(ws())}/access`, {
@@ -633,6 +670,66 @@ pages.access = async () => {
     ${formulario}`}`;
 };
 
+pages.credentials = async () => {
+  let itens = [];
+  let recusa = "";
+  try {
+    itens = (await get(api("/credentials"))).credentials;
+  } catch (e) {
+    recusa = e.message;
+  }
+
+  // NAO ha coluna de valor, e nao ha rota que o devolva. Uma tela nunca precisa
+  // do segredo para administrar a autoridade dele.
+  const linha = (c) => `<tr>
+    <td class="key">${esc(c.provider)}/${esc(c.name)}</td>
+    <td><span class="level" data-l="${c.status === "ACTIVE" ? "OK"
+      : c.status === "EXPIRED" ? "ATTENTION" : "STUCK"}">${esc(c.status)}</span></td>
+    <td><code class="mono">${esc(c.secret_ref)}</code><br>
+        <span class="dim">${esc(c.kind)}</span></td>
+    <td>${c.capabilities.map((u) => `<code class="mono">${esc(u)}</code>`).join("<br>")}</td>
+    <td class="dim">${esc(c.granted_by)}<br>${when(c.granted_at)}</td>
+    <td class="dim">${c.expires_at ? when(c.expires_at) : "sem validade"}</td>
+    <td>${c.status !== "REVOKED" && podeAqui("workspace.credential.revoke")
+      ? `<button class="choice revoke-cred" data-id="${esc(c.id)}">revogar</button>`
+      : c.revoked_by ? `<span class="dim">por ${esc(c.revoked_by)}</span>` : ""}</td>
+  </tr>`;
+
+  const formulario = podeAqui("workspace.credential.grant") ? `
+    <h2>registrar credencial</h2>
+    <div class="panel">
+      <div class="choices">
+        <input id="cred-nome" placeholder="nome" size="14">
+        <input id="cred-provider" placeholder="provider" size="16">
+        <input id="cred-ref" placeholder="env:NOME | arquivo:X | helper:Y" size="30">
+        <input id="cred-caps" placeholder="repo.read,repo.pr" size="22">
+        <input id="cred-dias" placeholder="validade (dias)" size="12">
+        <button class="choice" id="registrar-cred">registrar</button>
+      </div>
+      <p class="sub" style="margin:10px 0 0">
+        a referencia e um <strong>endereco</strong>, nunca o valor. o Regente
+        nao guarda material secreto e nao ha rota que o devolva.
+      </p>
+      <div class="outcome" data-for="cred"></div>
+    </div>` : `<p class="sub">esta identidade nao recebeu autoridade para
+        administrar credenciais aqui.</p>`;
+
+  return `
+    <h1>credenciais</h1>
+    <p class="sub">a autoridade de usar um segredo, com quem concedeu, para que
+       capacidades e ate quando. o valor vive fora do Regente; aqui so existe o
+       endereco. testar conexao e trabalho de terminal:
+       <code class="mono">regente credentials testar</code>.</p>
+    ${recusa ? `<div class="err">${esc(recusa)}</div>` : `
+    <div class="panel"><table><thead><tr>
+      <th>credencial</th><th>estado</th><th>referencia</th><th>capacidades</th>
+      <th>concedida por</th><th>vence</th><th></th>
+    </tr></thead><tbody>${itens.length ? itens.map(linha).join("")
+      : `<tr><td colspan="7" class="empty">nenhuma credencial registrada</td></tr>`
+    }</tbody></table></div>
+    ${formulario}`}`;
+};
+
 pages.health = async () => {
   const h = await get(api("/health"));
   return `
@@ -677,6 +774,7 @@ const NAV = [
   ["deliveries", "entregas", "#/deliveries"],
   ["events", "eventos", "#/events"],
   ["access", "acesso", "#/access"],
+  ["credentials", "credenciais", "#/credentials"],
   ["health", "saude", "#/health"],
 ];
 

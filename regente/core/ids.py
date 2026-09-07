@@ -22,6 +22,7 @@ APPROVAL = "apv"
 ACTION = "act"
 DELIVERY = "dlv"
 GRANT = "grn"
+CREDENTIAL = "crd"
 
 
 def new_id(prefixo: str) -> str:

@@ -15,11 +15,25 @@ log.
 from __future__ import annotations
 
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..ports import AdapterError
 from ..ports.support import SecretProvider
+
+
+def _minimal_env() -> dict[str, str]:
+    """O ambiente que um ajudante recebe: o minimo para se localizar.
+
+    Composto a partir do VAZIO, e nao filtrado do ambiente atual -- a mesma
+    disciplina do marco 7 para o processo do agente. Uma lista de exclusao
+    esquece o que aparecer amanha; uma lista de inclusao nao.
+    """
+    manter = ("PATH", "SYSTEMROOT", "WINDIR", "HOME", "USERPROFILE",
+              "APPDATA", "LOCALAPPDATA", "TEMP", "TMP", "LANG", "TERM",
+              "COMSPEC", "PATHEXT")
+    return {k: os.environ[k] for k in manter if k in os.environ}
 
 
 class SecretMissing(AdapterError):
@@ -35,16 +49,37 @@ class SecretOutOfScope(AdapterError):
 class ScopedSecrets(SecretProvider):
     """Resolve `env:NOME` e `arquivo:CAMINHO`.
 
+    Tres formas, e a diferenca entre elas nao e de sintaxe:
+
+    * `env:NOME` -- o segredo ja esta no processo antes de alguem pedir;
+    * `arquivo:CAMINHO` -- esta em disco, legivel por quem roda o processo;
+    * `helper:COMANDO` -- **nao esta em lugar nenhum**: um programa o produz no
+      momento do uso, a partir de onde ele guarda (um chaveiro, uma sessao).
+
+    A terceira e a que permite um segredo existir sem nunca ficar guardado onde
+    o Regente alcance. E a forma que uma credencial de chaveiro tem.
+
     Nao existe forma `literal:` de proposito. Se ela existisse, o primeiro
     segredo de producao apareceria num YAML versionado dentro de uma semana.
     """
     name: str = "scoped"
     #: Referencias que ESTE workspace pode resolver. Vazio = nenhuma.
+    #:
+    #: Continua existindo para o caminho antigo (composicao). O caminho
+    #: governado -- `CredentialService` -- passa a referencia que a CREDENCIAL
+    #: guarda, e a autoridade dela vem de um registro com autor e validade, nao
+    #: desta lista. `allow_any` desliga esta checagem para esse caso: a barreira
+    #: ja foi atravessada uma camada acima, e checar duas vezes com criterios
+    #: diferentes e como duas verdades nascem.
     allowed_from: frozenset[str] = field(default_factory=frozenset)
     workspace: str = "?"
+    allow_any: bool = False
+    #: Comandos que `helper:` pode invocar. Lista fechada: sem ela, uma
+    #: referencia vinda de qualquer lugar viraria execucao arbitraria.
+    helpers: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def resolve(self, reference: str) -> str:
-        if reference not in self.allowed_from:
+        if not self.allow_any and reference not in self.allowed_from:
             raise SecretOutOfScope(
                 f"workspace '{self.workspace}' nao declarou a referencia "
                 f"{reference!r}; declaradas: {sorted(self.allowed_from) or 'nenhuma'}")
@@ -64,8 +99,49 @@ class ScopedSecrets(SecretProvider):
             if not value:
                 raise SecretMissing(f"arquivo de segredo esta vazio: {path}")
             return value
+        if esquema == "helper":
+            return self._helper(resto)
         raise SecretMissing(
-            f"esquema de referencia desconhecido: {esquema!r}. Use env: ou arquivo:")
+            f"esquema de referencia desconhecido: {esquema!r}. "
+            f"Use env:, arquivo: ou helper:")
+
+    def _helper(self, nome: str) -> str:
+        """Pergunta a um programa registrado. Nunca executa texto arbitrario.
+
+        O nome e uma CHAVE numa lista fechada, e nao uma linha de comando: se a
+        referencia carregasse o comando, quem escrevesse uma referencia
+        escreveria o que o processo executa. A composicao decide quais
+        ajudantes existem; a referencia so escolhe entre eles.
+
+        O material sai por `stdout` e nao passa por variavel de ambiente nem por
+        arquivo temporario -- os dois deixam rastro que o `stdout` de um
+        subprocesso nao deixa.
+        """
+        comando = self.helpers.get(nome)
+        if not comando:
+            raise SecretMissing(
+                f"ajudante de credencial {nome!r} nao esta registrado; "
+                f"registrados: {sorted(self.helpers) or 'nenhum'}")
+        try:
+            saida = subprocess.run(
+                list(comando), capture_output=True, text=True, timeout=30,
+                # Ambiente MINIMO. O ajudante recebe o que precisa para achar o
+                # proprio armazenamento, e nada do que este processo carrega.
+                env=_minimal_env())
+        except (OSError, subprocess.SubprocessError) as e:
+            raise SecretMissing(
+                f"ajudante {nome!r} nao pode ser executado: {type(e).__name__}"
+            ) from None
+        if saida.returncode != 0:
+            # A saida de erro NAO e repassada: um ajudante pode ecoar o proprio
+            # segredo numa mensagem de falha, e essa mensagem viraria excecao,
+            # log e evento.
+            raise SecretMissing(
+                f"ajudante {nome!r} falhou com codigo {saida.returncode}")
+        value = (saida.stdout or "").strip()
+        if not value:
+            raise SecretMissing(f"ajudante {nome!r} nao devolveu nada")
+        return value
 
     def available(self, reference: str) -> bool:
         try:

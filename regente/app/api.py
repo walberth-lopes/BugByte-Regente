@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import mimetypes
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -41,7 +41,10 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..core.principal import ANONYMOUS, Principal
 from ..core.access import PrincipalRef
+from ..core.credential import Use
 from ..engine.access import AccessService, Refusal
+from ..engine.credentials import CredentialService
+from ..engine.credentials import Refusal as CredRefusal
 from ..engine.decision import Decision, DecisionService, Denial
 from ..engine.readmodel import ReadModel
 
@@ -105,6 +108,22 @@ DENIAL_STATUS = {
 #: O mesmo, para as recusas de administracao de acesso. Tabela separada porque
 #: os vocabularios sao de camadas diferentes e uni-los criaria um acoplamento
 #: em que acrescentar um motivo numa muda o significado da outra.
+#: As recusas de credencial. Tabela propria: `EXPIRED` e `REVOKED` mandam a
+#: pessoa fazer coisas diferentes, e `SOURCE_UNAVAILABLE` nao diz nada sobre a
+#: credencial -- diz que nao foi possivel perguntar.
+CREDENTIAL_STATUS = {
+    CredRefusal.UNAUTHENTICATED: 401,
+    CredRefusal.FORBIDDEN: 403,
+    CredRefusal.NOT_FOUND: 404,
+    CredRefusal.INVALID: 422,
+    CredRefusal.POLICY_DENIED: 403,
+    CredRefusal.CONFLICT: 409,
+    CredRefusal.EXPIRED: 410,
+    CredRefusal.REVOKED: 410,
+    CredRefusal.NO_CAPABILITY: 403,
+    CredRefusal.SOURCE_UNAVAILABLE: 503,
+}
+
 REFUSAL_STATUS = {
     Refusal.UNAUTHENTICATED: 401,
     Refusal.FORBIDDEN: 403,
@@ -153,6 +172,8 @@ class Api:
     decisions: DecisionService | None = None
     #: Administracao de acesso. Mesma regra.
     access: AccessService | None = None
+    #: Administracao de credenciais. Mesma regra.
+    credentials: CredentialService | None = None
     #: Sessao declarada somente-leitura pela composicao.
     #:
     #: NAO substitui nenhuma barreira: e uma recusa ADICIONAL, antes das do
@@ -185,6 +206,9 @@ class Api:
             if (len(parts) >= 4 and parts[:2] == ["api", "workspaces"]
                     and parts[3] == "access"):
                 return self._access_write(method, parts, body, who)
+            if (len(parts) >= 4 and parts[:2] == ["api", "workspaces"]
+                    and parts[3] == "credentials"):
+                return self._credential_write(method, parts, body, who)
             return _error(405, "read_only",
                           "esta API e somente leitura; autoridade de escrita "
                           "pertence ao motor e ao humano, nao a uma tela")
@@ -285,6 +309,18 @@ class Api:
                 return _error(REFUSAL_STATUS.get(found.refusal, 403),
                               found.refusal.value.lower(), found.reason)
             return Response(200, {"access": [_grant_dict(g) for g in found]})
+
+        if head == "credentials" and not tail:
+            if self.credentials is None:
+                return _error(403, "no_authority",
+                              "esta composicao nao administra credenciais")
+            found = self.credentials.listing(who, workspace_id)
+            if not isinstance(found, list):
+                return _error(CREDENTIAL_STATUS.get(found.refusal, 403),
+                              found.refusal.value.lower(), found.reason)
+            at = self.read.clock()
+            return Response(200, {"credentials": [_credential_dict(c, at)
+                                                  for c in found]})
 
         if head == "escalations" and not tail:
             return Response(200, {"escalations": [
@@ -427,6 +463,77 @@ class Api:
                       outcome.refusal.value.lower() if outcome.refusal
                       else "refused", outcome.reason)
 
+    def _credential_write(self, method: str, parts: list[str],
+                          body: dict | None, who: Principal) -> Response:
+        """`POST .../credentials` registra; `DELETE .../credentials/{id}` revoga.
+
+        Nao existe rota que devolva material secreto, e a ausencia nao e uma
+        lacuna: uma tela nunca precisa do valor para administrar a autoridade
+        dele. `POST .../credentials/{id}/test` prova a credencial contra o
+        provedor e devolve quatro fatos -- nenhum deles o segredo.
+        """
+        if self.credentials is None:
+            return _error(403, "no_authority",
+                          "esta composicao nao administra credenciais")
+        workspace_id = parts[2]
+
+        if method == "DELETE":
+            if len(parts) != 5:
+                return _error(405, "read_only", "rota inexistente")
+            return self._credential_response(
+                self.credentials.revoke(who, workspace_id, parts[4],
+                                        reason=(body or {}).get("reason", "")
+                                        if isinstance(body, dict) else ""))
+
+        if len(parts) == 6 and parts[5] == "test":
+            return _error(501, "no_probe",
+                          "o teste de conexao roda pelo terminal: "
+                          "`regente credentials testar`. A sonda pertence a "
+                          "composicao, e a API nao escolhe qual usar")
+
+        if len(parts) != 4 or not isinstance(body, dict):
+            return _error(400, "invalid_body", "corpo precisa ser um objeto JSON")
+
+        # Nem ator, nem escopo, nem material vem do corpo.
+        for proibido in ("actor", "granted_by", "workspace_id", "client_id",
+                         "secret", "material", "token", "value"):
+            if proibido in body:
+                return _error(400, "invalid_body",
+                              f"'{proibido}' nao e aceito: ator, escopo e "
+                              f"material secreto nao vem da requisicao")
+
+        nome = body.get("name")
+        provider = body.get("provider")
+        referencia = body.get("secret_ref")
+        if not all(isinstance(x, str) and x.strip()
+                   for x in (nome, provider, referencia)):
+            return _error(400, "invalid_body",
+                          "'name', 'provider' e 'secret_ref' sao obrigatorios")
+
+        expira = None
+        dias = body.get("expires_in_days")
+        if isinstance(dias, (int, float)) and dias > 0:
+            expira = self.read.clock() + timedelta(days=float(dias))
+
+        return self._credential_response(self.credentials.register(
+            who, workspace_id, name=nome.strip(), provider=provider.strip(),
+            secret_ref=referencia.strip(),
+            capabilities=body.get("capabilities") or [],
+            kind=str(body.get("kind") or "token"),
+            expires_at=expira, note=str(body.get("note") or "")))
+
+    def _credential_response(self, outcome) -> Response:
+        if outcome.accepted:
+            return Response(200, {
+                "accepted": True, "reason": outcome.reason,
+                "actor": outcome.actor, "target": outcome.target,
+                "credential": (_credential_dict(outcome.credential,
+                                                self.read.clock())
+                               if outcome.credential else None)})
+        return _error(CREDENTIAL_STATUS.get(outcome.refusal, 403),
+                      outcome.refusal.value.lower() if outcome.refusal
+                      else "refused", outcome.reason)
+
     def _global_health(self, who: Principal) -> Response:
         """Saude de cada workspace visivel, sem agregado que esconda.
 
@@ -498,6 +605,30 @@ class Api:
             data = data.replace(b"{{SESSION_TOKEN}}",
                                 self.session_token.encode("utf-8"))
         return Response(200, content_type=kind, body=data)
+
+
+def _credential_dict(credential, at) -> dict:
+    """Uma credencial, dita para fora.
+
+    `secret_ref` entra porque e um ENDERECO -- `helper:github` diz onde
+    procurar e nao vale nada para quem nao esta nesta maquina. O material nunca
+    entra, e nao ha caminho aqui que o alcance: ele nao esta no objeto.
+    """
+    return {
+        "id": credential.id,
+        "name": credential.name,
+        "provider": credential.provider,
+        "kind": credential.kind,
+        "secret_ref": credential.secret_ref.text,
+        "status": credential.status(at).value,
+        "capabilities": sorted(u.value for u in credential.capabilities),
+        "granted_by": credential.granted_by,
+        "granted_at": credential.granted_at,
+        "expires_at": credential.expires_at,
+        "revoked_by": credential.revoked_by,
+        "revoked_at": credential.revoked_at,
+        "note": credential.note,
+    }
 
 
 def _grant_dict(grant) -> dict:
@@ -642,6 +773,7 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
           identity: "IdentityProvider | None" = None,
           decisions: DecisionService | None = None,
           access: AccessService | None = None,
+          credentials: CredentialService | None = None,
           session_token: str = "",
           read_only: bool = False) -> ThreadingHTTPServer:
     """Sobe o servidor. Loopback por padrao, e isso continua sendo uma decisao.
@@ -653,6 +785,7 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
     """
     mimetypes.init()
     api = Api(read=read, decisions=decisions, access=access,
+              credentials=credentials,
               read_only=read_only, session_token=session_token,
               identity_note=(identity.describe() if identity is not None
                              else "sem provedor de identidade"),

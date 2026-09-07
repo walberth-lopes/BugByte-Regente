@@ -61,6 +61,17 @@ rules:
   #
   # Sem estas regras o default DENY vale e o acesso nunca pode ser administrado
   # -- o mesmo beco em que `approval.decide` ficou ate o marco anterior.
+  # Administrar CREDENCIAIS e separado de administrar PESSOAS: quem entra na
+  # equipe nao ganha, por tabela, o direito de apontar para onde os segredos do
+  # cliente vivem. A regra permite que a acao seja avaliada; quem concede
+  # continua sendo uma concessao gravada com a capacidade correspondente.
+  - name: human_keeps_credentials
+    effect: ALLOW
+    match: {action: ["workspace.credential.grant",
+                     "workspace.credential.revoke",
+                     "workspace.credential.list"]}
+    reason: "credencial precisa de dono nomeado, com validade e revogacao"
+
   - name: human_administers_access
     effect: ALLOW
     match: {action: ["workspace.access.grant", "workspace.access.revoke",

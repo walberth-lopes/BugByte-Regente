@@ -17,6 +17,169 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 15 — credenciais de provider
+
+A pergunta do marco: **quem concedeu esta credencial, para onde, para que
+capacidades, ate quando, e como o Regente chega ao segredo sem que ele entre no
+dominio?**
+
+```
+Identity -> AccessGrant -> Policy -> Credential -> Provider -> Operacao
+                                         |
+                                    SecretRef  (endereco)
+                                         |
+                                  SecretMaterial  (nunca sobe)
+```
+
+### O que o levantamento encontrou, antes de qualquer codigo
+
+Registrado em `MILESTONE-15-RECON.md`. Tres defeitos, todos da mesma familia
+que o M14 corrigiu uma camada acima:
+
+**1. O escopo de segredo era um fato de configuracao.** `allowed_from` vinha de
+uma lista no YAML. Quem editava o arquivo autorizava a si mesmo a resolver a
+referencia que quisesse -- sem quem concedeu, sem validade, sem revogacao.
+
+**2. O segredo do agente era resolvido na CONSTRUCAO do adapter.**
+
+```python
+# dentro de `_auth(o)`, durante o build
+env[str(variable)] = secrets.resolve(str(reference))
+```
+
+Isso roda antes de existir identidade, antes de a policy ser consultada, antes
+de qualquer decisao sobre se aquele uso e autorizado. O caminho
+`adapter -> secret` existia e nao passava por lugar nenhum. O provedor de tasks
+era melhor **por acidente** -- guardava um `lambda` e resolvia no uso -- e nada
+garantia que continuasse.
+
+**3. Uma credencial nao tinha capacidade.** Uma referencia resolvida servia para
+qualquer coisa que o adapter soubesse fazer. `provider capability`,
+`credential capability` e `policy authority` eram a mesma coisa, e precisam ser
+tres.
+
+### O que mudou
+
+| antes | agora |
+|---|---|
+| lista de referencias no YAML | `Credential` com autor, data, validade e revogacao |
+| segredo resolvido no build | resolvido **depois** de identidade, acesso, estado, capacidade e policy |
+| referencia serve para tudo | capacidades explicitas por credencial |
+| sem trilha | cinco verbos: registrada, resolvida, usada, negada, revogada |
+| `env:` e `arquivo:` | mais `helper:` — o material nao fica guardado em lugar nenhum |
+
+O `Status` **nunca e uma coluna**: expirar nao e um evento que alguem escreve, e
+o tempo passando. Guardar produziria duas verdades, e a que fica errada e sempre
+a coluna.
+
+`Resolved` reescreve `__repr__` e `__str__`, e o material sai **uma vez**. Isso
+nao apaga o valor da memoria -- Python nao permite, e fingir seria pior que
+admitir -- mas impede que o objeto vire uma fonte reutilizavel passeando pelo
+codigo: quem precisar de novo passa pelo caminho governado, e o uso volta a ser
+auditado.
+
+### Exercitado de verdade
+
+Nao ha nenhuma credencial de provider em variavel de ambiente nesta maquina. Ha
+uma real **no chaveiro do sistema**, alcancavel por um ajudante -- e por isso o
+exercicio nao copiou segredo para lugar nenhum.
+
+```
+$ regente credentials registrar principal --provider repository_write \
+      --referencia helper:github --capacidades repo.read --dias 30
+NOT_FOUND                       <- sem concessao humana, nem comeca
+
+$ regente access inicial        <- identidade real do SO (marco 14)
+$ regente credentials registrar ...
+POLICY_DENIED: nenhuma regra permite 'workspace.credential.grant'
+
+$ (regra adicionada) regente credentials registrar ...
+credencial 'principal' registrada para repository_write
+  id : crd_3bc580cd66a6
+
+$ regente credentials testar --provider repository_write --uso repo.read
+  autorizado pelo Regente : True
+  resposta do provedor    : AUTHENTICATED
+  capacidade suportada    : True
+  utilizavel              : True
+  detalhe                 : aceita como 'walberth-lopes'
+
+$ regente credentials testar --provider repository_write --uso repo.push
+  autorizado pelo Regente : False
+  detalhe : a credencial existe e nao autoriza 'repo.push'; autoriza ['repo.read']
+
+$ regente credentials revogar crd_3bc580cd66a6
+$ regente credentials testar --provider repository_write --uso repo.read
+  detalhe : a credencial foi revogada por os-account:S-1-5-21-...
+```
+
+A chamada ao provedor foi **uma leitura** (`GET /user`). O provider suporta push
+e a credencial tem escopo `repo` -- e ainda assim o push foi recusado, porque
+**a credencial** nao autoriza. E a distincao inteira do marco, numa linha.
+
+Depois disso, varredura do token real de 40 caracteres em todo o banco e em
+todos os arquivos do workspace: **nenhum lugar**.
+
+### Contraprovas
+
+- revogada -> DENY; expirada -> DENY, e as duas sao recusas **diferentes**;
+- no instante exato do vencimento ja venceu (escolha explicita, testada);
+- revogada vence expirada -- o fato relevante e a decisao, nao o relogio;
+- sem capacidade -> DENY, com a lista do que ela autoriza;
+- policy DENY sobre credencial valida -> DENY; policy ausente -> DENY;
+- identidade sem acesso ao workspace -> DENY; anonimo -> DENY;
+- quem decide escalada nao administra credencial (capacidades separadas);
+- fonte indisponivel -> `SOURCE_UNAVAILABLE`, **nunca** um seguir-em-frente;
+- a fonte **nao e consultada** quando a credencial e invalida ou a policy nega;
+- credencial de outro workspace nao resolve, nao lista, nao revoga;
+- mesmo nome e mesmo provider em dois clientes -> dois materiais distintos;
+- revogar em A nao toca B;
+- o material nao aparece em `repr`, em excecao, em evento, no banco, na API nem na tela;
+- referencia `literal:` nao pode nem ser construida;
+- provedor recusar nao e o Regente recusar; provedor indisponivel nao e credencial recusada;
+- credencial revogada **nao chega ao provedor**: o teste para antes.
+
+### Estado das capacidades
+
+| Capacidade | Estado | Evidencia |
+|---|---|---|
+| Credencial com autor, validade e revogacao | **EXERCISED_REAL** | workspace real, credencial do chaveiro |
+| Resolucao por ajudante, sem material guardado | **EXERCISED_REAL** | `helper:github` |
+| Teste de conexao real, somente leitura | **EXERCISED_REAL** | `GET /user`, aceita como `walberth-lopes` |
+| Capacidade da credencial != do provider | **EXERCISED_REAL** | push recusado num provider que suporta push |
+| Revogacao fecha a porta | **EXERCISED_REAL** | teste recusado antes de falar com o provedor |
+| Material fora do banco e dos eventos | **EXERCISED_REAL** | varredura do token real |
+| Ordem das barreiras antes da fonte | CONTRACT_TESTED | a fonte registra o que foi perguntado |
+| Isolamento entre clientes | CONTRACT_TESTED | mesmo nome, mesmo provider, materiais distintos |
+| Substituicao de fonte sem tocar core/ports/engine | CONTRACT_TESTED | fonte de sessao inventada no teste |
+| **Credencial de Jira** | **BLOCKED_REAL_WORLD_INPUT** | nao existe neste ambiente |
+| **Credencial de agente** | **BLOCKED_REAL_WORLD_INPUT** | M7 segue bloqueado; nada foi inventado |
+
+### Limitacoes
+
+**Um provider real, nao tres.** O exercicio usou a unica credencial real
+disponivel. Jira e agente continuam sem credencial neste ambiente, e M6/M7 nao
+foram reabertos.
+
+**A API nao testa conexao.** `POST .../credentials/{id}/test` responde `501` com
+o motivo: a sonda pertence a composicao, e deixar a API escolher qual usar
+colocaria conhecimento de fornecedor num lugar que nao pode te-lo. O teste roda
+pelo terminal.
+
+**O caminho antigo ainda existe.** `registry.py` continua resolvendo referencias
+na construcao dos adapters, com a lista do YAML. O caminho governado foi
+construido e provado, mas os adapters existentes ainda nao foram migrados para
+ele -- e migra-los mexeria em M6 e M7, que este marco nao reabre.
+
+**`use_secret()` nao apaga o valor da memoria.** Python nao permite, e o codigo
+diz isso em vez de sugerir o contrario. O que ele garante e que o objeto nao
+vire fonte reutilizavel.
+
+**Sem rotacao automatica.** Uma credencial vence e para de funcionar; ninguem a
+renova sozinho, e a tela nao avisa antes.
+
+---
+
 ## Milestone 14 — identidade real e administracao de acesso
 
 A pergunta do marco: **quem e a pessoa usando a Mission Control, como o Regente

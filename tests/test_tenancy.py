@@ -569,6 +569,7 @@ GLOBAL_BY_DESIGN = {
     # escrita depois da importacao e sem nada de tenant. Declarada como todo o
     # resto, porque a guarda so vale enquanto ninguem acrescenta em silencio.
     ("api.py", "DENIAL_STATUS"), ("api.py", "REFUSAL_STATUS"),
+    ("api.py", "CREDENTIAL_STATUS"),
     # Vocabulario de papeis: tres nomes, cada um com um conjunto fixo de
     # capacidades. Nao recebe escrita depois da importacao e nao guarda nada de
     # tenant -- mas passa pela declaracao como todo o resto, porque a guarda so

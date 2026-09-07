@@ -218,6 +218,84 @@ def cmd_health(args) -> int:
             health_module.Level.STUCK: 2}[report.level]
 
 
+def cmd_credentials(args) -> int:
+    """Administra as credenciais deste workspace.
+
+    Nenhum subcomando imprime material secreto, e nao existe um que imprima:
+    `mostrar` exibe endereco, capacidades, validade e quem concedeu. Um
+    comando de diagnostico que revelasse valor viraria, no primeiro incidente,
+    a forma mais rapida de copiar um token -- e ficaria.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from .engine.credentials import Reach, Use
+
+    cfg = _load_config(args)
+    motor = container.build(cfg)
+    try:
+        service = motor.credentials()
+        who = motor.terminal_principal()
+        workspace = motor.workspace.id
+
+        if args.acao == "listar":
+            saida = service.listing(who, workspace)
+            if not isinstance(saida, list):
+                print(f"{saida.refusal.value}: {saida.reason}", file=sys.stderr)
+                return 1
+            if not saida:
+                print("nenhuma credencial registrada neste workspace")
+                return 0
+            agora = datetime.now(timezone.utc)
+            for c in saida:
+                print(f"  {c.provider}/{c.name}  [{c.id}]")
+                print(f"    estado      : {c.status(agora).value}")
+                print(f"    referencia  : {c.secret_ref}")
+                print(f"    capacidades : "
+                      f"{', '.join(sorted(u.value for u in c.capabilities))}")
+                print(f"    concedida   : {c.granted_at} por {c.granted_by}")
+                print(f"    vence       : {c.expires_at or 'sem validade'}")
+                if c.revoked_at:
+                    print(f"    revogada    : {c.revoked_at} por {c.revoked_by}")
+            return 0
+
+        if args.acao == "registrar":
+            vence = None
+            if args.dias:
+                vence = datetime.now(timezone.utc) + timedelta(days=args.dias)
+            saida = service.register(
+                who, workspace, name=args.nome, provider=args.provider,
+                secret_ref=args.referencia,
+                capabilities=[c.strip() for c in args.capacidades.split(",")],
+                kind=args.tipo, expires_at=vence, note=args.nota or "")
+        elif args.acao == "revogar":
+            saida = service.revoke(who, workspace, args.nome,
+                                   reason=args.nota or "")
+        else:                                              # testar
+            from .adapters.probe import probe_for
+
+            uso = Use(args.uso)
+            resultado = service.test_connection(
+                who, workspace, args.provider, uso,
+                probe_for(args.provider, cfg))
+            print(f"  autorizado pelo Regente : {resultado.authorized}")
+            print(f"  resposta do provedor    : {resultado.reach.value}")
+            print(f"  capacidade suportada    : {resultado.capability_supported}")
+            print(f"  utilizavel              : {resultado.usable}")
+            print(f"  detalhe                 : {resultado.detail}")
+            return 0 if resultado.usable else 1
+
+        if not saida.accepted:
+            print(f"{saida.refusal.value}: {saida.reason}", file=sys.stderr)
+            return 1
+        print(saida.reason)
+        print(f"  ator : {saida.actor}")
+        if saida.credential:
+            print(f"  id   : {saida.credential.id}")
+        return 0
+    finally:
+        motor.close()
+
+
 def cmd_access(args) -> int:
     """Administra o acesso deste workspace, pelo mesmo caminho que a tela usa.
 
@@ -352,8 +430,20 @@ def cmd_ui(args) -> int:
         environment=(cfg.projects[0].default_environment
                      if cfg.projects else "staging"))
 
+    from .adapters.secrets import ScopedSecrets
+    from .engine.credentials import CredentialService
+
+    credentials = CredentialService(
+        store=store, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
+        secrets=ScopedSecrets(workspace=cfg.workspace, allow_any=True,
+                              helpers=dict(cfg.helpers)),
+        organization=cfg.organization, client=cfg.client,
+        workspace_name=cfg.workspace,
+        environment=(cfg.projects[0].default_environment
+                     if cfg.projects else "staging"))
+
     httpd = serve(read, host=args.host, port=args.port, identity=identity,
-                  decisions=decisions, access=access,
+                  decisions=decisions, access=access, credentials=credentials,
                   session_token=identity.token,
                   read_only=args.read_only)
     where = f"http://{args.host}:{args.port}/"
@@ -636,6 +726,26 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("rules", help="regras, limites e adapters em vigor")
     p.set_defaults(fn=cmd_rules)
+
+    p = sub.add_parser("credentials",
+                       help="credenciais de provider deste workspace")
+    p.add_argument("acao", choices=["listar", "registrar", "revogar", "testar"])
+    p.add_argument("nome", nargs="?", default="",
+                   help="nome da credencial; na revogacao, o id")
+    p.add_argument("--provider", default="repository")
+    p.add_argument("--referencia", default="",
+                   help="onde o segredo vive: env:NOME, arquivo:CAMINHO "
+                        "ou helper:AJUDANTE")
+    p.add_argument("--capacidades", default="repo.read",
+                   help="lista separada por virgula")
+    p.add_argument("--tipo", default="token")
+    p.add_argument("--dias", type=int, default=0,
+                   help="validade em dias; 0 = sem validade")
+    p.add_argument("--uso", default="repo.read",
+                   help="capacidade a testar em `testar`")
+    p.add_argument("--nota", default="")
+    p.add_argument("--config", default="regente.yaml")
+    p.set_defaults(fn=cmd_credentials)
 
     p = sub.add_parser("access", help="quem pode agir neste workspace")
     p.add_argument("acao", choices=["listar", "conceder", "revogar", "inicial",

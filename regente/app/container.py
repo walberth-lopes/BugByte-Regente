@@ -22,6 +22,7 @@ from ..engine.readiness import diagnose as _diagnose_agent
 from ..adapters.identity.os_account import OsAccountIdentity
 from ..engine import readiness
 from ..engine.access import AccessService
+from ..engine.credentials import CredentialService
 from ..engine.decision import DecisionService
 from ..engine.remote import RemoteDelivery
 from ..engine.store_sqlite import SqliteStore
@@ -86,6 +87,25 @@ class Engine:
         """Administracao de acesso. UMA, para terminal e navegador."""
         return AccessService(
             store=self.store, policy=self.policy or PolicyEngine.from_config([]),
+            organization=self.config.organization, client=self.config.client,
+            workspace_name=self.workspace.name,
+            environment=(self.config.projects[0].default_environment
+                         if self.config.projects else "staging"))
+
+    def credentials(self) -> CredentialService:
+        """O caminho governado ate um segredo. UM, para terminal e navegador.
+
+        A fonte de segredo entra com `allow_any=True` de proposito: a lista de
+        referencias do YAML era a autoridade ANTIGA, e mante-la aqui criaria
+        duas -- uma no arquivo, outra na credencial registrada. A barreira que
+        vale e a de cima, com autor, validade e revogacao.
+        """
+        from ..adapters.secrets import ScopedSecrets
+
+        return CredentialService(
+            store=self.store, policy=self.policy or PolicyEngine.from_config([]),
+            secrets=ScopedSecrets(workspace=self.workspace.name, allow_any=True,
+                                  helpers=dict(self.config.helpers)),
             organization=self.config.organization, client=self.config.client,
             workspace_name=self.workspace.name,
             environment=(self.config.projects[0].default_environment

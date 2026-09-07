@@ -137,6 +137,39 @@ porque um `403` confirmaria que o recurso existe.
 A resposta da escrita nao vira segunda fonte de verdade: a tela **rele** -- e
 rele tambem quando a decisao e recusada, porque o mundo pode ter mudado.
 
+## Credenciais
+
+```
+GET    /api/workspaces/{id}/credentials              lista, com historia
+POST   /api/workspaces/{id}/credentials              registra
+DELETE /api/workspaces/{id}/credentials/{crd}        revoga
+```
+
+**Nao existe rota que devolva material secreto**, e a ausencia nao e uma lacuna:
+uma tela nunca precisa do valor para administrar a autoridade dele. O que a API
+devolve e o ENDERECO (`helper:github`, `env:NOME`) -- que diz onde procurar e
+nao vale nada para quem nao esta naquela maquina.
+
+`POST .../credentials/{id}/test` responde `501` de proposito: a sonda de conexao
+pertence a composicao, e deixar a API escolher qual usar colocaria conhecimento
+de fornecedor num lugar que nao pode te-lo. O teste roda por
+`regente credentials testar`.
+
+| recusa | HTTP | o que a pessoa faz |
+|---|---|---|
+| `EXPIRED` | 410 | renovar |
+| `REVOKED` | 410 | falar com quem revogou |
+| `NO_CAPABILITY` | 403 | registrar uma credencial com aquela capacidade |
+| `SOURCE_UNAVAILABLE` | 503 | olhar a fonte, nao a credencial |
+
+Capacidades sao explicitas por credencial: `repo.read`, `repo.push`, `repo.pr`,
+`task.read`, `task.write`, `ci.read`, `agent.run`. Uma credencial de leitura nao
+vale para push so porque o provider oferece push.
+
+Administrar credenciais e uma capacidade humana separada de administrar pessoas:
+o papel `keeper` tem `workspace.credential.*` e nao decide escalada; `admin`
+administra pessoas e nao toca em credencial; `owner` tem os tres conjuntos.
+
 ## Rotas
 
 Todas `GET`. Qualquer outro metodo responde `405 read_only` -- e nao o `501` da

@@ -667,6 +667,47 @@ codigo-fonte.
 bob` sao fatos diferentes; o segundo e recusado, e guardar so "quem foi afetado"
 apagaria a pergunta que a auditoria de acesso existe para responder.
 
+### Credencial e segredo sao coisas diferentes
+
+```
+Credential      quem pode usar o que, onde, ate quando   -- vive no motor
+SecretRef       onde o material mora                     -- um endereco
+SecretMaterial  o valor                                  -- nunca sobe
+```
+
+O dominio nao tem campo para guardar um token. Se um segredo couber num objeto
+de `core/`, o desenho esta errado -- um banco vai para backup, para anexo de bug
+e para captura de tela.
+
+**A ordem, e nenhuma linha e pulavel:**
+
+```
+identidade -> acesso no workspace -> credencial deste escopo
+           -> estado (revogada vence expirada) -> capacidade -> policy
+           -----------------------------------------------------------
+           so entao: resolve o material
+```
+
+Antes disto existia `adapter -> secret`: a composicao montava o adapter e o
+valor era resolvido ali mesmo, antes de haver identidade, antes de a policy ser
+consultada. Funcionava perfeitamente e nao passava por lugar nenhum.
+
+**Tres capacidades, nao uma.** `provider capability` e o que a ferramenta sabe
+fazer; `credential capability` e o que ESTA credencial foi autorizada a fazer;
+`policy authority` e o que a organizacao permite. Uma credencial de leitura nao
+vale para push so porque o provider oferece push.
+
+**`Status` nunca e coluna.** Expirar nao e um evento que alguem escreve, e o
+tempo passando. Uma coluna criaria duas verdades, e a errada seria sempre ela.
+
+**`UNKNOWN` nunca vira `ALLOW`.** Fonte de segredo indisponivel e uma recusa com
+nome proprio -- distinta de expirada e de revogada, porque as tres mandam a
+pessoa fazer coisas diferentes.
+
+**Quatro fatos no teste de conexao.** `authorized` (o Regente), `reach` (o
+provedor), `capability_supported` (a ferramenta) e `usable` (os tres juntos).
+Autenticar nao e autorizar; indisponivel nao e recusado.
+
 ### Uma escrita, e as mesmas barreiras
 
 A tela ganhou exatamente uma acao: **decidir uma escalada**. Ela nao ganhou
