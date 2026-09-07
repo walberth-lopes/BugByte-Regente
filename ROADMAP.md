@@ -9,7 +9,7 @@ A milestone does not close without proof on disk.
 | 2 | Mission Control (local UI) | the 4 questions on screen; deciding a queue item from the browser |
 | **3** | **Real TaskProvider** ✅ | a real adapter reading the real board in shadow; the contract passes on two providers; zero mutation |
 | **4** | **RepositoryProvider** ✅ | two real providers in shadow; identity within the tenancy; write contract declared, nothing implemented |
-| 5 | CoderAgent | a worker that writes real code in an isolated worktree |
+| **5** | **AgentRunner + validation loop** ✅ | missão selecionada, alvo resolvido, clone isolado, agente executado, teste com linha de base, veredito e commit — DECLARED e DISCOVERED provados ponta a ponta |
 | 6 | CI + PR | the engine follows checks and reacts to red |
 | 7 | ReviewerAgent | a review pinned to the reviewed SHA, with a second pass on high risk |
 | 8 | CloudProvider | reading resources, logs and metrics |

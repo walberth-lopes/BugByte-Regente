@@ -17,7 +17,7 @@ Two facts about the real disk that the design respects:
    `scamchecker-legado` points at `silverguard-br/scamchecker`. The identity
    comes from the remote when there is one; from the path only when there is no
    remote.
-2. **The current branch is almost never the base.** Of the 12 clones examined, 11
+2. **A branch corrente quase nunca e a base.** Dos 12 clones examinados, 11
    were on a work branch. Reading `HEAD` as the base would derive new work from
    somebody else's half-finished code.
 """
@@ -48,9 +48,8 @@ class GitLocal(RepositoryProvider):
 
     root: Path
     name: str = "git-local"
-    #: Reflects what the adapter can do: reads everything from disk except pull
-    #: requests, which do not exist in plain git -- they are a concept belonging
-    #: to the hosting service.
+    #: Reflete o que o adapter consegue: le tudo do disco, menos pull requests,
+    #: which do not exist in plain git -- they belong to the hosting service.
     capabilities: frozenset[RepoCapability] = field(
         default_factory=lambda: READ_CAPS - {RepoCapability.READ_PULL_REQUESTS})
     observer: Observer | None = None
@@ -87,10 +86,10 @@ class GitLocal(RepositoryProvider):
                 # silently.
                 encoding="utf-8", errors="replace", timeout=self.timeout)
         except subprocess.TimeoutExpired as e:
-            self._notify_observer(args, started, False, f"timeout after {self.timeout}s")
+            self._notify_observer(args, started, False, f"timeout apos {self.timeout}s")
             raise AdapterError(f"git {args[0]} timed out after {self.timeout}s in {cwd}") from e
         except FileNotFoundError as e:
-            self._notify_observer(args, started, False, "git not found")
+            self._notify_observer(args, started, False, "git nao encontrado")
             raise AdapterError("git is not on the PATH") from e
         if p.returncode != 0:
             error = (p.stderr or "").strip()[:300]
@@ -161,10 +160,10 @@ class GitLocal(RepositoryProvider):
                 data["current_branch"] = self._git(
                     path, "symbolic-ref", "--short", "HEAD").strip()
             except AdapterError:
-                data["current_branch"] = "(detached)"
-            # The directory name differing from the repository is not an error --
-            # it is a fact of the disk, and the engine has to be able to see it
-            # without investigating.
+                data["branch_corrente"] = "(destacado)"
+            # The directory name differing from the repository is not an error
+            # -- it is a fact of the disk, and the engine has to be able to see
+            # it without investigating.
             if key.rsplit("/", 1)[-1] != path.name:
                 data["directory_differs_from_repo"] = True
 
@@ -179,10 +178,10 @@ class GitLocal(RepositoryProvider):
             data=data)
 
     def list_repositories(self, filters: dict[str, Any] | None = None) -> list[RepoInfo]:
-        # `completo=True` even when listing: discovering the base costs two local
-        # commands, and a listing without a base does not answer the question one
-        # asks of a repository listing. On a network provider the sum would be
-        # different.
+        # `completo=True` mesmo na listagem: descobrir a base custa dois comandos
+        # commands, and a listing without a base does not answer the question
+        # one asks of a repository listing. On a network provider the sum would
+        # be different.
         return [self._build(c, full=True) for c in self._clone_dirs()]
 
     def get_repository(self, key: str) -> RepoInfo:
@@ -200,7 +199,7 @@ class GitLocal(RepositoryProvider):
     def list_branches(self, key: str, filters: dict[str, Any] | None = None) -> list[Branch]:
         path = self._path_for(key)
         base = self._base_branch_of(path)
-        default_value = (filters or {}).get("pattern", "")
+        default_value = (filters or {}).get("padrao", "")
         output = self._git(path, "for-each-ref",
                           "--format=%(refname:short)%09%(objectname)%09%(committerdate:iso8601)",
                           "refs/heads", "refs/remotes/origin")
@@ -214,9 +213,8 @@ class GitLocal(RepositoryProvider):
                 name = name.split("/", 1)[1]
             if name in ("HEAD", "") or (default_value and default_value.lower() not in name.lower()):
                 continue
-            # The local and remote of the same branch are the same branch. The
-            # first one seen wins; duplicating would make the engine think there
-            # are two.
+            # The local and remote of the same branch are one branch. The first
+            # visto vence; duplicar faria o motor achar que ha duas.
             seen.setdefault(name, Branch(name=name, sha=parts[1],
                                            is_base=(name == base),
                                            updated_at=parts[2] if len(parts) > 2 else ""))
@@ -228,7 +226,7 @@ class GitLocal(RepositoryProvider):
         try:
             return self._git(path, "show", target)
         except AdapterError as e:
-            raise AdapterError(f"{file_path} does not exist in {key}@{ref or 'base'}") from e
+            raise AdapterError(f"{file_path} nao existe em {key}@{ref or 'base'}") from e
 
 
 def _org_repo(url: str) -> str:

@@ -47,6 +47,96 @@ class IsolatedDirectory(WorkspaceProvider):
             return []
         return [WorkArea(id=p.name, path=str(p)) for p in self.root.iterdir() if p.is_dir()]
 
+    # ---- writing history, inside the area only --------------------------
+
+    def head(self, area: WorkArea) -> str:
+        return self._git("rev-parse", "HEAD", cwd=Path(area.path)).strip()
+
+    #: Branch names a push may never target, whatever the caller asks for.
+    INTEGRATION_BRANCHES = frozenset({"main", "master", "develop", "dev",
+                                      "release", "staging", "production", "HEAD"})
+
+    def push(self, area: WorkArea, expected_sha: str,
+             branch: str | None = None) -> str:
+        """Publish the work branch. Five refusals, checked in this order.
+
+        Order matters: the cheapest and most dangerous checks run first, so a
+        misconfigured call never reaches the network.
+        """
+        path = Path(area.path)
+        target_branch = branch or area.branch
+        if not target_branch:
+            raise AdapterError("refused: the area has no work branch")
+
+        # 1. Never an integration branch, whoever asked.
+        if target_branch in self.INTEGRATION_BRANCHES:
+            raise AdapterError(
+                f"refused to push '{target_branch}': it is an integration branch")
+
+        # 2. Never a branch this run does not own.
+        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
+        if current != target_branch:
+            raise AdapterError(
+                f"refused to push: the area is on '{current}' and the push asks "
+                f"for '{target_branch}'")
+
+        # 3. Never to a local path. The whole point of separating `sources` from
+        #    `remotes` is that a local target means somebody's checkout.
+        destination = self.push_target_of(path)
+        if not destination:
+            raise AdapterError(
+                "refused to push: this area has no push target. Absence of "
+                "configuration means a push is impossible, not local")
+        if _looks_local(destination):
+            raise AdapterError(
+                f"refused to push to a local path: {destination}")
+
+        # 4. Never work nobody verified. Between validation and push the branch
+        #    may have moved, and pushing then vouches for an unseen commit.
+        actual = self.head(area)
+        if actual != expected_sha:
+            raise AdapterError(
+                f"refused to push: expected {expected_sha[:12]} and the branch "
+                f"is at {actual[:12]}; the work changed after it was validated")
+
+        # 5. Never rewrite history. `--force-with-lease` is still a force, and
+        #    the engine has no business overwriting anyone's refs.
+        self._git("push", "--set-upstream", "origin",
+                  f"{target_branch}:{target_branch}", cwd=path)
+        return actual
+
+    def is_dirty(self, area: WorkArea) -> bool:
+        return bool(self._git("status", "--porcelain", cwd=Path(area.path)).strip())
+
+    def commit(self, area: WorkArea, message: str,
+               author: tuple[str, str] | None = None) -> str:
+        path = Path(area.path)
+        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
+
+        # Refusing here rather than trusting the caller: the engine builds the
+        # work branch, so being on anything else means something upstream went
+        # wrong, and a commit is a terrible place to find that out.
+        if current in ("HEAD", "main", "master", "develop"):
+            raise AdapterError(
+                f"refused to commit on '{current}': the isolated area must be on "
+                f"its own work branch, never on an integration branch")
+        if area.branch and current != area.branch:
+            raise AdapterError(
+                f"refused to commit: the area is on '{current}' and the run owns "
+                f"'{area.branch}'")
+
+        if not self.is_dirty(area):
+            raise AdapterError("nothing to commit: the area has no changes")
+
+        # `--no-verify` is deliberately NOT used: a repository's own hooks are
+        # part of its rules, and an engine that skips them is writing history
+        # the team did not agree to.
+        name, email = author or ("Regente", "regente@localhost.invalid")
+        self._git("add", "-A", cwd=path)
+        self._git("-c", f"user.name={name}", "-c", f"user.email={email}",
+                  "commit", "-q", "-m", message, cwd=path)
+        return self.head(area)
+
 
 class GitWorktree(WorkspaceProvider):
     name = "worktree"
@@ -121,7 +211,16 @@ class GitClone(WorkspaceProvider):
     """
 
     root: Path
+    #: repo key -> where to clone FROM. May be a fast local path.
     sources: dict[str, str] = field(default_factory=dict)
+    #: repo key -> where a push may go. The real remote, and nothing else.
+    #:
+    #: Separate from `sources` on purpose. Cloning from a local path is a speed
+    #: decision; pushing to it is a mutation of somebody's checkout. Conflating
+    #: the two is what made the dangerous configuration the default one: git
+    #: sets `origin` to whatever it cloned from, so an area cloned locally comes
+    #: pre-aimed at the source.
+    remotes: dict[str, str] = field(default_factory=dict)
     name: str = "clone"
     timeout: int = 600
 
@@ -169,9 +268,43 @@ class GitClone(WorkspaceProvider):
         # name: the agent must not be able to land on the integration branch by
         # accident, and a branch that already exists must fail loudly.
         self._git("checkout", "-q", "-b", work_branch, cwd=destination)
+        self._aim_remote(destination, repo)
         head = self._git("rev-parse", "HEAD", cwd=destination).strip()
         return WorkArea(id=key, path=str(destination), branch=work_branch, repo=repo,
-                        data={"source": source, "base": base or "", "head_at_clone": head})
+                        data={"source": source, "base": base or "", "head_at_clone": head,
+                              "push_target": self.push_target_of(destination) or ""})
+
+    def _aim_remote(self, destination: Path, repo: str | None) -> None:
+        """Point `origin` at the real remote, or remove it entirely.
+
+        There is no third option on purpose. Leaving `origin` on the local source
+        would make the safest-looking configuration the one that writes into
+        somebody's checkout, and leaving a half-configured remote would fail at
+        push time -- after the work, when failing is most expensive.
+
+        Absence of configuration must make a push IMPOSSIBLE, never accidentally
+        local. That is why the fallback deletes the remote rather than keeping it.
+        """
+        remote = self.remotes.get(repo or "")
+        if remote:
+            self._git("remote", "set-url", "origin", remote, cwd=destination)
+            self._git("remote", "set-url", "--push", "origin", remote, cwd=destination)
+            return
+        try:
+            self._git("remote", "remove", "origin", cwd=destination)
+        except AdapterError:
+            pass   # no remote to remove is the state we wanted anyway
+
+    def push_target_of(self, path: Path | str) -> str | None:
+        """Where a push from this area would actually go. `None` when nowhere."""
+        try:
+            return self._git("remote", "get-url", "--push", "origin",
+                             cwd=Path(path)).strip() or None
+        except AdapterError:
+            return None
+
+    def push_target(self, area: WorkArea) -> str | None:
+        return self.push_target_of(area.path)
 
     def discard(self, area: WorkArea) -> None:
         shutil.rmtree(area.path, ignore_errors=True)
@@ -180,3 +313,93 @@ class GitClone(WorkspaceProvider):
         if not self.root.is_dir():
             return []
         return [WorkArea(id=p.name, path=str(p)) for p in self.root.iterdir() if p.is_dir()]
+
+    # ---- writing history, inside the area only --------------------------
+
+    def head(self, area: WorkArea) -> str:
+        return self._git("rev-parse", "HEAD", cwd=Path(area.path)).strip()
+
+    #: Branch names a push may never target, whatever the caller asks for.
+    INTEGRATION_BRANCHES = frozenset({"main", "master", "develop", "dev",
+                                      "release", "staging", "production", "HEAD"})
+
+    def push(self, area: WorkArea, expected_sha: str,
+             branch: str | None = None) -> str:
+        """Publish the work branch. Five refusals, checked in this order.
+
+        Order matters: the cheapest and most dangerous checks run first, so a
+        misconfigured call never reaches the network.
+        """
+        path = Path(area.path)
+        target_branch = branch or area.branch
+        if not target_branch:
+            raise AdapterError("refused: the area has no work branch")
+
+        # 1. Never an integration branch, whoever asked.
+        if target_branch in self.INTEGRATION_BRANCHES:
+            raise AdapterError(
+                f"refused to push '{target_branch}': it is an integration branch")
+
+        # 2. Never a branch this run does not own.
+        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
+        if current != target_branch:
+            raise AdapterError(
+                f"refused to push: the area is on '{current}' and the push asks "
+                f"for '{target_branch}'")
+
+        # 3. Never to a local path. The whole point of separating `sources` from
+        #    `remotes` is that a local target means somebody's checkout.
+        destination = self.push_target_of(path)
+        if not destination:
+            raise AdapterError(
+                "refused to push: this area has no push target. Absence of "
+                "configuration means a push is impossible, not local")
+        if _looks_local(destination):
+            raise AdapterError(
+                f"refused to push to a local path: {destination}")
+
+        # 4. Never work nobody verified. Between validation and push the branch
+        #    may have moved, and pushing then vouches for an unseen commit.
+        actual = self.head(area)
+        if actual != expected_sha:
+            raise AdapterError(
+                f"refused to push: expected {expected_sha[:12]} and the branch "
+                f"is at {actual[:12]}; the work changed after it was validated")
+
+        # 5. Never rewrite history. `--force-with-lease` is still a force, and
+        #    the engine has no business overwriting anyone's refs.
+        self._git("push", "--set-upstream", "origin",
+                  f"{target_branch}:{target_branch}", cwd=path)
+        return actual
+
+    def is_dirty(self, area: WorkArea) -> bool:
+        return bool(self._git("status", "--porcelain", cwd=Path(area.path)).strip())
+
+    def commit(self, area: WorkArea, message: str,
+               author: tuple[str, str] | None = None) -> str:
+        path = Path(area.path)
+        current = self._git("rev-parse", "--abbrev-ref", "HEAD", cwd=path).strip()
+
+        # Refusing here rather than trusting the caller: the engine builds the
+        # work branch, so being on anything else means something upstream went
+        # wrong, and a commit is a terrible place to find that out.
+        if current in ("HEAD", "main", "master", "develop"):
+            raise AdapterError(
+                f"refused to commit on '{current}': the isolated area must be on "
+                f"its own work branch, never on an integration branch")
+        if area.branch and current != area.branch:
+            raise AdapterError(
+                f"refused to commit: the area is on '{current}' and the run owns "
+                f"'{area.branch}'")
+
+        if not self.is_dirty(area):
+            raise AdapterError("nothing to commit: the area has no changes")
+
+        # `--no-verify` is deliberately NOT used: a repository's own hooks are
+        # part of its rules, and an engine that skips them is writing history
+        # the team did not agree to.
+        name, email = author or ("Regente", "regente@localhost.invalid")
+        self._git("add", "-A", cwd=path)
+        self._git("-c", f"user.name={name}", "-c", f"user.email={email}",
+                  "commit", "-q", "-m", message, cwd=path)
+        return self.head(area)

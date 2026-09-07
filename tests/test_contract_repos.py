@@ -9,7 +9,6 @@ The local provider runs over REAL git repositories created on the spot -- there
 is no simulation of git anywhere. The remote one requires a network and a
 credential, so it runs under a marker: `pytest -m rede`. The default suite stays
 fast and offline, and the contract stays the same code in both cases.
-
 """
 
 from __future__ import annotations
@@ -92,11 +91,9 @@ def test_list_returns_repositorios(provider):
     assert all(r.ref.key for r in repos)
 
 
-def test_identity_comes_from_the_remote_not_the_directory(provider):
+def test_identity_vem_of_remote_not_of_directory(provider):
     """The defect this test prevents was measured on the real disk: the directory
-    `scamchecker-legado` points at the repository `scamchecker`.
-
-    """
+    `scamchecker-legado` points at the repository `scamchecker`."""
     por_dir = {r.data["directory"]: r for r in provider.list_repositories()}
     assert por_dir["api"].ref.key == "acme/servico-api"
     assert por_dir["api"].data.get("directory_differs_from_repo") is True
@@ -167,7 +164,7 @@ def test_list_branches_without_duplicating_local_is_remote(provider):
 
 
 def test_filter_of_branch(provider):
-    found = provider.list_branches("acme/servico-api", {"pattern": "K-1"})
+    found = provider.list_branches("acme/servico-api", {"padrao": "K-1"})
     assert [b.name for b in found] == ["feat/K-1-coisa"]
 
 
@@ -196,10 +193,12 @@ def test_missing_capability_is_declared_not_simulated(provider):
 # Shadow mode: per INVOCATION, never per verb
 # ---------------------------------------------------------------------------
 
+# `push` is absent on purpose: it belongs to `WorkspaceProvider`, where the
+# isolated area lives. See `test_push_target.py` and the note in
+# `ports/repository.py`.
 PORT_WRITE_OPS = [
     ("create_branch", ("k", "b", "base")),
     ("create_commit", ("k", "b", "msg", {})),
-    ("push", ("k", "b")),
     ("create_pull_request", ("k", "b", "base", "t", "c")),
     ("submit_review", ("k", 1, "sha", "corpo", "APPROVE")),
     ("merge_pull_request", ("k", 1)),
@@ -221,9 +220,7 @@ def test_write_not_esta_implemented(provider, operation, args):
 ])
 def test_git_refuses_invocation_that_writes(provider, clones, invocation):
     """Each of these starts with a verb that has a read form -- which is why an
-    allowlist by verb would let them through.
-
-    """
+    um allowlist por verbo os deixaria passar."""
     with pytest.raises(ReadOnlyRefused):
         provider._git(clones / "api", *invocation)
 
@@ -283,10 +280,9 @@ def test_directory_without_git_is_ignored_without_breaking(provider, clones):
 def test_timeout_becomes_error_of_adapter(provider, clones, monkeypatch):
     """Tests the TRANSLATION of the timeout, not the race.
 
-    A test that relies on `timeout=0` actually firing depends on the process being
-    slower than the clock's granularity -- and therefore fails every so often, on
-    the wrong machine, with nobody understanding why.
-
+    Um teste que confia em `timeout=0` disparar de fato depende de o processo
+    being slower than the clock's granularity -- and therefore fails every so
+    often, on the wrong machine, with nobody understanding why.
     """
     def blow_up(*a, **k):
         raise subprocess.TimeoutExpired(cmd="git", timeout=0.1)

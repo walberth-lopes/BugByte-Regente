@@ -57,6 +57,11 @@ WEIGHT_MODULE = 30           # the repository contains the module the task names
 #: not justify writing code into a repository.
 CONFIDENCE_FLOOR = WEIGHT_MODULE
 
+#: How many examined-but-empty repositories to name in the record. A record that
+#: lists nothing looks like nothing was examined; a record that lists three
+#: hundred is unreadable. When the list is cut, the record says so.
+MAX_EXAMINED_RECORDED = 8
+
 
 @dataclass(frozen=True, slots=True)
 class Rejected:
@@ -112,6 +117,19 @@ def _code_like_words(text: str) -> set[str]:
         if len(candidate) >= 8:
             found.add(candidate)
     return found
+
+
+def _examined_without_evidence(catalog: list[RepoInfo],
+                               strengths: dict[str, int]) -> tuple[Rejected, ...]:
+    """Repositories that were looked at and produced nothing."""
+    empty = [r.ref.key for r in catalog if r.ref.key not in strengths]
+    shown = [Rejected(k, "examined; no evidence linked it to this task")
+             for k in sorted(empty)[:MAX_EXAMINED_RECORDED]]
+    if len(empty) > MAX_EXAMINED_RECORDED:
+        shown.append(Rejected(
+            f"+{len(empty) - MAX_EXAMINED_RECORDED} more",
+            f"examined; list truncated at {MAX_EXAMINED_RECORDED}"))
+    return tuple(shown)
 
 
 @dataclass(slots=True)
@@ -197,14 +215,18 @@ class Investigator:
             return Discovery(
                 task_key=task.key, repo=None, confidence=Confidence.ABSENT,
                 source=Source.DISCOVERED, queries=queries,
-                alternatives_considered=tuple(
-                    Rejected(r.ref.key, "no evidence of any kind") for r in catalog[:5]))
+                alternatives_considered=_examined_without_evidence(catalog, {}))
 
         best = max(strengths.values())
         winners = sorted(k for k, f in strengths.items() if f == best)
         rejected = tuple(
             Rejected(k, f"weaker evidence ({strengths[k]} < {best})")
             for k in sorted(strengths) if k not in winners)
+        # A repository that was examined and yielded nothing is still an
+        # alternative that was considered. Leaving it out makes the record read
+        # as though it was never looked at, which is the opposite of the truth
+        # and exactly what an auditor would need to know.
+        rejected += _examined_without_evidence(catalog, strengths)
 
         if best < CONFIDENCE_FLOOR:
             return Discovery(

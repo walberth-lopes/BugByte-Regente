@@ -80,10 +80,10 @@ class GitHubRepos(RepositoryProvider):
                 [self.cli_path, *args], capture_output=True,
                 encoding="utf-8", errors="replace", timeout=self.timeout)
         except subprocess.TimeoutExpired as e:
-            self._notify_observer(args, started, False, None, f"timeout after {self.timeout}s")
+            self._notify_observer(args, started, False, None, f"timeout apos {self.timeout}s")
             raise ProviderUnavailable(f"cli timed out after {self.timeout}s") from e
         except FileNotFoundError as e:
-            self._notify_observer(args, started, False, None, "cli not found")
+            self._notify_observer(args, started, False, None, "cli nao encontrada")
             raise AdapterError(f"'{self.cli_path}' is not on the PATH") from e
 
         if p.returncode != 0:
@@ -170,11 +170,11 @@ class GitHubRepos(RepositoryProvider):
     def list_branches(self, key: str, filters: dict[str, Any] | None = None) -> list[Branch]:
         target = key if "/" in key else f"{self.org}/{key}"
         base = self.get_repository(target).base_branch
-        per_page = int((filters or {}).get("per_page", 100))
+        per_page = int((filters or {}).get("por_pagina", 100))
         raw = self._cli(["api", f"repos/{target}/branches?per_page={per_page}"])
         if not isinstance(raw, list):
             raise AdapterError("branch listing returned an unexpected shape")
-        default_value = (filters or {}).get("pattern", "")
+        default_value = (filters or {}).get("padrao", "")
         output = []
         for b in raw:
             name = b.get("name") or ""

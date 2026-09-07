@@ -75,6 +75,11 @@ REQUIRED_LEVEL: dict[str, AutonomyLevel] = {
     "repo.commit": AutonomyLevel.L1,
     "repo.push": AutonomyLevel.L2,
     "repo.pr": AutonomyLevel.L2,
+    "repo.pr.create": AutonomyLevel.L2,
+    # Reviewing and merging are L3 even though they start with the
+    # same prefix: the ceiling must not be inherited from a verb.
+    "repo.pr.close": AutonomyLevel.L3,
+    "repo.review": AutonomyLevel.L3,
     "task.write": AutonomyLevel.L2,
     "repo.merge": AutonomyLevel.L3,
     "deploy.staging": AutonomyLevel.L3,

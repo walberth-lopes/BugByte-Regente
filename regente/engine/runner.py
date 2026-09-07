@@ -28,11 +28,14 @@ from datetime import datetime, timezone
 
 from ..core import ids
 from ..core.model import Event, Run, RunState, now
+from ..core.policy import (Action, AutonomyLevel, Effect, PolicyContext,
+                           PolicyEngine)
 from ..ports.agent import Budget, CodingAgent, Permissions, Verdict
 from ..ports.repository import RepositoryProvider
+from ..ports import AdapterError
 from ..ports.store import Store
 from ..ports.workspace import WorkspaceProvider
-from . import coder, context, metrics, mission, testing
+from . import coder, context, metrics, mission, testing, validation
 from .discovery import Source
 from .target import Confidence
 
@@ -49,6 +52,12 @@ class MissionOutcome:
     measurements: metrics.MissionMetrics | None
     workspace_path: str = ""
     refusal: str = ""
+    #: SHA written by the ENGINE, never by the agent. Empty when no commit
+    #: happened -- and the reason why is always stated.
+    commit_sha: str = ""
+    commit_reason: str = ""
+    promoted: bool = False
+    promotion_reason: str = ""
 
     @property
     def refused(self) -> bool:
@@ -72,9 +81,17 @@ class MissionRunner:
     planner: mission.MissionPlanner
     budget: Budget
     permissions: Permissions
+    policy: PolicyEngine | None = None
+    autonomy: AutonomyLevel = AutonomyLevel.L2
+    organization: str = "*"
+    client: str = "*"
+    environment: str = "staging"
     agent_name: str = "coder"
     test_timeout: int = 900
     lease_seconds: int = 1800
+    #: Identity written into the commit. Distinct from any human on purpose:
+    #: history must say who actually wrote it.
+    commit_author: tuple[str, str] = ("Regente", "regente@localhost.invalid")
 
     # ------------------------------------------------------------------
     def run(self, selection: mission.Selection) -> MissionOutcome:
@@ -145,7 +162,14 @@ class MissionRunner:
             run.tool_calls, run.iterations = result.total_tool_calls, len(result.attempts)
             self.store.save_run(run)
 
-            self._persist_target(m, result)
+            promoted, promotion_reason = self._persist_target(m, result)
+            commit_sha, commit_reason = self._maybe_commit(m, area, result)
+            if commit_sha:
+                self._record("commit_written", m.task.key, run.id,
+                             f"{commit_sha[:12]} on {area.branch}",
+                             sha=commit_sha, branch=area.branch,
+                             repository=m.repo.ref.key,
+                             workspace_id=self.workspace_id, reason=commit_reason)
 
             measured = metrics.build(
                 task_key=m.task.key, repository=m.repo.ref.key,
@@ -160,7 +184,10 @@ class MissionRunner:
             self._record("mission_finished", m.task.key, run.id,
                          f"{result.verdict.value}: {result.reason}"[:300],
                          metrics=measured.as_dict())
-            return MissionOutcome(briefing, result.verdict, result, measured, area.path)
+            return MissionOutcome(briefing, result.verdict, result, measured,
+                                  area.path, commit_sha=commit_sha,
+                                  commit_reason=commit_reason, promoted=promoted,
+                                  promotion_reason=promotion_reason)
         finally:
             self.store.release_lease(m.resource, run.id, self.workspace_id)
 
@@ -189,13 +216,15 @@ class MissionRunner:
                 f"'{m.task.external_status or m.task.status.value}' -- an agent on top "
                 f"of a person is the worst outcome available")
 
-    def _persist_target(self, m: mission.Mission, result: coder.LoopResult) -> None:
-        """Write the discovery down, and promote only on real confirmation.
+    def _persist_target(self, m: mission.Mission,
+                        result: coder.LoopResult) -> tuple[bool, str]:
+        """Write the discovery down; promote only under the independent rule.
 
-        A discovery becomes VALIDATED when an execution actually produced work in
-        that repository -- not when the engine merely believed it would. Believing
-        is what produced the discovery in the first place; confirming has to cost
-        something more.
+        Recording always happens -- the evidence is worth keeping whatever the
+        outcome. Promotion is a separate decision, and it deliberately does not
+        ask whether the agent succeeded: an agent can write into any repository
+        it is handed, so its success says nothing about whether the target was
+        right. See `validation.may_promote_target`.
         """
         d = m.discovery
         self.store.record_target(
@@ -206,11 +235,47 @@ class MissionRunner:
             evidence=[f"{e.source}: {e.detail}" for e in d.evidence],
             alternatives=[f"{r.repo}: {r.reason}" for r in d.alternatives_considered])
 
-        confirmed = bool(result.changed_files) and result.verdict in (
-            Verdict.RESOLVED, Verdict.READY_FOR_REVIEW)
-        if confirmed and d.source is Source.DISCOVERED:
-            self.store.promote_target(self.workspace_id, m.task.key,
-                                      m.repo.ref.provider, m.repo.ref.key)
+        judgement = validation.may_promote_target(d, result)
+        if not judgement.allowed:
+            return False, judgement.reason
+        promoted = self.store.promote_target(
+            self.workspace_id, m.task.key, m.repo.ref.provider, m.repo.ref.key)
+        return promoted, judgement.reason
+
+    def _maybe_commit(self, m: mission.Mission, area, result: coder.LoopResult
+                      ) -> tuple[str, str]:
+        """Commit, if and only if the ENGINE and POLICY both say so.
+
+            Agent  -> Outcome
+            Engine -> Validation
+            Policy -> Permission
+            Engine -> Commit
+
+        The agent's opinion never enters this chain. It may have reported
+        "ready to commit"; that is an observation, and observations do not
+        authorise writes.
+        """
+        judgement = validation.may_commit(result.verdict, result)
+        if not judgement.allowed:
+            return "", f"engine declined: {judgement.reason}"
+
+        decision = self.policy.decide(PolicyContext(
+            action=Action(kind=validation.COMMIT_ACTION, resource=m.repo.ref.key,
+                          environment=self.environment),
+            organization=self.organization, client=self.client,
+            workspace=self.workspace_name, project=m.task.project or "*",
+            agent=self.agent_name, risk=m.risk.level.name,
+            autonomy=self.autonomy))
+        if decision.effect != Effect.ALLOW:
+            return "", f"policy {decision.effect}: {decision.reason}"
+
+        try:
+            sha = self.areas.commit(
+                area, message=f"{m.task.key}: {m.task.title}"[:72],
+                author=self.commit_author)
+        except AdapterError as e:
+            return "", f"commit refused by the workspace: {e}"
+        return sha, judgement.reason
 
     def _record(self, kind: str, task_key: str, run_id: str, summary: str,
                 **data) -> None:

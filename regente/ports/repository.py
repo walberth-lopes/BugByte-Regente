@@ -24,6 +24,7 @@ milestone executes them.
 
 from __future__ import annotations
 
+import re
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -170,6 +171,35 @@ class PullRequest:
     data: dict[str, Any] = field(default_factory=dict)
 
 
+#: The stamp that makes a pull request recognisable as one run's work.
+#:
+#: Lives on the PORT, not in an adapter, because it is about IDENTITY -- which
+#: workspace, task and run produced this -- and identity is the engine's concern.
+#: Putting it in an adapter made `engine/` import `adapters/`, which the boundary
+#: test caught immediately and correctly.
+#:
+#: Single-line and rigid on purpose: a marker a human might reflow, translate or
+#: prettify is a marker the engine will one day fail to find -- and failing to
+#: find it means either opening a duplicate or adopting a stranger's work.
+MARKER_PREFIX = "regente-run"
+
+_MARKER_RE = re.compile(
+    rf"<!--\s*{MARKER_PREFIX}:\s*workspace=(\S+)\s+task=(\S+)\s+run=(\S+)\s*-->")
+
+
+def build_marker(workspace_id: str, task_key: str, run_id: str) -> str:
+    return (f"<!-- {MARKER_PREFIX}: workspace={workspace_id} "
+            f"task={task_key} run={run_id} -->")
+
+
+def read_marker(body: str) -> dict[str, str] | None:
+    """Extract the marker from a pull request body, or `None`."""
+    m = _MARKER_RE.search(body or "")
+    if not m:
+        return None
+    return {"workspace_id": m.group(1), "task_key": m.group(2), "run_id": m.group(3)}
+
+
 @dataclass(frozen=True, slots=True)
 class Review:
     author: str
@@ -214,8 +244,8 @@ class RepositoryProvider(Port):
     #
     # The signatures exist so that the future design is visible and open to
     # criticism now. Each one has the shape that prevents an already-known
-    # defect -- which is why it is worth writing them before, and not after, the
-    # defect happens.
+    # defect -- which is why it is worth writing them before, and not after,
+    # the defect happens.
 
     def create_branch(self, key: str, name: str, a_partir_de: str) -> Branch:
         """`a_partir_de` is mandatory: deriving from the implicit base is the
@@ -226,9 +256,10 @@ class RepositoryProvider(Port):
                       files: dict[str, str]) -> str:
         raise NotImplementedError
 
-    def push(self, key: str, branch: str, esperado_sha: str | None = None) -> None:
-        """`esperado_sha` allows refusing the push if the branch moved underfoot."""
-        raise NotImplementedError
+    # `push` deliberately does NOT live here. It moved to `WorkspaceProvider`,
+    # where the isolated area is materialised and where its push target is
+    # known. Leaving a second, unimplemented way to publish work on this port
+    # would be an ambiguity waiting to become the wrong call site.
 
     def create_pull_request(self, key: str, branch: str, base: str,
                             title: str, body: str) -> PullRequest:
