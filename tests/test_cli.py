@@ -16,12 +16,18 @@ from __future__ import annotations
 import ast
 import dataclasses
 import os
+import re
 from pathlib import Path
 
 from regente.app.container import Engine
 from regente.cli import REPORTS_DIR, _report_path, _write_report
 
 CLI = Path(__file__).resolve().parents[1] / "regente" / "cli.py"
+README = Path(__file__).resolve().parents[1] / "README.md"
+
+#: A row of the README command table: `| `name` | what it does |`.
+#: Whitespace-tolerant so reformatting the table does not break the check.
+TABLE_ROW = re.compile(r"^\|\s*`([a-z][a-z-]*)`\s*\|", re.M)
 
 #: Defined on the top-level parser, so available to every subcommand.
 GLOBAL_ARGS = frozenset({"config", "cmd", "fn"})
@@ -62,6 +68,25 @@ def _dest_of(call: ast.Call) -> str:
     return max(flags, key=len).lstrip("-").replace("-", "_")
 
 
+def _subcommands_in_order() -> list[str]:
+    """Subcommand names, in the order `main` declares them.
+
+    Sorted by line number rather than trusting `ast.walk`, whose breadth-first
+    order happens to match the source here but is not promised to.
+    """
+    found = [
+        (n.lineno, n.args[0].value)
+        for n in ast.walk(_tree())
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "add_parser" and n.args
+    ]
+    return [name for _, name in sorted(found)]
+
+
+def _documented_in_order() -> list[str]:
+    return TABLE_ROW.findall(README.read_text(encoding="utf-8"))
+
+
 def _read_by_handlers() -> dict[str, set[str]]:
     """cmd_* function name -> the `args.X` attributes it reads."""
     out: dict[str, set[str]] = {}
@@ -92,6 +117,36 @@ def test_every_subcommand_has_a_handler():
     """A subcommand without `fn` fails with AttributeError inside `main`."""
     dests, handlers = _declared()
     assert set(dests) == set(handlers), sorted(set(dests) ^ set(handlers))
+
+
+def test_readme_documents_every_subcommand():
+    """`mission` shipped with a milestone and stayed out of the table for all of it.
+
+    A command nobody wrote down is a command nobody runs. This is the cheap half
+    of the check -- membership, not order -- so deleting the order test below
+    leaves the drift itself still guarded.
+    """
+    declared = _subcommands_in_order()
+    documented = _documented_in_order()
+
+    assert documented, (
+        "no rows matched in the README command table. Either the table is gone "
+        f"or its format changed and {TABLE_ROW.pattern!r} no longer matches it."
+    )
+
+    undocumented = [c for c in declared if c not in documented]
+    stale = [c for c in documented if c not in declared]
+    assert not undocumented, f"subcommands with no README row: {undocumented}"
+    assert not stale, f"README rows for commands that do not exist: {stale}"
+
+
+def test_readme_table_follows_the_parser_order():
+    """A convention, not a defect -- delete this test if you reorder on purpose.
+
+    Kept separate from the coverage check above so that dropping the convention
+    does not also drop the guard that matters.
+    """
+    assert _documented_in_order() == _subcommands_in_order()
 
 
 def test_bare_output_name_goes_to_reports():
