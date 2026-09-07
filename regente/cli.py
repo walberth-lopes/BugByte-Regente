@@ -283,7 +283,7 @@ def cmd_sombra(args) -> int:
             provider=motor.orchestrator.tasks_provider,
             limits=cfg.limits,
             filtro={"apenas_minhas": True} if args.mine else None,
-            eu=args.eu)
+            me=args.me)
         print(shadow.render(r))
         _emit_report(args.output, shadow.render(r))
         return 0 if not r.provider_errors else 2
@@ -325,7 +325,7 @@ def cmd_cadeia(args) -> int:
         items = motor.orchestrator.tasks_provider.list_tasks()
         repositories = motor.repos.list_repositories()
         branches = {}
-        if not args.sem_branches:
+        if not args.no_branches:
             for r in repositories:
                 try:
                     branches[r.ref.key] = motor.repos.list_branches(r.ref.key)
@@ -449,7 +449,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("sombra", help="see the real work without touching anything")
     p.add_argument("--mine", action="store_true", help="only what is assigned to me")
-    p.add_argument("--eu", help="assignee name to count as 'mine'")
+    p.add_argument("--me", metavar="NAME",
+                   help="assignee name to count as 'mine'")
     p.add_argument("--output", metavar="FILE",
                    help="write the report here; a bare name goes to reports/")
     p.set_defaults(fn=cmd_sombra)
@@ -460,7 +461,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("cadeia", help="from the real task to an execution candidate, in shadow")
     p.add_argument("--limit", type=int, default=10)
-    p.add_argument("--sem-branches", action="store_true",
+    p.add_argument("--no-branches", action="store_true",
                    help="skip reading branches (faster, less evidence)")
     p.add_argument("--output", metavar="FILE",
                    help="write the report here; a bare name goes to reports/")

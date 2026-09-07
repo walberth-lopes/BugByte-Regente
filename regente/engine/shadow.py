@@ -62,7 +62,7 @@ def execute(
     provider: TaskProvider,
     limits: Limits,
     filtro: dict | None = None,
-    eu: str | None = None,
+    me: str | None = None,
 ) -> ShadowReport:
     r = ShadowReport(provider=provider.name)
 
@@ -89,7 +89,7 @@ def execute(
         r.normalized += 1
         if t.anomalies:
             r.anomalies += tuple(f"{t.key}: {a}" for a in t.anomalies)
-        if eu and t.assignee == eu:
+        if me and t.assignee == me:
             r.mine += 1
     r.relevant = len(alive)
 
