@@ -64,7 +64,7 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
     """Jira Cloud, read only.
 
     Two transports through the same adapter: `http` talks to the real site,
-    `instantaneo` replays real recorded responses. The adapter is identical in
+    `snapshot` replays real recorded responses. The adapter is identical in
     both cases -- which is why the contract test exercises the same code that
     runs against the network. The transport names are configuration values and
     stay as they are.
@@ -74,7 +74,7 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
 
     observer = o.get("observer")
     mode = o.get("transport", "http")
-    if mode == "instantaneo":
+    if mode == "snapshot":
         from pathlib import Path
         transport = SnapshotTransport(
             directory=Path(o["snapshots"]), observer=observer)
@@ -90,7 +90,7 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
             max_attempts=int(o.get("max_attempts", 3)),
             observer=observer)
     else:
-        raise KeyError(f"unknown transport for jira: {mode!r}. Use http or instantaneo")
+        raise KeyError(f"unknown transport for jira: {mode!r}. Use http or snapshot")
 
     return JiraTasks(
         transport=transport,

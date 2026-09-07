@@ -23,8 +23,7 @@ class Console(NotificationProvider):
 
     def notify(self, title: str, body: str, urgency: str = "normal",
                link: str | None = None) -> None:
-        # The urgency keys stay in Portuguese: they are the port's vocabulary.
-        mark = {"alta": "!!", "normal": " *", "baixa": "  "}.get(urgency, " *")
+        mark = {"high": "!!", "normal": " *", "low": "  "}.get(urgency, " *")
         line = f"{mark} {title} -- {body}"
         # `errors='replace'` because the Windows console is not UTF-8 by default
         # and a title with an accent must not bring the tick down.

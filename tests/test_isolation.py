@@ -61,7 +61,7 @@ def _engine(store: SqliteStore, ws_id: str, name: str, provider, tmp_path: Path)
 # Tenancy in the state
 # ---------------------------------------------------------------------------
 
-def test_two_clientes_in_same_database_not_if_see(tmp_path):
+def test_two_clients_in_one_database_cannot_see_each_other(tmp_path):
     """The cheap way to get it wrong: a shared database and an unscoped query."""
     store = SqliteStore(tmp_path / "compartilhado.db")
     store.migrate()
@@ -78,7 +78,7 @@ def test_two_clientes_in_same_database_not_if_see(tmp_path):
     assert not (keys_a & keys_b)
 
 
-def test_same_key_externa_in_two_clientes_sao_tasks_distinct(tmp_path):
+def test_the_same_external_key_in_two_clients_is_two_tasks(tmp_path):
     """Client A's SG-1 and client B's SG-1 must not collide in the index."""
     store = SqliteStore(tmp_path / "c.db")
     store.migrate()
@@ -92,7 +92,7 @@ def test_same_key_externa_in_two_clientes_sao_tasks_distinct(tmp_path):
     assert ta.id != tb.id, "a mesma chave externa virou uma task so"
 
 
-def test_events_is_actions_sao_scoped(tmp_path):
+def test_events_and_actions_are_scoped(tmp_path):
     store = SqliteStore(tmp_path / "c.db")
     store.migrate()
     a = _engine(store, "wks_a", "A", _yaml_tasks(tmp_path / "a", ["A-1"]), tmp_path)
@@ -151,7 +151,7 @@ def test_releasing_lease_of_a_client_not_releases_the_of_other(tmp_path):
     store.release_lease("repo:api", "run_x", workspace_id="wks_a")
     assert store.acquire_lease("repo:api", "outro", "wks_a", 60) is not None
     assert store.acquire_lease("repo:api", "outro", "wks_b", 60) is None, (
-        "soltar a trava de um cliente soltou a do outro")
+        "releasing one client's lock released the other's")
 
 
 def test_lease_expired_is_listed_only_to_the_owner_of_scope(tmp_path):
@@ -179,9 +179,9 @@ def test_workspace_not_reaches_secret_that_not_declared():
 
 
 def test_reference_declared_resolves(monkeypatch):
-    monkeypatch.setenv("A_TOKEN", "valor-de-teste")
+    monkeypatch.setenv("A_TOKEN", "test-value")
     a = ScopedSecrets(allowed_from=frozenset({"env:A_TOKEN"}), workspace="A")
-    assert a.resolve("env:A_TOKEN") == "valor-de-teste"
+    assert a.resolve("env:A_TOKEN") == "test-value"
 
 
 def test_reference_declared_but_missing_is_error_clear():
@@ -208,7 +208,7 @@ def test_workspace_without_secrets_not_reaches_nothing():
 # Two DIFFERENT providers in the same engine
 # ---------------------------------------------------------------------------
 
-def test_clientes_with_providers_different_coexist(tmp_path):
+def test_clients_with_different_providers_coexist(tmp_path):
     """Client A on YAML, client B on Jira -- same Core, same database."""
     store = SqliteStore(tmp_path / "c.db")
     store.migrate()
@@ -230,7 +230,7 @@ def test_clientes_with_providers_different_coexist(tmp_path):
 # Repository identity within the tenancy
 # ---------------------------------------------------------------------------
 
-def test_repos_same_named_in_clientes_different_sao_resources_different():
+def test_same_named_repos_in_different_clients_are_different_resources():
     """Two clients can have a repository called `api`. They are two."""
     from regente.ports.repository import RepoRef
     a = RepoRef(provider="github", key="clienteA/api")
@@ -245,7 +245,7 @@ def test_repos_same_named_in_clientes_different_sao_resources_different():
             != a.resource("wks_1"))
 
 
-def test_two_clientes_with_repo_of_same_name_not_compete_lock(tmp_path):
+def test_two_clients_with_a_same_named_repo_do_not_contend_for_a_lock(tmp_path):
     """The full scenario: identity -> resource -> lease, across clients."""
     from regente.ports.repository import RepoRef
     store = SqliteStore(tmp_path / "c.db")
@@ -273,7 +273,7 @@ def test_providers_of_repo_different_coexist(tmp_path):
         p = root / name
         p.mkdir(parents=True)
         for args in (["init", "-q", "-b", "main"],
-                     ["config", "user.email", "t@e.invalido"],
+                     ["config", "user.email", "t@e.invalid"],
                      ["config", "user.name", "T"]):
             subprocess.run(["git", *args], cwd=str(p), check=True, capture_output=True)
         (p / "a.txt").write_text("x", encoding="utf-8")
@@ -285,11 +285,11 @@ def test_providers_of_repo_different_coexist(tmp_path):
         return p
 
     a = tmp_path / "a"; b = tmp_path / "b"
-    repo(a, "api", "https://github.com/clienteA/api.git")
-    repo(b, "api", "https://github.com/clienteB/api.git")
+    repo(a, "api", "https://github.com/clientA/api.git")
+    repo(b, "api", "https://github.com/clientB/api.git")
 
     pa, pb = GitLocal(root=a), GitLocal(root=b)
     ka = pa.list_repositories()[0].ref
     kb = pb.list_repositories()[0].ref
-    assert ka.key == "clienteA/api" and kb.key == "clienteB/api"
+    assert ka.key == "clientA/api" and kb.key == "clientB/api"
     assert ka.resource("wks_a") != kb.resource("wks_b")

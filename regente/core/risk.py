@@ -79,23 +79,24 @@ class Factor:
 #: Minimum base that holds for any client. The configuration file ADDS factors;
 #: it does not replace these, because these are the ones describing physical
 #: damage to the world (production, data, credentials) and not team preference.
+#: The `producao` MATCH VALUE stays: it catches an environment spelled that way.
 BASE_FACTORS: tuple[Factor, ...] = (
-    Factor("producao", RiskLevel.HIGH, "environment", ("prod", "production", "producao")),
-    Factor("destrutivo", RiskLevel.CRITICAL, "action",
+    Factor("production", RiskLevel.HIGH, "environment", ("prod", "production", "producao")),
+    Factor("destructive", RiskLevel.CRITICAL, "action",
           ("*.delete", "*.drop", "*.destroy", "*.purge", "*.truncate", "*.rollback")),
     Factor("migration", RiskLevel.HIGH, "paths",
           ("*migrations/*", "*alembic/*", "*.sql", "*schema*")),
-    Factor("infraestrutura", RiskLevel.HIGH, "paths",
+    Factor("infrastructure", RiskLevel.HIGH, "paths",
           ("*terraform/*", "*dockerfile*", "*workflows/*", "*pipelines/*",
            "*deploy/*", "*infra/*", "*chart/*")),
-    Factor("credencial", RiskLevel.CRITICAL, "paths",
+    Factor("credential", RiskLevel.CRITICAL, "paths",
           ("*secret*", "*credential*", "*.env*", "*iam*", "*token*")),
-    Factor("autenticacao", RiskLevel.HIGH, "paths", ("*auth*", "*login*", "*session*", "*permission*")),
-    Factor("pagamento", RiskLevel.HIGH, "paths", ("*payment*", "*billing*", "*invoice*", "*checkout*")),
-    Factor("api_publica", RiskLevel.MEDIUM, "paths", ("*api/*", "*routes/*", "*openapi*", "*proto*")),
-    Factor("diff_grande", RiskLevel.MEDIUM, "lines", greater_than=600),
-    Factor("muitos_arquivos", RiskLevel.MEDIUM, "files", greater_than=25),
-    Factor("banco", RiskLevel.HIGH, "category", ("database",)),
+    Factor("authentication", RiskLevel.HIGH, "paths", ("*auth*", "*login*", "*session*", "*permission*")),
+    Factor("payment", RiskLevel.HIGH, "paths", ("*payment*", "*billing*", "*invoice*", "*checkout*")),
+    Factor("public_api", RiskLevel.MEDIUM, "paths", ("*api/*", "*routes/*", "*openapi*", "*proto*")),
+    Factor("large_diff", RiskLevel.MEDIUM, "lines", greater_than=600),
+    Factor("many_files", RiskLevel.MEDIUM, "files", greater_than=25),
+    Factor("database", RiskLevel.HIGH, "category", ("database",)),
 )
 
 

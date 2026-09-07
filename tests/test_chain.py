@@ -98,7 +98,7 @@ def test_branch_casa_by_word_whole():
     assert a.confidence is Confidence.ABSENT
 
 
-def test_declarado_beats_observed():
+def test_declared_beats_observed():
     """A branch can be the leftovers of an abandoned attempt; a map is a statement."""
     a = TargetResolver(by_task={"K-1": "acme/web"}).resolve(
         task("K-1"), REPOS, branches={"acme/api": [Branch(name="feat/K-1-x")]})
@@ -112,7 +112,7 @@ def test_tie_is_ambiguous_is_the_motor_not_tiebreak():
         branches={"acme/api": [Branch(name="feat/K-1-x")],
                   "acme/web": [Branch(name="fix/K-1-y")]})
     assert a.confidence is Confidence.AMBIGUOUS
-    assert a.repo is None, "o motor escolheu um dos dois"
+    assert a.repo is None, "the engine picked one of the two"
     assert len(a.candidates) == 2
 
 
@@ -135,7 +135,7 @@ def test_every_evidence_is_auditable():
 
 def test_target_that_not_exists_in_provider_is_ignored():
     """A map pointing at a non-existent repository must not become a ghost target."""
-    a = TargetResolver(by_task={"K-1": "acme/nao-existe"}).resolve(task("K-1"), REPOS)
+    a = TargetResolver(by_task={"K-1": "acme/does-not-exist"}).resolve(task("K-1"), REPOS)
     assert a.confidence is Confidence.ABSENT
 
 
@@ -181,14 +181,14 @@ def test_to_in_ambiguous():
     assert r.steps[0].link is Stage.AMBIGUOUS_TARGET
 
 
-def test_repositorio_archived_not_receives_work():
+def test_archived_repository_receives_no_work():
     repos = [repo("acme/api", archived=True)]
     r = build([task("K-1")], repos=repos,
               resolver=TargetResolver(by_task={"K-1": "acme/api"}))
     assert r.steps[0].link is Stage.REPO_UNUSABLE
 
 
-def test_repositorio_without_branch_base_not_receives_work():
+def test_repository_without_a_base_branch_receives_no_work():
     """Deriving from the wrong base produces a conflict PR nobody asked for."""
     repos = [repo("acme/api", base="")]
     r = build([task("K-1")], repos=repos,
@@ -196,7 +196,7 @@ def test_repositorio_without_branch_base_not_receives_work():
     assert r.steps[0].link is Stage.REPO_UNUSABLE
 
 
-def test_capacidade_missing_to_the_chain_before_of_spending_a_cycle():
+def test_missing_capability_stops_the_chain_before_spending_a_cycle():
     repos = [repo("acme/api", caps=frozenset({RepoCapability.READ_METADATA}))]
     r = build([task("K-1")], repos=repos,
               resolver=TargetResolver(by_task={"K-1": "acme/api"}))
@@ -239,7 +239,7 @@ def test_report_tells_where_the_chain_stopped():
     assert len(r.candidates) == 1
 
 
-def test_text_of_report_mostra_evidence():
+def test_report_text_shows_the_evidence():
     r = build([task("K-1")], resolver=TargetResolver(by_task={"K-1": "acme/api"}))
     t = chain.render(r)
     assert "EXECUTION CANDIDATES (1)" in t

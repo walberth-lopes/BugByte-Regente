@@ -62,7 +62,7 @@ def clones(tmp_path) -> Path:
     _make_repo(root, "api", "https://github.com/acme/servico-api.git",
                branches=("feat/K-1-coisa", "fix/K-2-outra"))
     _make_repo(root, "web", "git@github.com:acme/web.git", base="master")
-    _make_repo(root, "sem-remoto", None)
+    _make_repo(root, "no-remote", None)
     return root
 
 
@@ -73,7 +73,7 @@ def provider(clones) -> RepositoryProvider:
 
 NETWORK = pytest.mark.skipif(
     os.environ.get("REGENTE_TESTE_REDE") != "1",
-    reason="exige rede e credencial; ligue com REGENTE_TESTE_REDE=1")
+    reason="needs a network and a credential; enable with REGENTE_TESTE_REDE=1")
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ def test_list_returns_repositorios(provider):
     assert all(r.ref.key for r in repos)
 
 
-def test_identity_vem_of_remote_not_of_directory(provider):
+def test_identity_comes_from_the_remote_not_the_directory(provider):
     """The defect this test prevents was measured on the real disk: the directory
     `scamchecker-legado` points at the repository `scamchecker`.
 
@@ -114,7 +114,7 @@ def test_identity_carries_the_provider(provider):
         assert str(r.ref) == f"{r.ref.provider}:{r.ref.key}"
 
 
-def test_resource_is_scoped_pelo_workspace(provider):
+def test_resource_is_scoped_by_workspace(provider):
     """A repository of the same name in two clients must give DIFFERENT resources."""
     r = provider.list_repositories()[0]
     a = r.ref.resource("wks_a")
@@ -123,7 +123,7 @@ def test_resource_is_scoped_pelo_workspace(provider):
     assert "wks_a" in a and "wks_b" in b
 
 
-def test_without_remote_ainda_tem_identity(provider):
+def test_without_a_remote_it_still_has_an_identity(provider):
     """The absence of a remote must not become the absence of a repository."""
     keys = {r.ref.key for r in provider.list_repositories()}
     assert any(k.startswith("local/") for k in keys)
@@ -136,9 +136,9 @@ def test_get_returns_the_same_that_the_list(provider):
     assert um.base_branch == from_list.base_branch
 
 
-def test_repositorio_missing_raises(provider):
+def test_missing_repository_raises(provider):
     with pytest.raises(AdapterError):
-        provider.get_repository("nao/existe-999")
+        provider.get_repository("does/not-exist-999")
 
 
 # ---------------------------------------------------------------------------
@@ -181,13 +181,13 @@ def test_declares_capabilities(provider):
         assert r.can(RepoCapability.READ_METADATA)
 
 
-def test_not_declares_capacidade_of_write_neste_milestone(provider):
+def test_declares_no_write_capability_in_this_milestone(provider):
     from regente.ports.repository import WRITE_CAPS
     assert not (provider.capabilities & WRITE_CAPS), (
-        "adapter de leitura declarando poder de escrita")
+        "a read adapter declaring write power")
 
 
-def test_capacidade_missing_is_declared_is_not_simulated(provider):
+def test_missing_capability_is_declared_not_simulated(provider):
     """Plain git has no pull requests -- and the adapter has to SAY so."""
     assert not provider.list_repositories()[0].can(RepoCapability.READ_PULL_REQUESTS)
 
@@ -241,7 +241,7 @@ def test_git_refuses_invocation_that_writes(provider, clones, invocation):
 def test_cli_refuses_invocation_that_writes(invocation):
     """`repo delete` crossed a verb-level allowlist on 06/09/2026. Never again."""
     ok, reason = cli_is_read(invocation)
-    assert not ok, f"'{' '.join(invocation)}' passou pelo portao"
+    assert not ok, f"'{' '.join(invocation)}' got through the gate"
     assert reason
 
 
@@ -269,14 +269,14 @@ def test_git_allows_read(invocation):
 # ---------------------------------------------------------------------------
 
 def test_root_missing_is_error_not_list_empty(tmp_path):
-    p = GitLocal(root=tmp_path / "nao-existe")
+    p = GitLocal(root=tmp_path / "does-not-exist")
     with pytest.raises(AdapterError):
         p.list_repositories()
 
 
 def test_directory_without_git_is_ignored_without_breaking(provider, clones):
-    (clones / "nao-e-repo").mkdir()
-    (clones / "nao-e-repo" / "arquivo.txt").write_text("x", encoding="utf-8")
+    (clones / "not-a-repo").mkdir()
+    (clones / "not-a-repo" / "arquivo.txt").write_text("x", encoding="utf-8")
     assert len(provider.list_repositories()) == 3
 
 
@@ -297,10 +297,10 @@ def test_timeout_becomes_error_of_adapter(provider, clones, monkeypatch):
 
 def test_file_missing_is_error_clear(provider):
     with pytest.raises(AdapterError):
-        provider.read_file("acme/servico-api", "nao/existe.txt")
+        provider.read_file("acme/servico-api", "does/not-exist.txt")
 
 
-def test_le_file_of_base_by_padrao(provider):
+def test_reads_a_file_from_the_base_by_default(provider):
     assert provider.read_file("acme/servico-api", "README.md").strip() == "# api"
 
 
@@ -311,7 +311,7 @@ def test_le_file_of_base_by_padrao(provider):
     ("ssh://git@bitbucket.org/time/repo.git", "time/repo"),
     ("/caminho/local/repo", "local/repo"),
 ])
-def test_identity_exits_of_qualquer_forma_of_url(url, esperado):
+def test_identity_survives_any_url_form(url, esperado):
     """`git@host:org/repo.git` is not a valid URL and escapes every parser."""
     assert _org_repo(url) == esperado
 

@@ -39,12 +39,12 @@ def _build_filesystem(tmp_path: Path) -> tuple[TaskProvider, str]:
     folder = tmp_path / "tasks"
     folder.mkdir()
     body = [
-        {"key": "K-1", "titulo": "primeira", "estado": "TO DO", "prioridade": 10,
-         "descricao": "faz alguma coisa", "labels": ["um"]},
-        {"key": "K-2", "titulo": "segunda", "estado": "CODING",
-         "depende_de": [{"key": "K-1"}], "descricao": "outra coisa"},
-        {"key": "K-3", "titulo": "terceira", "estado": "ESTADO QUE NINGUEM MAPEOU",
-         "relacionadas": ["K-1"], "descricao": "mais uma"},
+        {"key": "K-1", "titulo": "first", "estado": "TO DO", "prioridade": 10,
+         "descricao": "does something", "labels": ["um"]},
+        {"key": "K-2", "titulo": "second", "estado": "CODING",
+         "depende_de": [{"key": "K-1"}], "descricao": "another thing"},
+        {"key": "K-3", "titulo": "third", "estado": "A STATUS NOBODY MAPPED",
+         "relacionadas": ["K-1"], "descricao": "one more"},
     ]
     for d in body:
         (folder / f"{d['key']}.yaml").write_text(
@@ -81,8 +81,8 @@ def test_declares_the_that_is(provider):
 def test_list_returns_tasks(provider):
     port, _ = provider
     items = port.list_tasks()
-    assert items, "list_tasks nao pode devolver vazio quando ha trabalho"
-    assert all(t.key for t in items), "toda task precisa de identidade"
+    assert items, "list_tasks must not return empty when there is work"
+    assert all(t.key for t in items), "every task needs an identity"
 
 
 def test_identity_is_unique(provider):
@@ -105,7 +105,7 @@ def test_task_missing_raises_is_not_returns_none(provider):
     """Absence has to be an error. A silent `None` becomes 'there was no work'."""
     port, _ = provider
     with pytest.raises(AdapterError):
-        port.get_task("NAO-EXISTE-999")
+        port.get_task("DOES-NOT-EXIST-999")
 
 
 # ---------------------------------------------------------------------------
@@ -124,14 +124,14 @@ def test_status_raw_is_preserved(provider):
     assert any(t.external_status for t in port.list_tasks())
 
 
-def test_status_desconhecido_not_is_coerced(provider):
+def test_unknown_status_is_not_coerced(provider):
     """The sin this test prevents: mapping the unknown onto its neighbour."""
     port, _ = provider
     unmapped = [t for t in port.list_tasks()
                      if t.status is ExternalStatus.UNKNOWN]
-    assert unmapped, "a fixture precisa conter um status nao mapeado"
+    assert unmapped, "the fixture has to contain an unmapped status"
     for t in unmapped:
-        assert t.external_status, "DESCONHECIDA sem o status cru e indiagnosticavel"
+        assert t.external_status, "UNKNOWN without the raw status cannot be diagnosed"
         assert any("unmapped status" in a for a in t.anomalies)
 
 
@@ -156,13 +156,13 @@ def test_hierarchy_never_is_block(provider):
     for t in port.list_tasks():
         for v in t.links:
             if v.kind in ("parent", "child", "related"):
-                assert not v.blocking, f"{t.key} -> {v.key} ({v.kind}) nao pode bloquear"
+                assert not v.blocking, f"{t.key} -> {v.key} ({v.kind}) must not block"
 
 
-def test_anomaly_is_reportada_is_not_fixed(provider):
+def test_anomaly_is_reported_not_fixed(provider):
     port, _ = provider
     items = port.list_tasks()
-    assert any(t.anomalies for t in items), "a fixture precisa ter dado torto"
+    assert any(t.anomalies for t in items), "the fixture has to carry crooked data"
     # Crooked data does not bring the listing down: it becomes a report.
     assert len(items) >= 3
 
@@ -184,7 +184,7 @@ WRITE_OPS = ("update_task", "transition_task", "add_comment", "add_label")
 
 
 @pytest.mark.parametrize("operation", WRITE_OPS)
-def test_nenhuma_write_is_executed(provider, operation):
+def test_no_write_is_executed(provider, operation):
     """Every provider under shadow must REFUSE a write, not ignore it.
 
     `filesystem` implements real writing and is not under shadow -- which is why
@@ -194,12 +194,12 @@ def test_nenhuma_write_is_executed(provider, operation):
     """
     port, key = provider
     if port.name == "filesystem":
-        pytest.skip("filesystem nao esta em modo somente-leitura neste marco")
+        pytest.skip("filesystem is not read-only in this milestone")
     with pytest.raises(ReadOnlyRefused):
         getattr(port, operation)(key, "qualquer-coisa")
 
 
-def test_transporte_of_read_not_tem_verb_of_write():
+def test_read_transport_has_no_write_verb():
     """The real guarantee of the shadow: no function mutates the external system."""
     from regente.adapters.tasks import transport as t
     for classe in (t.HttpTransport, t.SnapshotTransport):
@@ -222,24 +222,24 @@ def test_pagination_walks_all_the_pages():
     port = _jira()
     items = port.list_tasks()
     assert len(items) == KEYS["total"], (
-        f"esperava {KEYS['total']} de duas paginas, vieram {len(items)}")
+        f"expected {KEYS['total']} across two pages, got {len(items)}")
     assert len({t.key for t in items}) == len(items)
 
 
 def test_pagination_respects_ceiling_of_pages():
     port = _jira()
     port.max_pages = 1
-    assert len(port.list_tasks()) == 5, "o teto precisa cortar de verdade"
+    assert len(port.list_tasks()) == 5, "the cap has to actually cut"
 
 
 @pytest.mark.parametrize("error", [
     ProviderUnavailable("timeout apos 30s"),
-    ProviderUnavailable("falha de conexao: recusada"),
+    ProviderUnavailable("connection failure: refused"),
     RateLimited("HTTP 429", retry_after_seconds=1),
     AuthFailure("HTTP 401"),
-    MalformedResponse("corpo nao e JSON"),
+    MalformedResponse("body is not JSON"),
 ])
-def test_failure_of_provider_sobe_como_error_of_adapter(error):
+def test_provider_failure_rises_as_an_adapter_error(error):
     """The engine must not break because the provider went down -- nor confuse
     an outage with an absence of work."""
     port = _jira(failures={"search": error})
@@ -248,7 +248,7 @@ def test_failure_of_provider_sobe_como_error_of_adapter(error):
 
 
 def test_failure_of_authentication_not_is_retried():
-    """Repetir credencial invalida so bloqueia a conta."""
+    """Repeating an invalid credential only locks the account."""
     from regente.adapters.tasks.transport import HttpTransport
     attempts = []
 
@@ -260,13 +260,13 @@ def test_failure_of_authentication_not_is_retried():
                        max_attempts=5)
     with pytest.raises(AuthFailure):
         t.get("/rest/api/3/myself")
-    assert len(attempts) == 1, f"tentou {len(attempts)}x uma credencial invalida"
+    assert len(attempts) == 1, f"tried an invalid credential {len(attempts)}x"
 
 
 def test_snapshot_missing_is_not_found_is_not_list_empty():
     port = _jira()
     with pytest.raises(NotFound):
-        port.get_task("SG-NAO-CAPTURADA")
+        port.get_task("SG-NOT-CAPTURED")
 
 
 def test_response_of_kind_wrong_is_refused(tmp_path):
@@ -279,7 +279,7 @@ def test_response_of_kind_wrong_is_refused(tmp_path):
 
 def test_issue_without_key_is_refused(tmp_path):
     (tmp_path / "rest_api_3_search_jql.json").write_text(
-        json.dumps({"issues": [{"id": "1", "fields": {"summary": "sem key"}}]}),
+        json.dumps({"issues": [{"id": "1", "fields": {"summary": "no key"}}]}),
         encoding="utf-8")
     port = JiraTasks(transport=SnapshotTransport(directory=tmp_path))
     with pytest.raises(AdapterError):
@@ -291,18 +291,18 @@ def test_issue_without_key_is_refused(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_every_call_produces_registry_diagnosable():
-    vistas = []
-    port = _jira(observer=vistas.append)
+    seen_pages = []
+    port = _jira(observer=seen_pages.append)
     port.list_tasks()
-    assert len(vistas) == 2, "duas paginas, duas chamadas"
-    for c in vistas:
+    assert len(seen_pages) == 2, "two pages, two calls"
+    for c in seen_pages:
         assert c.operation and c.path
         assert c.duration_ms >= 0
         assert isinstance(c.success, bool)
 
 
 def test_registry_not_carries_body_nor_credential():
-    vistas = []
-    _jira(observer=vistas.append).list_tasks()
-    fields = {f for c in vistas for f in c.__slots__}
+    seen_pages = []
+    _jira(observer=seen_pages.append).list_tasks()
+    fields = {f for c in seen_pages for f in c.__slots__}
     assert not (fields & {"corpo", "body", "credencial", "token", "autorizacao"})

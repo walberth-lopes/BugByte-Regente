@@ -33,13 +33,11 @@ class SecretOutOfScope(AdapterError):
 
 @dataclass(slots=True)
 class ScopedSecrets(SecretProvider):
-    """Resolves `env:NAME` and `arquivo:PATH`.
+    """Resolves `env:NAME` and `file:PATH`.
 
     There is deliberately no `literal:` form. If there were, the first production
     secret would show up in a versioned YAML inside a week.
 
-    The scheme names (`env:`, `arquivo:`) are configuration values and stay as
-    they are.
     """
     name: str = "scoped"
     #: References THIS workspace may resolve. Empty = none.
@@ -59,7 +57,7 @@ class ScopedSecrets(SecretProvider):
                 raise SecretMissing(
                     f"environment variable {resto} is not set or is empty")
             return value
-        if scheme == "arquivo":
+        if scheme == "file":
             path = Path(resto).expanduser()
             if not path.is_file():
                 raise SecretMissing(f"secret file does not exist: {path}")
@@ -68,7 +66,7 @@ class ScopedSecrets(SecretProvider):
                 raise SecretMissing(f"secret file is empty: {path}")
             return value
         raise SecretMissing(
-            f"unknown reference scheme: {scheme!r}. Use env: or arquivo:")
+            f"unknown reference scheme: {scheme!r}. Use env: or file:")
 
     def available(self, reference: str) -> bool:
         try:

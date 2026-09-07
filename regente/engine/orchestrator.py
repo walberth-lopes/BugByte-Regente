@@ -378,7 +378,7 @@ class Orchestrator:
                                reason="worker started")
         rel.dispatched += (task.key,)
         self._record("dispatched", task_id=task.id, run_id=run.id,
-                    summary=f"{run.agent} em {area.path}")
+                    summary=f"{run.agent} in {area.path}")
 
         request = RunRequest(
             run_id=run.id, task_id=task.id, agent=run.agent,
@@ -512,7 +512,7 @@ class Orchestrator:
         if self.notificador:
             b = escalation.briefing(approval, task)
             self.notificador.notify(f"{task.key} needs you", b.what_happened,
-                                    urgency="alta" if approval.risk >= RiskLevel.HIGH else "normal")
+                                    urgency="high" if approval.risk >= RiskLevel.HIGH else "normal")
 
     # ---- utilities -------------------------------------------------------
     def _record(self, kind: str, summary: str = "", task_id: str | None = None,

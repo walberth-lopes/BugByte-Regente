@@ -137,7 +137,7 @@ def test_dependency_declared_becomes_graph(bench):
     orq._analyze(type("R", (), {"analyzed": 0})())
     plan = orq.plan()
     keys = {store.task(i).key for i in plan.dispatch}
-    assert keys == {"A-1", "A-2"}, "A-3 depende das outras duas"
+    assert keys == {"A-1", "A-2"}, "A-3 depends on the other two"
 
 
 def test_resource_shared_serializes(bench):
@@ -235,7 +235,7 @@ def test_worker_dead_returns_the_task_to_the_queue(bench):
     assert rel.dispatched == ("A-1",)
     assert store.task(task.id).state is TaskState.TESTING
     assert store.acquire_lease("repo:a", "outro", "wks_teste", 60) is not None, \
-        "o lease do worker morto precisa ter sido solto"
+        "the dead worker's lease has to have been released"
 
 
 def test_lease_prevents_two_owners(bench):
@@ -246,7 +246,7 @@ def test_lease_prevents_two_owners(bench):
     assert store.acquire_lease("repo:a", "run_2", "wks_teste", 60) is not None
 
 
-def test_lease_expired_can_ser_taken(bench):
+def test_an_expired_lease_can_be_taken(bench):
     orq, store = bench()
     store.acquire_lease("repo:a", "run_1", "wks_teste", 60)
     store._con.execute("UPDATE leases SET expires_at=? WHERE resource=?",
@@ -289,7 +289,7 @@ def test_worker_can_pedir_decision_human(bench):
         "summary": "the public API contract is ambiguous",
         "question": {"what_happened": "the public API contract is ambiguous",
                      "why_it_matters": "choosing wrong breaks a client in production",
-                     "tentativas": ["li os dois consumidores", "procurei ADR"],
+                     "tentativas": ["read both consumers", "procurei ADR"],
                      "recommendation": "follow"}}})
     orq.tick()
     rel = orq.tick()
@@ -346,7 +346,7 @@ def test_worker_that_blowing_up_not_bringing_down_the_tick(bench):
     rel = orq.tick()
 
     assert store.tasks("wks_teste")[0].state is TaskState.READY
-    assert not rel.errors, "excecao do worker vira falha da task, nao error do tick"
+    assert not rel.errors, "a worker exception becomes a task failure, not a tick error"
 
 
 # ---- trilha --------------------------------------------------------------
@@ -376,7 +376,7 @@ def test_every_transition_leaves_trail(bench):
     assert event.actor == "teste"
 
 
-def test_task_recovered_returns_the_ser_schedulable(bench):
+def test_a_recovered_task_becomes_schedulable_again(bench):
     """The hole that nearly got through: recovering by changing the label without
     returning to the queue.
 
@@ -407,7 +407,7 @@ def test_area_of_work_is_of_task_is_survives_the_resume(bench):
     runs = store.task_runs(task.id)
     assert len(runs) == 2
     assert runs[1].workspace_path == str(first_pass), "a retomada abriu area nova"
-    assert (Path(runs[1].workspace_path) / "wip.txt").is_file(), "o WIP foi jogado fora"
+    assert (Path(runs[1].workspace_path) / "wip.txt").is_file(), "the WIP was thrown away"
 
 
 # ---- relevance: what the SOURCE says about the work ----------------------
@@ -467,11 +467,11 @@ def test_block_by_failure_not_is_undone_by_status_external(bench):
     orq, store = bench()
     orq.tick(); orq.tick()
     task = store.tasks("wks_teste")[0]
-    store.transition(task.id, TaskState.BLOCKED, actor="humano", reason="parei na mao")
+    store.transition(task.id, TaskState.BLOCKED, actor="humano", reason="stopped by hand")
 
     orq.tick()
     assert store.task(task.id).state is TaskState.BLOCKED, (
-        "bloqueio humano nao pode ser desfeito por status de board")
+        "a human block must not be undone by a board status")
 
 
 def test_work_finished_in_source_not_enters(bench):

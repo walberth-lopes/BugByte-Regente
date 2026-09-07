@@ -19,7 +19,7 @@ providers:
     site: https://silverguard.atlassian.net
     # Replays real responses already captured. Switch to `http` and the same
     # adapter talks to the site, with no other change.
-    transport: instantaneo
+    transport: snapshot
     snapshots: .regente/instantaneos/jira
     user_ref: env:JIRA_EMAIL
     token_ref: env:JIRA_API_TOKEN

@@ -56,7 +56,7 @@ def test_core_not_imports_io():
             root = name.lstrip(".").split(".", 1)[0]
             if root in IO_PROIBIDO:
                 failures.append(f"{file.name} importa {name}")
-    assert not failures, "o dominio precisa ser puro:\n  " + "\n  ".join(failures)
+    assert not failures, "the domain has to be pure:\n  " + "\n  ".join(failures)
 
 
 def test_core_not_imports_adapters_nor_engine():
@@ -65,7 +65,7 @@ def test_core_not_imports_adapters_nor_engine():
         for name in _imports(file):
             if "adapters" in name or "engine" in name or "ports" in name:
                 failures.append(f"{file.name} importa {name}")
-    assert not failures, "core nao pode depender das bordas:\n  " + "\n  ".join(failures)
+    assert not failures, "core must not depend on the edges:\n  " + "\n  ".join(failures)
 
 
 def test_engine_not_imports_adapters():
@@ -75,7 +75,7 @@ def test_engine_not_imports_adapters():
         for name in _imports(file):
             if "adapters" in name:
                 failures.append(f"{file.name} importa {name}")
-    assert not failures, "engine so pode falar com ports:\n  " + "\n  ".join(failures)
+    assert not failures, "engine may only talk to ports:\n  " + "\n  ".join(failures)
 
 
 def _prose_lines(file: Path) -> set[int]:
@@ -118,22 +118,22 @@ def test_no_vendor_in_code_of_core_nor_of_engine():
                 hit = default_value.search(line.split("#", 1)[0])
                 if hit:
                     failures.append(f"{folder}/{file.name}:{n} menciona '{hit.group()}'")
-    assert not failures, ("nome de ferramenta so existe em adapters/:\n  "
+    assert not failures, ("a tool name exists only in adapters/:\n  "
                         + "\n  ".join(failures))
 
 
-def test_registry_is_the_only_the_importar_adapters():
+def test_registry_is_the_only_place_importing_adapters():
     """A second place importing an adapter is the beginning of the coupling."""
-    culpados = []
+    offenders = []
     for file in ROOT.rglob("*.py"):
         relativo = file.relative_to(ROOT).as_posix()
         if relativo.startswith("adapters/"):
             continue
         if any("adapters" in name for name in _imports(file)):
-            culpados.append(relativo)
-    assert culpados == ["adapters/registry.py"] or culpados == ["app/container.py"] or set(culpados) <= {
+            offenders.append(relativo)
+    assert offenders == ["adapters/registry.py"] or offenders == ["app/container.py"] or set(offenders) <= {
         "app/container.py", "cli.py"}, (
-        f"quem importa adapters fora do registro: {culpados}")
+        f"imports adapters outside the registry: {offenders}")
 
 
 def test_swapping_of_provider_only_touches_in_adapter_is_configuration():
@@ -152,15 +152,15 @@ def test_swapping_of_provider_only_touches_in_adapter_is_configuration():
     """
     # 1. Nobody outside adapters/ decides WHICH implementation to use. The two
     #    exceptions are the composition root and the surface that displays it.
-    escolhem = set()
+    choosers = set()
     for file in ROOT.rglob("*.py"):
         rel = file.relative_to(ROOT).as_posix()
         if rel.startswith("adapters/"):
             continue
         if any("adapters" in name for name in _imports(file)):
-            escolhem.add(rel)
-    assert escolhem == {"app/container.py", "cli.py"}, (
-        f"quem mais escolhe implementacao: {escolhem - {'app/container.py', 'cli.py'}}")
+            choosers.add(rel)
+    assert choosers == {"app/container.py", "cli.py"}, (
+        f"else chooses an implementation: {choosers - {'app/container.py', 'cli.py'}}")
 
     # 2. The engine talks to the PORT, and the port knows no provider.
     port = (ROOT / "ports" / "tasks.py").read_text(encoding="utf-8")
@@ -169,13 +169,13 @@ def test_swapping_of_provider_only_touches_in_adapter_is_configuration():
         if n in prose:
             continue
         assert not re.search("|".join(FORNECEDORES), line, re.IGNORECASE), (
-            f"ports/tasks.py:{n} conhece um fornecedor: {line.strip()}")
+            f"ports/tasks.py:{n} knows a provider: {line.strip()}")
 
     # 3. Every capability already has more than one possible implementation --
     #    and an abstraction with a single implementer was never really tested.
     import regente.adapters.registry as reg
     assert len(reg.available()["tasks"]) >= 2, (
-        "TaskProvider com um adapter so nao prova nada")
+        "a TaskProvider with a single adapter proves nothing")
 
 
 def test_repositoryprovider_not_knows_vendor():
@@ -194,7 +194,7 @@ def test_repositoryprovider_not_knows_vendor():
 
     import regente.adapters.registry as reg
     assert len(reg.available()["repository"]) >= 2, (
-        "RepositoryProvider com um adapter so nao prova nada")
+        "a RepositoryProvider with a single adapter proves nothing")
 
 
 def test_resolution_of_target_not_knows_vendor():

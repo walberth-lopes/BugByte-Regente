@@ -108,7 +108,7 @@ def test_deny_beats_allow():
 def test_ceiling_of_autonomy_tightens_allow():
     d = policy_engine().decide(ctx("repo.merge", "staging", autonomy=AutonomyLevel.L2))
     assert d.needs_human
-    assert d.rule == "teto_de_autonomia"
+    assert d.rule == "autonomy_ceiling"
 
 
 def test_ceiling_not_loosens_deny():

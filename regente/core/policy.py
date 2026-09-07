@@ -195,7 +195,7 @@ class PolicyEngine:
             if effect not in _SEVERITY:
                 raise ValueError(f"unknown effect in policy: {effect!r}")
             rules.append(Rule(
-                name=b.get("name") or f"regra_{i}",
+                name=b.get("name") or f"rule_{i}",
                 effect=effect,
                 match={k: v for k, v in (b.get("match") or {}).items()},
                 reason=b.get("reason", ""),
@@ -224,7 +224,7 @@ class PolicyEngine:
                 effect=Effect.HUMAN_APPROVAL,
                 reason=(f"'{ctx.action.kind}' requires autonomy {exigido.name} and "
                         f"this scope only goes up to {ctx.autonomy.name}"),
-                rule="teto_de_autonomia",
+                rule="autonomy_ceiling",
                 matched=names,
             )
 
