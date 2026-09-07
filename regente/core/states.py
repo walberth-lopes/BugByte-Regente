@@ -99,6 +99,41 @@ _AVANCOS: dict[TaskState, frozenset[TaskState]] = {
 }
 
 
+#: States this engine currently has code to move a task OUT of.
+#:
+#: Not the same thing as `_AVANCOS`, which says which transitions are *legal*.
+#: A transition can be perfectly legal and have nobody who performs it, and that
+#: gap is invisible: the task sits in a busy-looking state, the scheduler skips
+#: it because it appears to be in progress, and the engine reports quiet, clean
+#: ticks forever.
+#:
+#: That is not hypothetical. A soak run found every successfully dispatched task
+#: parked in `TESTING` on its fourth tick -- legal to leave, and no code in the
+#: project leaving it. The pipeline beyond `TESTING` belongs to milestones that
+#: do not exist yet, so the honest thing is for the engine to know where its own
+#: road ends and say so, rather than drive tasks off it.
+#:
+#: When a later milestone adds the stage that advances a state, it adds the
+#: state here. `test_states.py` checks the two sets against each other, so
+#: forgetting is loud.
+ENGINE_ADVANCES: frozenset[TaskState] = frozenset({
+    S.DISCOVERED, S.READY, S.ASSIGNED, S.IMPLEMENTING, S.FAILED, S.BLOCKED,
+    S.WAITING_HUMAN,
+})
+
+
+def engine_can_advance(state: TaskState) -> bool:
+    return state in ENGINE_ADVANCES
+
+
+def is_terminus(state: TaskState) -> bool:
+    """An active state the engine can enter and cannot leave.
+
+    The dangerous shape: it looks like work in progress and it is a dead end.
+    """
+    return state in ACTIVE and state not in ENGINE_ADVANCES
+
+
 def allowed_from(source: TaskState) -> frozenset[TaskState]:
     """Todos os destinos legais a partir de `origem`."""
     if source in TERMINAL:
@@ -113,13 +148,24 @@ def resumable_from(pausado_em: TaskState) -> frozenset[TaskState]:
     """Destinos legais ao sair de WAITING_HUMAN, dado o estado em que pausou.
 
     O humano pode: mandar seguir (o proprio estado de origem), mandar refazer
-    (o que aquele estado ja alcancava) ou encerrar. Ele nao pode teletransportar
-    a task para um estado que ela nao alcancaria sozinha -- aprovar um deploy nao
-    e o mesmo que declarar a task pronta.
+    (o que aquele estado ja alcancava), devolver a fila ou encerrar. Ele nao pode
+    teletransportar a task para um estado que ela nao alcancaria sozinha --
+    aprovar um deploy nao e o mesmo que declarar a task pronta.
+
+    A devolucao a fila estava faltando aqui, e a falta era ao contrario do que a
+    propria regra diz: `allowed_from` ja deixa qualquer estado ativo voltar a
+    READY, entao escalar uma task REDUZIA as opcoes do humano abaixo das que o
+    motor tinha sozinho. Na pratica isso fechava o unico caminho util depois de
+    uma escalada -- mandar refazer -- e a decisao morria com InvalidTransition.
+    Achado por uma corrida longa, nao por leitura.
     """
     if pausado_em in TERMINAL:
         return frozenset()
-    return frozenset({pausado_em}) | _AVANCOS[pausado_em] | (_ESCAPES - {S.WAITING_HUMAN})
+    saidas = (frozenset({pausado_em}) | _AVANCOS[pausado_em]
+              | (_ESCAPES - {S.WAITING_HUMAN}))
+    if pausado_em in _DEVOLVEM_A_FILA:
+        saidas |= {S.READY}
+    return saidas
 
 
 def can(source: TaskState, destination: TaskState, pausado_em: TaskState | None = None) -> bool:

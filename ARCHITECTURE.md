@@ -137,6 +137,85 @@ Cada item carrega decisão, não diagnóstico: o que aconteceu, por que importa,
 que o agente já tentou, opções, recomendação, risco. Log fica no evento, sob
 demanda.
 
+## Operacao continua: tempo, falha e volta
+
+O motor existe para trabalhar sem alguem olhando. Ate o marco 8 isso era uma
+premissa, nao um fato -- toda prova anterior era uma invocacao supervisionada.
+
+### Um relogio, nao dois
+
+Toda a recuperacao deste motor e comparacao de timestamp: lease vencido prova
+que o worker morreu, `updated_at` diz ha quanto tempo a task nao anda, o dia
+decide quando o orcamento reinicia. Se quem carimba e quem pergunta usam
+relogios diferentes, nada disso funciona -- e nao falha ruidosamente, falha em
+silencio.
+
+Foi o que aconteceu: lease carimbado por um relogio, verificado contra outro,
+run carimbado por um terceiro. Um run ficou `RUNNING` com lease "vivo" por 103
+ticks seguidos -- quatro dias simulados -- e o health respondeu OK o tempo todo.
+
+Agora `SqliteStore` e `Orchestrator` recebem o mesmo `clock`. Producao nao passa
+nada e recebe o relogio real, como antes.
+
+### O motor nunca estaciona uma task
+
+Transicao legal e transicao que alguem executa sao coisas diferentes, e a
+diferenca e invisivel: a task fica num estado que parece ocupado, o scheduler a
+ignora porque parece ocupada, e os ticks seguintes voltam limpos para sempre.
+
+`ENGINE_ADVANCES` diz de quais estados este motor tem codigo para sair.
+`is_terminus()` acusa estado ativo do qual ele nao sai. Ao chegar num terminus, a
+task vai para uma pessoa -- com motivo escrito -- em vez de ficar parecendo
+ocupada. Quando um marco futuro adicionar a etapa, adiciona o estado la.
+
+### A porta de volta
+
+Escalar so serve se der para voltar. `regente decide` gravava a escolha e
+imprimia que o proximo tick retomaria a task; nenhum tick lia de volta. Todo
+escalonamento era porta de mao unica.
+
+O tick agora consome decisoes. O destino sai da propria maquina de estados --
+`resumable_from(paused_at)` -- nunca de uma lista escrita de memoria. Decisao que
+o motor nao reconhece tambem move a task: escolha nao interpretavel que nao move
+nada e a fila parando em silencio outra vez.
+
+### `regente health`
+
+Doze perguntas respondidas **do disco**. Se o motor morrer as tres da manha,
+`regente health` as nove ainda responde -- relatorio montado da memoria de um
+processo vivo estaria vazio exatamente quando importa, e relatorio vazio parece
+saudavel.
+
+Quatro niveis, e a ordem importa: `OK < ATTENTION < UNKNOWN < STUCK`. `UNKNOWN`
+fica acima de `ATTENTION` de proposito -- o que o motor nao consegue ver e mais
+perigoso do que o que ele ve e nao gosta. `UNKNOWN` nunca e saudavel.
+
+Codigo de saida: 0 saudavel, 1 atencao ou nao examinado, 2 travado. Cron le sem
+interpretar prosa.
+
+### Crescimento: medido, com o log separado do dado
+
+O write-ahead log e churn, nao crescimento: um checkpoint o dobra para dentro do
+arquivo e ele encolhe. Reportar os dois juntos mediria ruido -- uma corrida
+mostrou "3,4MB de banco" para 108 eventos, sendo 200KB de dado e o resto log.
+
+`checkpoint()` e politica explicita de manutencao e MOVE paginas ja
+comprometidas; nada e apagado. Nao existe retencao que delete linha.
+
+Medido em mil ticks: crescimento linear, 4,20 eventos/tick na primeira metade e
+4,18 na segunda; runs, leases e aprovacoes limitados, sem acumular.
+
+### Injecao de falha
+
+Os faults **embrulham** providers reais em vez de substitui-los. Mock devolvendo
+falha enlatada testa a ideia que o mock tem de falha; wrapper que deixa o adapter
+real rodar e entao interrompe testa o motor. E o cronograma e deterministico:
+corrida que falha diferente a cada vez nao serve para provar conserto.
+
+Morte de worker nao levanta excecao. Excecao e um relatorio, e worker morto nao
+relata nada -- o run fica RUNNING, o lease fica preso ate vencer, e a
+recuperacao tem que descobrir sozinha, pelo disco.
+
 ## O agente e um executor, nunca uma autoridade
 
 O contrato responde quatro perguntas e recusa cinco.

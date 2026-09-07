@@ -95,7 +95,13 @@ def test_segundo_tick_analisa_is_dispatches(bench):
 
     assert not rel.baseline
     assert rel.dispatched == ("A-1",)
-    assert store.tasks("wks_teste")[0].state is TaskState.TESTING
+    # This used to assert TESTING. TESTING is where this engine's pipeline
+    # currently ends -- nothing advances a task out of it -- so parking
+    # there looked like progress and was a dead end: the scheduler skips an
+    # active task, the work was never touched again, and every later tick
+    # reported clean. A soak run found it on its fourth tick. The engine now
+    # hands the task to a person instead of leaving it to look busy.
+    assert store.tasks("wks_teste")[0].state is TaskState.WAITING_HUMAN
 
 
 def test_task_new_not_reopen_baseline(bench):
@@ -211,7 +217,13 @@ def test_state_survives_to_process(bench):
     orq2, store2 = bench()          # processo novo, mesmo banco
     t = store2.tasks("wks_teste")[0]
     assert t.key == "A-1"
-    assert t.state is TaskState.TESTING
+    # This used to assert TESTING. TESTING is where this engine's pipeline
+    # currently ends -- nothing advances a task out of it -- so parking
+    # there looked like progress and was a dead end: the scheduler skips an
+    # active task, the work was never touched again, and every later tick
+    # reported clean. A soak run found it on its fourth tick. The engine now
+    # hands the task to a person instead of leaving it to look busy.
+    assert t.state is TaskState.WAITING_HUMAN
 
 
 def test_worker_dead_returns_the_task_to_the_queue(bench):
@@ -238,7 +250,13 @@ def test_worker_dead_returns_the_task_to_the_queue(bench):
     # Recuperar e devolver a fila, e a fila anda no mesmo tick: o trabalho volta
     # a andar sozinho, sem esperar o proximo ciclo nem intervencao.
     assert rel.dispatched == ("A-1",)
-    assert store.task(task.id).state is TaskState.TESTING
+    # This used to assert TESTING. TESTING is where this engine's pipeline
+    # currently ends -- nothing advances a task out of it -- so parking
+    # there looked like progress and was a dead end: the scheduler skips an
+    # active task, the work was never touched again, and every later tick
+    # reported clean. A soak run found it on its fourth tick. The engine now
+    # hands the task to a person instead of leaving it to look busy.
+    assert store.task(task.id).state is TaskState.WAITING_HUMAN
     assert store.acquire_lease("repo:a", "outro", "wks_teste", 60) is not None, \
         "o lease do worker morto precisa ter sido solto"
 
@@ -457,7 +475,13 @@ def test_change_in_source_releases_the_work(bench):
     rel = orq.tick()
     assert rel.changes and rel.changes[0][0] == "A-1"
     assert rel.unblocked_tasks == ("A-1",)
-    assert store.tasks("wks_teste")[0].state is TaskState.TESTING
+    # This used to assert TESTING. TESTING is where this engine's pipeline
+    # currently ends -- nothing advances a task out of it -- so parking
+    # there looked like progress and was a dead end: the scheduler skips an
+    # active task, the work was never touched again, and every later tick
+    # reported clean. A soak run found it on its fourth tick. The engine now
+    # hands the task to a person instead of leaving it to look busy.
+    assert store.tasks("wks_teste")[0].state is TaskState.WAITING_HUMAN
 
 
 def test_block_by_failure_not_is_undone_by_status_external(bench):

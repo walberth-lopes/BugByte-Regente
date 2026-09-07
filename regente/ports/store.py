@@ -123,7 +123,8 @@ class Store(Port):
 
     @abstractmethod
     def renew_lease(self, resource: str, owner: str, segundos: int,
-                     workspace_id: str | None = None) -> bool: ...
+                     workspace_id: str | None = None,
+                     when: datetime | None = None) -> bool: ...
 
     @abstractmethod
     def release_lease(self, resource: str, owner: str,

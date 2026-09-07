@@ -15,7 +15,10 @@ from pathlib import Path
 from .app import container
 from .app.config import Config, load
 from .core.states import TaskState
+from .app.container import _stable_id
+from .core import ids
 from .engine import chain, escalation, shadow
+from .engine.store_sqlite import SqliteStore
 
 DEFAULT_CONFIG_FILE = "regente.yaml"
 
@@ -166,6 +169,36 @@ def cmd_decide(args) -> int:
         return 0
     finally:
         motor.close()
+
+
+def cmd_health(args) -> int:
+    """What is running, what is stuck, for how long and why.
+
+    Reads persisted state only. It answers after a crash, which is the moment it
+    matters -- a report assembled from a live process's memory would be empty
+    exactly then, and an empty report reads like a healthy one.
+    """
+    from .engine import health as health_module
+
+    cfg = load(args.config)
+    store = SqliteStore(cfg.banco)
+    store.migrate()
+    try:
+        ws_id = _stable_id(ids.WORKSPACE, cfg.organization, cfg.client, cfg.workspace)
+        report = health_module.inspect(
+            store, ws_id, cfg.workspace,
+            areas_root=cfg.areas,
+            budget_usd=cfg.budget.max_cost_usd,
+            max_dispatches=cfg.limits.max_dispatches_per_day)
+        print(report.render())
+    finally:
+        store.close()
+    # Exit code carries the verdict so a cron job can act on it without parsing
+    # prose: 0 healthy, 1 needs attention or is unexamined, 2 stuck.
+    return {health_module.Level.OK: 0,
+            health_module.Level.ATTENTION: 1,
+            health_module.Level.UNKNOWN: 1,
+            health_module.Level.STUCK: 2}[report.level]
 
 
 def cmd_log(args) -> int:
@@ -377,6 +410,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("plan", help="o que o scheduler faria now")
     p.set_defaults(fn=cmd_plan)
+
+    p = sub.add_parser("health", help="o que esta rodando, o que travou e ha quanto tempo")
+    p.add_argument("--config", default="regente.yaml")
+    p.set_defaults(fn=cmd_health)
 
     p = sub.add_parser("needs-me", help="a fila de decisoes humanas")
     p.set_defaults(fn=cmd_needs_me)

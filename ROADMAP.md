@@ -12,12 +12,13 @@ Marco não fecha sem prova em disco.
 | **5** | **AgentRunner + validation loop** ✅ | missão selecionada, alvo resolvido, clone isolado, agente executado, teste com linha de base, veredito e commit — DECLARED e DISCOVERED provados ponta a ponta |
 | **6** | **CI + PR** ⚠ | caminho completo implementado e testado em contrato; **prova remota real bloqueada em `NEEDS_HUMAN`** por ausencia de task elegivel |
 | **7** | **AgentRunner real** ⚠ | motor observa o mundo por conta propria e nao acredita no agente; sandbox sem execucao de comando; **modelo real bloqueado** por falta de credencial que o motor possa resolver |
-| 8 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
-| 9 | CloudProvider | leitura de recursos, logs e métricas |
-| 10 | Deploy em staging | deploy governado + smoke, com rollback |
-| 11 | Workers paralelos de verdade | 2+ workers reais simultâneos sem colisão |
-| 12 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
-| 13 | **Segundo cliente** | outro conjunto de provedores rodando **sem tocar em `core/` nem `engine/`** |
+| **8** | **Operacao continua sob falha** ✅ | 1000 ticks, 43 reinicios sem fechamento limpo, 13 mortes de worker e 13 recuperacoes, 142 quedas de provider, zero violacao de invariante |
+| 9 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
+| 10 | CloudProvider | leitura de recursos, logs e métricas |
+| 11 | Deploy em staging | deploy governado + smoke, com rollback |
+| 12 | Workers paralelos de verdade | 2+ workers reais simultâneos sem colisão |
+| 13 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
+| 14 | **Segundo cliente** | outro conjunto de provedores rodando **sem tocar em `core/` nem `engine/`** |
 
 O marco do segundo cliente é o único teste honesto da arquitetura. Todos os
 outros podem passar com um motor secretamente acoplado ao primeiro cliente.

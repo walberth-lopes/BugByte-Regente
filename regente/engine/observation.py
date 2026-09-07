@@ -62,6 +62,21 @@ AUTHORITY_PATHS: tuple[str, ...] = (
     ".gitmodules",
 )
 
+#: Files inside the repository's own metadata that confer authority, guarded by
+#: fingerprint because no diff can see them.
+#:
+#: Named individually rather than guarding `.git` wholesale, and the difference
+#: is not fussiness. `git status` rewrites `.git/index` every time it refreshes
+#: its stat cache -- so guarding the whole directory made the engine's own
+#: observation trip the alarm. A test that meant to prove a CI-file edit was
+#: caught passed because of that instead, intermittently, for the wrong reason.
+#:
+#: A guard that fires on the watcher's own footsteps is a guard somebody will
+#: eventually switch off.
+GIT_AUTHORITY_FILES: tuple[str, ...] = (
+    ".git/config", ".git/hooks", ".git/info/exclude", ".git/credentials",
+)
+
 #: Directories skipped when fingerprinting AND when listing changed files.
 #:
 #: Not cosmetic. The engine runs the test suite itself, and running it writes
@@ -170,6 +185,12 @@ def _fingerprint(root: Path, limit: int = 4000,
     is a deliberate trade and is stated in `describe()` rather than hidden.
     """
     marks: dict[str, tuple[int, int]] = {}
+    if root.is_file():
+        try:
+            st = root.stat()
+        except OSError:
+            return marks
+        return {str(root): (st.st_size, st.st_mtime_ns)}
     if not root.is_dir():
         return marks
     for current, dirs, files in os.walk(root):
@@ -433,7 +454,7 @@ def sentinel_for(mission: Mission, area_root: str | Path,
     # an editor into a push.
     guarded: list[Path] = []
     if own is not None:
-        for name in (".git", *authority_paths):
+        for name in (*GIT_AUTHORITY_FILES, *authority_paths):
             candidate = own / name
             if candidate.exists():
                 guarded.append(candidate)

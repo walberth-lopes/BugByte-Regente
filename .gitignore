@@ -6,3 +6,8 @@ __pycache__/
 regente.yaml
 *.egg-info/
 sombra-sg/
+
+# soak and restart-proof scratch
+tests/.soak/
+tests/.restart/
+tests/child.py

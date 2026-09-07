@@ -17,6 +17,101 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 8 — sustained unattended operation
+
+The premise the whole project rests on, tested for the first time. Every earlier
+milestone proved a capability in one supervised invocation. This one asks what
+happens on the fourth day.
+
+### What the soak actually ran
+
+A thousand ticks in 63 seconds of wall time, covering about three simulated
+weeks, against the real orchestrator, the real store, the real state machine and
+the real scheduler. Faults were injected at the real boundaries by **wrapping**
+providers rather than replacing them, so the engine cannot tell an injected
+outage from a real one.
+
+| | |
+|---|---|
+| ticks | 1000 |
+| dispatches | 154 |
+| worker deaths injected | 13 |
+| recoveries | **13** (exact match) |
+| provider outages injected | 142 |
+| runner failures injected | 14 |
+| escalations | 150 |
+| restarts without a clean close | 43 |
+| **invariant violations** | **0** |
+
+Invariants are checked after **every** tick, not at the end. A run that only
+checks its final state cannot tell a system that stayed correct from one that
+broke and healed, and the second will break and not heal on the day it matters.
+
+### Growth, measured rather than assumed
+
+| | tick 1 | tick 500 | tick 1000 |
+|---|---|---|---|
+| events | 10 | 2114 | 4199 |
+| data | 4KB | 852KB | 1544KB |
+| write-ahead log | 591KB | 4039KB | 4047KB |
+| runs RUNNING | 0 | 0 | 0 (max 1) |
+| live leases | 0 | 0 | 0 (max 1) |
+| open approvals | 0 | 0 | 0 (max 8) |
+
+Growth is **linear**: 4.20 events/tick over the first half, 4.18 over the
+second. Runs, leases and approvals are bounded rather than accumulating. The
+write-ahead log plateaus around 4MB, which is SQLite's own autocheckpoint
+threshold and not data.
+
+That last distinction cost a fix. `database_bytes` originally returned one
+number, and a soak reported "3.4MB of database" for 108 events -- 200KB of data
+and the rest an uncheckpointed log. Growth measured on the total is growth
+measured on churn. Data and log are now reported separately, and `checkpoint()`
+is an explicit maintenance policy that MOVES committed pages into the file. No
+retention policy deletes anything.
+
+### Defects found, all of them silent
+
+Every one of these would have shipped. None could fail a test that ran once.
+
+| # | Defect | How it looked |
+|---|---|---|
+| 1 | **Every dispatched task parked in `TESTING` forever.** Nothing in the project advances a task out of it; the scheduler skips active tasks. | The queue looked busy, ticks came back clean, the work was never touched again. Found on tick 4 of the first soak. |
+| 2 | **Deciding an approval moved nothing.** `regente decide` recorded the choice and printed that the next tick would resume the task. No tick read it back. | Every escalation was a one-way door. The unit test passed because the test itself performed the transition the engine never did. |
+| 3 | **`resumable_from` omitted the return-to-queue route** that `allowed_from` grants, so escalating a task gave a human FEWER options than the engine already had. | The only useful decision -- send it back -- died with `InvalidTransition`. |
+| 4 | **Two clocks.** Leases were stamped from the module clock and checked against the injected one; runs from a third. | A run sat `RUNNING` with a "live" lease for 103 consecutive ticks, four simulated days, and health reported OK the whole way. |
+| 5 | **Health excused an ancient run because its lease looked live.** | See above: OK for 103 ticks. |
+| 6 | **The escape sentinel guarded all of `.git`,** which `git status` rewrites on every read. | A test meant to prove a CI-file edit was caught passed intermittently because the engine was tripping over its own footsteps. |
+
+Defects 1, 2 and 3 are one story: the engine could stop and could not start
+again. Defect 4 is why the recovery that did exist never fired.
+
+### Capability status
+
+| Capability | State | Evidence |
+|---|---|---|
+| Many ticks, faults injected at real boundaries | **EXERCISED_REAL** | 1000-tick run, 0 violations |
+| Lease acquisition, expiry, recovery | **EXERCISED_REAL** | 13 deaths, 13 recoveries |
+| Restart from disk after an unclean stop | **EXERCISED_REAL** | 43 restarts in one run |
+| `kill -9` of a real process, state read by a fresh interpreter | **EXERCISED_REAL** | `test_state_survives_a_real_kill_and_the_next_process_finds_it` |
+| Provider outage, rate limit, timeout | **EXERCISED_REAL** | 142 injected; board never read as empty |
+| Day boundary and budget reset | CONTRACT_TESTED | deterministic clock; yesterday's spend proven untouched |
+| `regente health` from persisted state | **EXERCISED_REAL** | answers after the engine is closed |
+| Escalate -> decide -> resume | CONTRACT_TESTED | every option has a destination derived from the state machine |
+| Orphan work areas | CONTRACT_TESTED | reported, never deleted |
+| Growth measurement | **EXERCISED_REAL** | linear over 1000 ticks |
+| **Unattended operation against real external providers** | **BLOCKED_EXTERNAL** | the soak runs the real engine against local providers; a real board and repository would need the M6/M7 blockers lifted |
+
+### What the soak does NOT prove
+
+The task provider is the filesystem adapter and the agent is deterministic.
+That is deliberate -- this milestone is about time, faults and recovery, not
+about agents -- but it means the numbers above say nothing about how the engine
+behaves against a real board's latency or a real model's cost. Those remain
+blocked where M6 and M7 left them.
+
+---
+
 ## Milestone 7 — real AgentRunner
 
 ### The headless-agent inventory, re-taken
