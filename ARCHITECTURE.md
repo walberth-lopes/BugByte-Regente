@@ -628,6 +628,45 @@ o log, nao o dado.
 "Nao existe" e "existe e nao e seu" respondem identico. Distinguir os dois
 confirmaria a existencia de um workspace alheio a quem tentou adivinhar.
 
+### Identidade, acesso e policy: tres evidencias diferentes
+
+```
+Autenticacao  quem e voce?             IdentityProvider, prova um segredo ou um fato
+Identidade    qual chave estavel?      provedor + sujeito, nunca o nome
+Acesso        voce recebeu concessao?  AccessGrant, com autor, data e revogacao
+Policy        esta acao e permitida?   o arquivo de regras, independente
+Transicao     este estado permite?     a maquina de estados
+```
+
+Ate o marco 13, acesso era um fato de **configuracao**: quem editava o arquivo
+concedia a si mesmo autoridade de escrita, e nada guardava esse fato -- nem quem
+concedeu, nem quando, nem como revogar. O proprio provedor de identidade
+devolvia a autoridade, fundindo duas perguntas que precisam ficar separadas.
+
+Agora nenhum provedor concede nada. Ele responde *quem e voce*; o
+`AccessService` responde *o que voce recebeu*, lendo concessoes vivas **a cada
+requisicao**. E por isso que revogar fecha a porta na chamada seguinte, sem
+depender de a tela esconder um botao.
+
+**O provedor faz parte da chave.** `provedor:sujeito`. Sem isso, duas fontes de
+identidade que usem o mesmo sujeito viram a mesma pessoa dentro do motor.
+
+**O sujeito e o identificador estavel.** SID, uid, `sub` -- nunca o nome de
+exibicao: nomes mudam, e uma concessao amarrada a algo que muda se transfere
+sozinha para quem herdar o nome.
+
+**Revogar nao apaga.** "nunca teve acesso" e "teve e perdeu" sao fatos
+diferentes para quem investiga.
+
+**Papel e entrada da policy, nunca substituto dela.** Nao existe
+`if principal.is_admin: allow()`: ter a capacidade e uma condicao, e a policy
+continua sendo consultada depois. Um teste estrutural procura essa forma no
+codigo-fonte.
+
+**Ator e alvo sao colunas diferentes.** `alice concede a bob` e `bob concede a
+bob` sao fatos diferentes; o segundo e recusado, e guardar so "quem foi afetado"
+apagaria a pergunta que a auditoria de acesso existe para responder.
+
 ### Uma escrita, e as mesmas barreiras
 
 A tela ganhou exatamente uma acao: **decidir uma escalada**. Ela nao ganhou

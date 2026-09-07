@@ -77,8 +77,16 @@ def service(store, rules=None) -> DecisionService:
 
 
 def operator(*decides, reads=None, method="dev-token") -> Principal:
+    """Uma identidade autenticada COM concessao de decidir.
+
+    As capacidades sao montadas aqui porque, a partir do marco 14, nenhum
+    provedor de identidade as devolve: quem concede e um registro persistido.
+    """
+    from regente.core.access import abilities_of
+
     return Principal(subject="walberth", display="walberth", method=method,
-                     workspaces=reads, decides=frozenset(decides))
+                     provider=method, workspaces=reads,
+                     abilities={w: abilities_of("operator") for w in decides})
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +110,10 @@ def test_a_principal_asserted_without_a_method_is_not_authenticated(bench):
     nao passa.
     """
     approval = an_approval(bench)
-    forjado = Principal(subject="walberth", method="",
-                        decides=frozenset({"wks_a"}))
+    from regente.core.access import abilities_of
+
+    forjado = Principal(subject="walberth", method="", provider="dev-token",
+                        abilities={"wks_a": abilities_of("operator")})
 
     out = service(bench).decide(forjado, "wks_a", approval.id, "seguir")
     assert out.denial is Denial.UNAUTHENTICATED
@@ -117,8 +127,8 @@ def test_a_principal_asserted_without_a_method_is_not_authenticated(bench):
 def test_reading_a_workspace_does_not_grant_deciding_in_it(bench):
     """Derivar escrita de leitura faria de todo observador um decisor."""
     approval = an_approval(bench)
-    leitor = Principal(subject="x", method="dev-token",
-                       workspaces=frozenset({"wks_a"}), decides=frozenset())
+    leitor = Principal(subject="x", method="dev-token", provider="dev-token",
+                       workspaces=frozenset({"wks_a"}))
 
     assert leitor.may_read("wks_a") is True
     out = service(bench).decide(leitor, "wks_a", approval.id, "seguir")
@@ -602,6 +612,9 @@ def test_a_decision_from_the_terminal_is_attributable_to_the_account(
     finally:
         motor.close()
 
+    # A partir do marco 14 o terminal tambem precisa de concessao: identidade
+    # nao e autorizacao. A primeira vem pela porta estreita do bootstrap.
+    assert cli.main(["access", "inicial"]) == 0, capsys.readouterr()
     code = cli.main(["decide", approval.id, "seguir", "--nota", "ok"])
     assert code == 0, capsys.readouterr()
 
@@ -611,12 +624,14 @@ def test_a_decision_from_the_terminal_is_attributable_to_the_account(
     try:
         stored = store.approval(approval.id, workspace_id)
         assert stored.state.value == "DECIDED"
-        assert stored.decided_by.startswith("terminal:"), stored.decided_by
+        # Assinado pela conta do SISTEMA, com identificador estavel -- e nao
+        # por `getpass.getuser()`, que le variavel de ambiente.
+        assert stored.decided_by.startswith("os-account:"), stored.decided_by
 
         trail = [e for e in store.events(workspace_id, limit=50)
                  if e.kind == "decisao_humana_autenticada"]
         assert len(trail) == 1
-        assert trail[0].data["method"] == "terminal"
+        assert trail[0].data["method"] == "os-account"
         assert trail[0].data["previous_state"] == "OPEN"
     finally:
         store.close()

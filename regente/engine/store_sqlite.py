@@ -29,6 +29,7 @@ from typing import Any, Callable, Iterator
 
 from ..core import ids
 from ..core.errors import AlreadyExists, CorruptedState
+from ..core.access import Ability, AccessGrant, PrincipalRef
 from ..core.model import (ActionRecord, Approval, ApprovalState, Dependency, Event,
                           ExternalRef, Lease, Option, Project, Repository, Run,
                           RunState, Task, Workspace, now)
@@ -164,12 +165,39 @@ CREATE UNIQUE INDEX IF NOT EXISTS ix_deliveries_pr
   WHERE pr_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS ix_deliveries_task ON deliveries(workspace_id, task_key);
 
+-- Concessoes de acesso. Uma LINHA POR CONCESSAO, nunca uma coluna booleana:
+-- o sistema precisa responder quem recebeu, de quem, quando, com o que, e se
+-- foi revogado -- e nenhuma dessas perguntas tem resposta em `allowed = true`.
+--
+-- Revogar NAO apaga: preenche `revoked_at`. Uma concessao apagada leva junto a
+-- prova de que existiu, e "nunca teve acesso" e "teve e perdeu" sao fatos
+-- diferentes para quem investiga.
+CREATE TABLE IF NOT EXISTS access_grants (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+  -- A chave canonica `provedor:sujeito`. O provedor faz parte dela: sem isso,
+  -- duas fontes de identidade que usem o mesmo sujeito viram a mesma pessoa.
+  principal_key TEXT NOT NULL,
+  principal_provider TEXT NOT NULL, principal_subject TEXT NOT NULL,
+  abilities TEXT NOT NULL DEFAULT '[]',
+  granted_by TEXT NOT NULL, granted_at TEXT NOT NULL,
+  revoked_by TEXT NOT NULL DEFAULT '', revoked_at TEXT,
+  note TEXT NOT NULL DEFAULT '');
+-- No maximo UMA concessao viva por (workspace, principal). E a metade
+-- estrutural da corrida: duas concessoes concorrentes para a mesma pessoa
+-- chegam aqui e uma delas quebra, em vez de as duas passarem e o sistema ficar
+-- com duas verdades sobre o mesmo acesso.
+CREATE UNIQUE INDEX IF NOT EXISTS ix_grants_vivo
+  ON access_grants(workspace_id, principal_key) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_grants_workspace
+  ON access_grants(workspace_id, granted_at);
+
 CREATE TABLE IF NOT EXISTS counters (
   workspace_id TEXT NOT NULL, day TEXT NOT NULL, name TEXT NOT NULL,
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "9"
+SCHEMA_VERSION = "10"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -339,6 +367,35 @@ def _v6_to_v7(c: sqlite3.Connection) -> None:
                   "ADD COLUMN ci_observations INTEGER NOT NULL DEFAULT 0")
 
 
+def _v9_to_v10(c: sqlite3.Connection) -> None:
+    """Cria a tabela de concessoes. VAZIA -- e essa e a resposta honesta.
+
+    Nao ha de onde deduzir quem tinha acesso: ate aqui, acesso era um campo de
+    configuracao que ninguem gravava. Preencher com quem por acaso rodou o
+    processo transformaria uma suposicao em concessao registrada, com autor
+    inventado e data inventada -- exatamente o contrario do que esta tabela
+    existe para dar.
+
+    Depois desta migracao ninguem decide nada ate que uma concessao seja feita
+    e registrada. Isso e uma quebra de comportamento, e e a quebra certa.
+    """
+    c.execute("""CREATE TABLE IF NOT EXISTS access_grants (
+                   id TEXT PRIMARY KEY,
+                   client_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+                   principal_key TEXT NOT NULL,
+                   principal_provider TEXT NOT NULL,
+                   principal_subject TEXT NOT NULL,
+                   abilities TEXT NOT NULL DEFAULT '[]',
+                   granted_by TEXT NOT NULL, granted_at TEXT NOT NULL,
+                   revoked_by TEXT NOT NULL DEFAULT '', revoked_at TEXT,
+                   note TEXT NOT NULL DEFAULT '')""")
+    c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS ix_grants_vivo
+                 ON access_grants(workspace_id, principal_key)
+                 WHERE revoked_at IS NULL""")
+    c.execute("""CREATE INDEX IF NOT EXISTS ix_grants_workspace
+                 ON access_grants(workspace_id, granted_at)""")
+
+
 def _v8_to_v9(c: sqlite3.Connection) -> None:
     """Cria a tabela de clientes. Vazia -- e essa e a resposta honesta.
 
@@ -388,6 +445,7 @@ MIGRATIONS: dict[str, tuple[str, Any]] = {
     "6": ("7", _v6_to_v7),
     "7": ("8", _v7_to_v8),
     "8": ("9", _v8_to_v9),
+    "9": ("10", _v9_to_v10),
 }
 
 
@@ -678,6 +736,87 @@ class SqliteStore(Store):
     def workspaces(self) -> list[Workspace]:
         return [self._workspace_row(r) for r in
                 self._con.execute("SELECT * FROM workspaces ORDER BY name")]
+
+    # ---- concessoes de acesso -------------------------------------------
+
+    def _grant_row(self, r) -> AccessGrant:
+        return AccessGrant(
+            id=r["id"], client_id=r["client_id"], workspace_id=r["workspace_id"],
+            principal=PrincipalRef(provider=r["principal_provider"],
+                                   subject=r["principal_subject"]),
+            abilities=frozenset(Ability(a) for a in json.loads(r["abilities"])),
+            granted_by=r["granted_by"], granted_at=_dt(r["granted_at"]),
+            revoked_by=r["revoked_by"], revoked_at=_dt(r["revoked_at"]),
+            note=r["note"])
+
+    def open_grant(self, grant: AccessGrant) -> bool:
+        """Abre uma concessao. `False` quando ja existe uma viva para a pessoa.
+
+        A recusa vem do INDICE UNICO, dentro da transacao -- e nao de uma
+        leitura seguida de escrita. Duas concessoes concorrentes para a mesma
+        pessoa chegam as duas ate aqui; e o banco que decide qual passa, e a
+        outra sai como conflito em vez de virar uma segunda verdade sobre o
+        mesmo acesso.
+        """
+        try:
+            with self._tx() as c:
+                c.execute(
+                    """INSERT INTO access_grants(id, client_id, workspace_id,
+                         principal_key, principal_provider, principal_subject,
+                         abilities, granted_by, granted_at, revoked_by,
+                         revoked_at, note)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (grant.id, grant.client_id, grant.workspace_id,
+                     grant.principal.key, grant.principal.provider,
+                     grant.principal.subject,
+                     _j(sorted(a.value for a in grant.abilities)),
+                     grant.granted_by, _iso(grant.granted_at),
+                     grant.revoked_by, _iso(grant.revoked_at), grant.note))
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def revoke_grant(self, workspace_id: str, principal_key: str,
+                     revoked_by: str, when: datetime | None = None) -> bool:
+        """Revoga a concessao VIVA daquela pessoa naquele workspace.
+
+        O `WHERE` carrega o workspace e o estado: revogar de outro tenant nao
+        casa, e revogar duas vezes nao reescreve a primeira revogacao -- a data
+        e o autor originais sao o que a investigacao le.
+        """
+        with self._tx() as c:
+            cur = c.execute(
+                """UPDATE access_grants SET revoked_at=?, revoked_by=?
+                     WHERE workspace_id=? AND principal_key=?
+                       AND revoked_at IS NULL""",
+                (_iso(when or self._now()), revoked_by, workspace_id,
+                 principal_key))
+            return cur.rowcount > 0
+
+    def grants(self, workspace_id: str, principal_key: str | None = None,
+               include_revoked: bool = False) -> list[AccessGrant]:
+        """Concessoes deste workspace. Sempre escopadas, sempre por parametro."""
+        q = "SELECT * FROM access_grants WHERE workspace_id=?"
+        args: list[Any] = [workspace_id]
+        if principal_key is not None:
+            q += " AND principal_key=?"
+            args.append(principal_key)
+        if not include_revoked:
+            q += " AND revoked_at IS NULL"
+        return [self._grant_row(r)
+                for r in self._con.execute(q + " ORDER BY granted_at", args)]
+
+    def grants_of(self, principal_key: str) -> list[AccessGrant]:
+        """Concessoes VIVAS desta pessoa, em qualquer workspace.
+
+        E a unica leitura de concessao que nao comeca por workspace, porque a
+        pergunta e outra: montar o alcance de quem acabou de se autenticar. Ela
+        devolve as concessoes DELE -- nunca as de outra pessoa -- entao nao ha
+        escopo de tenant a atravessar.
+        """
+        return [self._grant_row(r) for r in self._con.execute(
+            "SELECT * FROM access_grants WHERE principal_key=? "
+            "AND revoked_at IS NULL ORDER BY workspace_id", (principal_key,))]
 
     def save_client(self, client_id: str, organization: str, name: str) -> None:
         """Registra como este cliente se chama. Idempotente.

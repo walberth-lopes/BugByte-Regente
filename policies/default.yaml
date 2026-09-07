@@ -54,6 +54,19 @@ rules:
     match: {action: "approval.decide"}
     reason: "responder a fila e trabalho de gente; sem isto a fila e um beco"
 
+  # ---- administracao de acesso -------------------------------------------
+  # Permite que a acao seja avaliada. NAO concede acesso a ninguem: quem concede
+  # e uma concessao gravada, e ela precisa existir ANTES de a policy ser
+  # consultada. Policy permite; concessao concede. As duas precisam passar.
+  #
+  # Sem estas regras o default DENY vale e o acesso nunca pode ser administrado
+  # -- o mesmo beco em que `approval.decide` ficou ate o marco anterior.
+  - name: human_administers_access
+    effect: ALLOW
+    match: {action: ["workspace.access.grant", "workspace.access.revoke",
+                     "workspace.access.list"]}
+    reason: "quem administra acesso e uma pessoa com concessao para isso"
+
   # ---- staging: autonomo -------------------------------------------------
   - name: merge_and_deploy_staging
     effect: ALLOW

@@ -47,10 +47,46 @@ O corpo de um POST nao pode carregar identidade nem escopo. `principal`,
 `subject`, `decided_by`, `per`, `actor`, `method` e `workspace_id` sao recusados
 com `400`.
 
-### Ler e decidir sao concessoes separadas
+### Ler e agir sao concessoes separadas
 
-`workspaces` (leitura) pode ser aberto; `decides` (escrita) comeca **vazio**.
-Derivar escrita de leitura faria de todo observador um decisor.
+`workspaces` (leitura) pode ser aberto; `abilities` (acao) vem **so** de
+`AccessGrant` gravado, com autor e data. Derivar acao de leitura faria de todo
+observador um decisor.
+
+Nenhum provedor de identidade concede autoridade. Ele responde *quem e voce*; o
+`AccessService` responde *o que voce recebeu*, lendo concessoes vivas a cada
+requisicao -- e e por isso que revogar fecha a porta na chamada seguinte, sem
+depender de a tela esconder um botao.
+
+### A identidade interna e `provedor:sujeito`
+
+O provedor faz parte da chave. Sem ele, `walberth` numa conta de sistema e
+`walberth` num diretorio corporativo seriam a mesma pessoa dentro do motor, e a
+concessao de uma valeria para a outra.
+
+O sujeito e o identificador **estavel** que o provedor emite -- o SID, o uid, o
+`sub` -- nunca o nome de exibicao nem o email: os dois mudam, e uma concessao
+amarrada a algo que muda se transfere sozinha.
+
+### Administracao de acesso
+
+```
+GET    /api/workspaces/{id}/access                 lista, com historia
+POST   /api/workspaces/{id}/access                 {"principal","role","note"}
+DELETE /api/workspaces/{id}/access/{provedor:sujeito}
+```
+
+Papeis: `operator` (decide escaladas), `admin` (administra acesso), `owner` (os
+dois). Um papel desconhecido concede **nada**, nunca tudo.
+
+Conceder a si mesmo e recusado mesmo com autoridade para conceder: uma concessao
+so vale como prova se houver duas pessoas na linha. A excecao e a **concessao
+inicial** (`regente access inicial`), que exige identidade do sistema
+operacional, so funciona num workspace sem nenhuma concessao, e fica registrada
+com um verbo proprio.
+
+O corpo nao pode carregar `actor`, `granted_by`, `workspace_id`, `client_id` nem
+`abilities`: ator, escopo e capacidades nao vem da requisicao.
 
 ### O mecanismo de desenvolvimento
 

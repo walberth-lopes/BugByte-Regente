@@ -34,9 +34,12 @@ def main() -> int:
                 {"name": "decidir", "effect": "ALLOW",
                  "match": {"action": DECIDE_ACTION}}]),
             organization="org", client="Acme", workspace_name="main")
+        from regente.core.access import abilities_of
+
         who = Principal(subject=f"operador-{choice}", method="dev-token",
+                        provider="dev-token",
                         workspaces=frozenset({"wks_a"}),
-                        decides=frozenset({"wks_a"}))
+                        abilities={"wks_a": abilities_of("operator")})
         outcome = service.decide(who, "wks_a", approval_id, choice)
         print(json.dumps({
             "accepted": outcome.accepted,

@@ -22,7 +22,10 @@ de autenticacao e indistinguivel de um bug -- exatamente onde a distincao entre
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from ..core.model import now
 
 from ..core.principal import Principal
 from . import Capability, Port
@@ -36,9 +39,19 @@ class Identity:
     Uma decisao tomada com token de desenvolvimento e uma decisao tomada por SSO
     corporativo nao podem aparecer iguais no historico.
     """
+    #: O identificador ESTAVEL que o provedor emite. Nunca o nome de exibicao
+    #: nem o email: os dois mudam, e uma concessao amarrada a algo que muda e
+    #: uma concessao que se transfere sozinha.
     subject: str
     display: str = ""
     method: str = ""
+    #: QUEM provou. Faz parte da identidade interna do motor: sem ele, dois
+    #: provedores que usem o mesmo sujeito produziriam o mesmo principal.
+    provider: str = ""
+    #: Quem emitiu -- a maquina, o dominio, o issuer. Diagnostico e auditoria.
+    issuer: str = ""
+    #: Quando foi provada.
+    authenticated_at: datetime | None = field(default_factory=now)
 
 
 class IdentityProvider(Port):
@@ -63,10 +76,14 @@ class IdentityProvider(Port):
 
     @abstractmethod
     def principal(self, identity: Identity) -> Principal:
-        """O alcance concedido a esta identidade.
+        """A identidade traduzida, e NENHUMA autoridade.
 
-        Separado de `authenticate` porque autenticar e autorizar sao perguntas
-        diferentes, e quem responde uma raramente deveria responder a outra: um
-        provedor de identidade corporativo sabe quem voce e e nao faz ideia de
-        quais workspaces deste motor sao seus.
+        Autenticar e autorizar sao perguntas diferentes, e quem responde uma nao
+        deveria responder a outra: um provedor de identidade corporativo sabe
+        quem voce e e nao faz ideia de quais workspaces deste motor sao seus.
+
+        Ate o marco anterior este metodo devolvia autoridade de escrita, vinda
+        de um campo de configuracao -- entao quem editava o arquivo concedia a
+        si mesmo poder e nada guardava esse fato. Quem concede agora e uma
+        concessao persistida, aplicada depois por `AccessService.authorize`.
         """

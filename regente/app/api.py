@@ -40,6 +40,8 @@ from typing import Any, TYPE_CHECKING
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..core.principal import ANONYMOUS, Principal
+from ..core.access import PrincipalRef
+from ..engine.access import AccessService, Refusal
 from ..engine.decision import Decision, DecisionService, Denial
 from ..engine.readmodel import ReadModel
 
@@ -100,6 +102,18 @@ DENIAL_STATUS = {
     Denial.CONFLICT: 409,
 }
 
+#: O mesmo, para as recusas de administracao de acesso. Tabela separada porque
+#: os vocabularios sao de camadas diferentes e uni-los criaria um acoplamento
+#: em que acrescentar um motivo numa muda o significado da outra.
+REFUSAL_STATUS = {
+    Refusal.UNAUTHENTICATED: 401,
+    Refusal.FORBIDDEN: 403,
+    Refusal.NOT_FOUND: 404,
+    Refusal.INVALID: 422,
+    Refusal.POLICY_DENIED: 403,
+    Refusal.CONFLICT: 409,
+}
+
 
 #: Resposta unica para "nao existe" e para "existe e nao e seu".
 #:
@@ -133,10 +147,18 @@ class Api:
     #: LER esta pagina (nao ha CORS), entao nao alcanca o token e o POST forjado
     #: chega sem credencial. E a defesa contra pedido forjado de outra origem.
     session_token: str = ""
-    #: A unica escrita. `None` quando esta composicao nao concede nenhuma --
-    #: e uma API sem servico de decisao recusa a rota, em vez de fingir que
-    #: ela nao existe.
+    #: A unica escrita sobre trabalho. `None` quando esta composicao nao
+    #: concede nenhuma -- e uma API sem servico recusa a rota, em vez de
+    #: fingir que ela nao existe.
     decisions: DecisionService | None = None
+    #: Administracao de acesso. Mesma regra.
+    access: AccessService | None = None
+    #: Sessao declarada somente-leitura pela composicao.
+    #:
+    #: NAO substitui nenhuma barreira: e uma recusa ADICIONAL, antes das do
+    #: Core. Quem roda `regente ui --read-only` esta dizendo "nesta sessao,
+    #: nada"; as concessoes continuam valendo em qualquer outra.
+    read_only: bool = False
 
     # ------------------------------------------------------------------
     def resolve(self, method: str, path: str,
@@ -150,11 +172,22 @@ class Api:
 
         parts = [unquote(p) for p in path.strip("/").split("/") if p]
 
-        if method == "POST":
-            # UMA escrita, nomeada. Tudo o que nao for ela continua recusado
-            # com a mesma frase de antes: a ausencia de escrita nao e uma
-            # lacuna a preencher quando der.
-            return self._decide(parts, body, who)
+        if method in ("POST", "DELETE"):
+            # Escritas NOMEADAS, uma a uma. Tudo o que nao for uma delas
+            # continua recusado com a mesma frase de antes: a ausencia de
+            # escrita nao e uma lacuna a preencher quando der.
+            if self.read_only:
+                return _error(403, "read_only_session",
+                              "esta sessao foi aberta como somente leitura")
+            if (method == "POST" and len(parts) == 6
+                    and parts[3] == "approvals" and parts[5] == "decision"):
+                return self._decide(parts, body, who)
+            if (len(parts) >= 4 and parts[:2] == ["api", "workspaces"]
+                    and parts[3] == "access"):
+                return self._access_write(method, parts, body, who)
+            return _error(405, "read_only",
+                          "esta API e somente leitura; autoridade de escrita "
+                          "pertence ao motor e ao humano, nao a uma tela")
 
         if method not in ("GET", "HEAD"):
             return _error(405, "read_only",
@@ -243,6 +276,16 @@ class Api:
                 e.as_dict()
                 for e in self.read.events(workspace_id, _int(query, "limit", 100))]})
 
+        if head == "access" and not tail:
+            if self.access is None:
+                return _error(403, "no_authority",
+                              "esta composicao nao administra acesso")
+            found = self.access.listing(who, workspace_id)
+            if not isinstance(found, list):
+                return _error(REFUSAL_STATUS.get(found.refusal, 403),
+                              found.refusal.value.lower(), found.reason)
+            return Response(200, {"access": [_grant_dict(g) for g in found]})
+
         if head == "escalations" and not tail:
             return Response(200, {"escalations": [
                 e.as_dict() for e in self.read.escalations(workspace_id)]})
@@ -311,6 +354,79 @@ class Api:
                       (outcome.denial.value.lower() if outcome.denial
                        else "denied"), outcome.reason)
 
+    def _access_write(self, method: str, parts: list[str], body: dict | None,
+                      who: Principal) -> Response:
+        """`POST .../access` concede; `DELETE .../access/{principal}` revoga.
+
+        Como no caminho de decisao, este metodo NAO verifica identidade, escopo,
+        policy nem autoridade. Ele valida a forma e traduz a recusa. Repetir uma
+        verificacao aqui criaria uma segunda regra que um dia discorda da
+        primeira -- sendo a daqui a que ninguem lembra de atualizar.
+        """
+        if self.access is None:
+            return _error(403, "no_authority",
+                          "esta composicao nao administra acesso")
+        workspace_id = parts[2]
+
+        if method == "DELETE":
+            if len(parts) != 5:
+                return _error(405, "read_only", "rota inexistente")
+            alvo = self._ref(parts[4])
+            if alvo is None:
+                return _error(422, "invalid", "identidade alvo invalida")
+            return self._as_response(
+                self.access.revoke(who, workspace_id, alvo))
+
+        if len(parts) != 4 or not isinstance(body, dict):
+            return _error(400, "invalid_body", "corpo precisa ser um objeto JSON")
+
+        # O corpo nao diz quem esta concedendo, nem onde. Aceitar isso seria
+        # trocar autenticacao e escopo por digitacao.
+        for proibido in ("actor", "granted_by", "principal_actor", "method",
+                         "workspace_id", "client_id", "abilities"):
+            if proibido in body:
+                return _error(400, "invalid_body",
+                              f"'{proibido}' nao e aceito: ator, escopo e "
+                              f"capacidades nao vem do corpo da requisicao")
+
+        alvo = self._ref(body.get("principal"))
+        if alvo is None:
+            return _error(422, "invalid",
+                          "'principal' precisa ter a forma provedor:sujeito")
+        papel = body.get("role")
+        if not isinstance(papel, str) or not papel.strip():
+            return _error(400, "invalid_body", "'role' e obrigatorio")
+        nota = body.get("note") or ""
+        if not isinstance(nota, str) or len(nota) > 2000:
+            return _error(400, "invalid_body", "'note' e texto de ate 2000")
+
+        return self._as_response(
+            self.access.grant(who, workspace_id, alvo, papel.strip(), nota))
+
+    @staticmethod
+    def _ref(raw) -> "PrincipalRef | None":
+        """Le `provedor:sujeito`, ou admite que nao da para ler.
+
+        Uma identidade sem provedor seria uma chave ambigua, e uma chave
+        ambigua casa com quem nao devia.
+        """
+        if not isinstance(raw, str) or ":" not in raw:
+            return None
+        try:
+            return PrincipalRef.parse(raw.strip())
+        except ValueError:
+            return None
+
+    def _as_response(self, outcome) -> Response:
+        if outcome.accepted:
+            return Response(200, {
+                "accepted": True, "reason": outcome.reason,
+                "actor": outcome.actor, "target": outcome.target,
+                "grant": _grant_dict(outcome.grant) if outcome.grant else None})
+        return _error(REFUSAL_STATUS.get(outcome.refusal, 403),
+                      outcome.refusal.value.lower() if outcome.refusal
+                      else "refused", outcome.reason)
+
     def _global_health(self, who: Principal) -> Response:
         """Saude de cada workspace visivel, sem agregado que esconda.
 
@@ -337,8 +453,15 @@ class Api:
                 "authenticated": who.authenticated,
                 "mechanism": self.identity_note,
                 "development_only": self.identity_is_development,
+                "issuer": who.issuer,
+                "authenticated_at": who.authenticated_at,
                 "reads": (None if who.workspaces is None
                           else sorted(who.workspaces)),
+                # O que foi CONCEDIDO, por workspace. A tela usa isto para
+                # esconder o que nao adianta oferecer -- e esconder e UX; a
+                # barreira continua sendo a API.
+                "abilities": {w: sorted(a.value for a in abs_)
+                              for w, abs_ in who.abilities.items()},
                 "decides": sorted(who.decides),
             }})
 
@@ -375,6 +498,22 @@ class Api:
             data = data.replace(b"{{SESSION_TOKEN}}",
                                 self.session_token.encode("utf-8"))
         return Response(200, content_type=kind, body=data)
+
+
+def _grant_dict(grant) -> dict:
+    """Uma concessao, dita para fora. Com historia, nunca um booleano."""
+    return {
+        "id": grant.id,
+        "principal": grant.principal.key,
+        "provider": grant.principal.provider,
+        "abilities": sorted(a.value for a in grant.abilities),
+        "granted_by": grant.granted_by,
+        "granted_at": grant.granted_at,
+        "revoked_by": grant.revoked_by,
+        "revoked_at": grant.revoked_at,
+        "active": grant.active,
+        "note": grant.note,
+    }
 
 
 def _one(query: dict[str, list[str]], name: str) -> str | None:
@@ -430,6 +569,17 @@ def handler_for(api: Api, identity: "IdentityProvider | None" = None,
         do_PATCH = do_POST
         do_DELETE = do_POST
 
+        def _authorize(self, who: Principal) -> Principal:
+            """Autenticado primeiro, autorizado depois -- nunca junto.
+
+            O provedor diz quem e; as concessoes gravadas dizem o que pode. E
+            por isso que revogar fecha a porta na requisicao seguinte, sem
+            depender de a tela esconder um botao.
+            """
+            if api.access is None or not who.authenticated:
+                return who
+            return api.access.authorize(who)
+
         # ---- identidade ------------------------------------------------
         def _principal(self) -> Principal:
             """Do cabecalho para um principal, ou anonimo.
@@ -443,7 +593,9 @@ def handler_for(api: Api, identity: "IdentityProvider | None" = None,
             raw = self.headers.get("Authorization") or ""
             token = raw[7:].strip() if raw[:7].lower() == "bearer " else ""
             found = identity.authenticate(token or None)
-            return identity.principal(found) if found else ANONYMOUS
+            if found is None:
+                return ANONYMOUS
+            return self._authorize(identity.principal(found))
 
         def _body(self) -> dict | None:
             try:
@@ -489,7 +641,9 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
           principal: Principal | None = None,
           identity: "IdentityProvider | None" = None,
           decisions: DecisionService | None = None,
-          session_token: str = "") -> ThreadingHTTPServer:
+          access: AccessService | None = None,
+          session_token: str = "",
+          read_only: bool = False) -> ThreadingHTTPServer:
     """Sobe o servidor. Loopback por padrao, e isso continua sendo uma decisao.
 
     Com `identity`, toda requisicao e autenticada e a escrita passa a existir.
@@ -498,7 +652,8 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
     provedor de identidade.
     """
     mimetypes.init()
-    api = Api(read=read, decisions=decisions, session_token=session_token,
+    api = Api(read=read, decisions=decisions, access=access,
+              read_only=read_only, session_token=session_token,
               identity_note=(identity.describe() if identity is not None
                              else "sem provedor de identidade"),
               identity_is_development=bool(

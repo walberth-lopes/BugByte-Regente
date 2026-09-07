@@ -21,6 +21,11 @@ const SESSION = (document.querySelector('meta[name="regente-session"]') || {})
 const state = {
   workspaces: [],
   workspace: null,
+  // O que ESTA identidade recebeu, por workspace. Vem do servidor a cada
+  // leitura. A tela usa isto para nao oferecer o que nao adianta -- e isso e
+  // UX. A barreira continua sendo a API: se o botao aparecer por engano e a
+  // pessoa clicar, a resposta e 403, e esta certo assim.
+  identity: null,
   route: { page: "overview", args: [] },
   timer: null,
   lastRead: null,
@@ -81,6 +86,10 @@ async function post(path, body) {
 }
 
 const ws = () => state.workspace;
+
+/** O que o SERVIDOR disse que esta identidade pode aqui. Nunca uma deducao. */
+const podeAqui = (ability) =>
+  (((state.identity || {}).abilities || {})[ws()] || []).includes(ability);
 const api = (suffix) => `/api/workspaces/${encodeURIComponent(ws())}${suffix}`;
 
 // ---------------------------------------------------------------------------
@@ -470,7 +479,41 @@ async function decide(approvalId, choice, slot) {
   await render();
 }
 
-document.addEventListener("click", (ev) => {
+document.addEventListener("click", async (ev) => {
+  const revogar = ev.target.closest("button.choice.revoke");
+  if (revogar) {
+    const slot = document.querySelector('.outcome[data-for="grant"]')
+      || document.createElement("div");
+    const r = await fetch(
+      `/api/workspaces/${encodeURIComponent(ws())}/access/${
+        encodeURIComponent(revogar.dataset.principal)}`,
+      { method: "DELETE", headers: headers() });
+    slot.className = r.ok ? "outcome good" : "outcome bad";
+    slot.textContent = r.ok ? "revogado; relendo…" : `${r.status} · recusado`;
+    await render();
+    return;
+  }
+
+  if (ev.target.id === "conceder") {
+    const slot = document.querySelector('.outcome[data-for="grant"]');
+    const r = await post(`/api/workspaces/${encodeURIComponent(ws())}/access`, {
+      principal: document.getElementById("alvo").value.trim(),
+      role: document.getElementById("papel").value,
+      note: document.getElementById("nota").value,
+    });
+    const diz = {
+      401: "esta sessao nao esta autenticada",
+      403: "esta identidade nao pode conceder aqui, ou a policy recusou",
+      404: "workspace nao encontrado neste escopo",
+      409: "esta pessoa ja tem concessao viva; revogue antes",
+      422: "identidade ou papel invalido",
+    }[r.status] || r.payload.detail || "recusado";
+    slot.className = r.ok ? "outcome good" : "outcome bad";
+    slot.textContent = r.ok ? "concedido; relendo…" : `${r.status} · ${diz}`;
+    await render();
+    return;
+  }
+
   const button = ev.target.closest("button.choice");
   if (!button) return;
   const slot = document.querySelector(
@@ -529,6 +572,67 @@ pages.deliveries = async () => {
       ${chain(d)}</div>`).join("")}`;
 };
 
+pages.access = async () => {
+  let concessoes = [];
+  let recusa = "";
+  try {
+    concessoes = (await get(api("/access"))).access;
+  } catch (e) {
+    // Nao poder listar e uma resposta, e ela e dita. Uma pagina vazia leria-se
+    // como "ninguem tem acesso", que e a informacao oposta.
+    recusa = e.message;
+  }
+
+  const linha = (g) => `<tr>
+    <td class="key">${esc(g.principal)}</td>
+    <td class="dim">${esc(g.provider)}</td>
+    <td>${g.abilities.map((a) => `<code class="mono">${esc(a)}</code>`).join("<br>")}</td>
+    <td class="dim">${esc(g.granted_by)}<br>${when(g.granted_at)}</td>
+    <td>${g.active ? "<strong>viva</strong>"
+      : `<span class="dim">revogada por ${esc(g.revoked_by)}<br>${when(g.revoked_at)}</span>`}</td>
+    <td>${g.active && podeAqui("workspace.access.revoke")
+      ? `<button class="choice revoke" data-principal="${esc(g.principal)}">revogar</button>`
+      : ""}</td>
+  </tr>`;
+
+  const formulario = podeAqui("workspace.access.grant") ? `
+    <h2>conceder acesso</h2>
+    <div class="panel">
+      <div class="choices">
+        <input id="alvo" placeholder="provedor:sujeito" size="42">
+        <select id="papel">
+          <option value="operator">operator — decide escaladas</option>
+          <option value="admin">admin — administra acesso</option>
+          <option value="owner">owner — os dois</option>
+        </select>
+        <input id="nota" placeholder="por que (opcional)" size="26">
+        <button class="choice" id="conceder">conceder</button>
+      </div>
+      <p class="sub" style="margin:10px 0 0">
+        a identidade e <code class="mono">provedor:sujeito</code> — o
+        identificador estavel que o provedor emite, nunca o nome de exibicao.
+        conceder a si mesmo e recusado pelo motor.
+      </p>
+      <div class="outcome" data-for="grant"></div>
+    </div>` : `<p class="sub">esta identidade nao recebeu autoridade para
+        conceder acesso aqui.</p>`;
+
+  return `
+    <h1>acesso</h1>
+    <p class="sub">quem pode agir neste workspace, quem concedeu, e quando.
+       identidade nao e autorizacao: autenticar responde <em>quem e voce</em>;
+       a concessao responde <em>voce recebeu acesso</em>.</p>
+    ${recusa ? `<div class="err">${esc(recusa)}</div>` : `
+    <div class="panel"><table><thead><tr>
+      <th>identidade</th><th>provedor</th><th>capacidades</th>
+      <th>concedida por</th><th>estado</th><th></th>
+    </tr></thead><tbody>${concessoes.length
+      ? concessoes.map(linha).join("")
+      : `<tr><td colspan="6" class="empty">nenhuma concessao registrada</td></tr>`
+    }</tbody></table></div>
+    ${formulario}`}`;
+};
+
 pages.health = async () => {
   const h = await get(api("/health"));
   return `
@@ -572,6 +676,7 @@ const NAV = [
   ["runs", "runs", "#/runs"],
   ["deliveries", "entregas", "#/deliveries"],
   ["events", "eventos", "#/events"],
+  ["access", "acesso", "#/access"],
   ["health", "saude", "#/health"],
 ];
 
@@ -618,6 +723,10 @@ async function render() {
     return;
   }
   try {
+    // A identidade e relida a CADA render: uma revogacao feita noutro lugar
+    // precisa aparecer aqui sem ninguem recarregar a pagina.
+    try { renderIdentity((await get("/api/health")).identity); } catch { /* a
+      pagina abaixo dira o que houve */ }
     view.innerHTML = await page(...state.route.args);
     state.lastRead = new Date();
     markFreshness(true);
@@ -646,16 +755,17 @@ function schedule() {
  * de que ha autenticacao. Aqui ele se anuncia.
  */
 function renderIdentity(id) {
+  state.identity = id;
   const el = document.getElementById("whoami");
   if (!id) { el.textContent = ""; return; }
-  const pode = id.decides.length
-    ? `decide em ${id.decides.length} workspace(s)`
-    : "somente leitura";
+  const aqui = (id.abilities || {})[ws()] || [];
+  const pode = aqui.length ? aqui.length + " capacidade(s) aqui"
+                           : "nenhuma capacidade aqui";
   el.className = id.development_only ? "whoami dev" : "whoami";
   el.textContent = `${id.authenticated ? id.display || id.subject : "nao autenticado"}`
     + ` · ${id.method} · ${pode}`
     + (id.development_only ? " · IDENTIDADE DE DESENVOLVIMENTO" : "");
-  el.title = id.mechanism || "";
+  el.title = `${id.mechanism || ""}\nemissor: ${id.issuer || "nao informado"}`;
 }
 
 async function boot() {

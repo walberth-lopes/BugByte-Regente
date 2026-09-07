@@ -21,6 +21,7 @@ EVENT = "evt"
 APPROVAL = "apv"
 ACTION = "act"
 DELIVERY = "dlv"
+GRANT = "grn"
 
 
 def new_id(prefixo: str) -> str:

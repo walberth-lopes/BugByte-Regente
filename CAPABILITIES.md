@@ -17,6 +17,167 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 14 — identidade real e administracao de acesso
+
+A pergunta do marco: **quem e a pessoa usando a Mission Control, como o Regente
+sabe disso, e quem autorizou essa pessoa a agir neste workspace?**
+
+```
+IDENTIDADE REAL -> Principal -> concessao de uma autoridade -> workspace
+                -> policy -> acao -> auditoria atribuivel
+```
+
+### O que o levantamento encontrou, antes de qualquer codigo
+
+Registrado em `MILESTONE-14-RECON.md`. Nenhum provedor corporativo neste
+ambiente: sem OIDC, sem SSO, sem dominio (`PartOfDomain: False`,
+`AzureAdJoined: NO`). As unicas variaveis com cara de OAuth pertencem a sessao
+interativa do Claude Code, que e proibido tocar desde o M7.
+
+Existe **uma** identidade real: a conta do sistema operacional -- identificador
+estavel (SID), emissor nomeado, autenticada pelo proprio sistema.
+
+```
+terminal   -> identidade real da conta do SO       -> EXERCITADO
+navegador  -> nenhum provedor real disponivel      -> BLOCKED_REAL_IDENTITY
+```
+
+### Os dois defeitos que o levantamento revelou
+
+**1. Acesso era um fato de configuracao, nao uma concessao atribuivel.**
+`Principal.decides` -- a autoridade de escrita inteira -- era preenchido pelo
+proprio provedor de identidade, a partir de campos que a composicao escrevia.
+Quem editava o arquivo concedia a si mesmo autoridade, e nada guardava esse
+fato: nem quem concedeu, nem quando, nem como revogar.
+
+Pior: `IdentityProvider.principal()` fazia as duas coisas que precisam ficar
+separadas. A docstring dele ja dizia o contrario do que o codigo fazia.
+
+**2. A identidade do terminal era afirmada, nao provada.**
+`getpass.getuser()` consulta `LOGNAME`, `USER`, `LNAME` e `USERNAME` **antes** do
+sistema -- todas editaveis por quem roda o processo. O sujeito gravado na
+auditoria era, na pratica, texto escolhido por quem decide: o mesmo defeito do
+`--por` removido no M13, uma camada abaixo.
+
+### O que mudou
+
+| antes | agora |
+|---|---|
+| `decides` vindo do provedor | `abilities` vindas de `AccessGrant` gravado |
+| sem registro de quem concedeu | `granted_by`, `granted_at` em cada concessao |
+| sem revogacao | `revoked_by`, `revoked_at`; a linha **nao** e apagada |
+| `getpass.getuser()` | SID/uid do sistema, via chamada direta a biblioteca |
+| sujeito sem provedor | chave `provedor:sujeito` |
+
+**Revogar nao apaga.** "nunca teve acesso" e "teve e perdeu" sao fatos
+diferentes para quem investiga.
+
+**O provedor faz parte da chave.** Sem isso, `walberth` numa conta de sistema e
+`walberth` num diretorio corporativo seriam a mesma pessoa dentro do motor, e a
+concessao de uma valeria para a outra.
+
+### Exercitado de verdade
+
+Workspace real, identidade real da maquina, escalada gerada pelo proprio motor
+depois de duas execucoes que falharam de verdade:
+
+```
+$ regente access quem-sou-eu
+identidade : os-account:S-1-5-21-3131206616-3848205496-107930634-1001
+emissor    : DESKTOP-09OD9Q8
+pode aqui  : nada                     <- autenticado, e sem autoridade nenhuma
+
+$ regente access conceder dev-token:squad-tech --papel operator
+NOT_FOUND: recurso nao encontrado neste escopo    <- sem concessao, sem poder
+
+$ regente access inicial                          <- a porta estreita, uma vez
+acesso concedido a os-account:S-1-5-21-...
+
+$ regente access inicial
+CONFLICT: este workspace ja tem concessoes        <- e ela fecha
+
+$ regente access conceder os-account:S-1-5-21-... --papel owner
+FORBIDDEN: conceder acesso a si mesmo nao e concessao
+
+$ regente access conceder dev-token:squad-tech --papel operator
+acesso concedido a dev-token:squad-tech
+  ator  : os-account:S-1-5-21-...      <- duas pessoas na linha
+  alvo  : dev-token:squad-tech
+
+$ regente decide apv_2874a41ee70c investigar
+SB-1: registrado 'investigar' por os-account:S-1-5-21-...
+
+$ regente access revogar dev-token:squad-tech
+acesso de dev-token:squad-tech revogado
+```
+
+E na Mission Control, com a identidade revogada, a pagina de acesso responde
+`404 — recurso nao encontrado neste escopo`. Depois de uma nova concessao pelo
+terminal, a mesma pagina mostra a historia inteira: quem tem, com o que, quem
+concedeu, quando, e o que foi revogado por quem.
+
+### Contraprovas
+
+- identidade valida sem concessao -> negado;
+- concessao de outro workspace -> negado; de outro cliente -> negado;
+- concessao revogada -> negado, **inclusive com escalada aberta**;
+- dois provedores com o mesmo sujeito -> duas pessoas;
+- mesmo nome de exibicao -> duas pessoas;
+- conceder a si mesmo -> recusado, mesmo com autoridade para conceder;
+- sem `workspace.access.grant` -> recusado;
+- papel desconhecido -> concede **nada**, nunca tudo;
+- policy `DENY` sobre quem tem a capacidade -> recusado;
+- policy ausente -> recusado (o default DENY vale para humano tambem);
+- regra sobre acao parecida (`workspace.write`) -> nao governa esta;
+- revogar B nao afeta A; conceder a B nao cria acesso noutro workspace;
+- workspace alheio e workspace inexistente -> **mesma resposta, mesmo texto**;
+- linha forjada direto no banco concede a capacidade e **nao** pula a policy;
+- remover o provedor de identidade nao cai para `dev-token`: cai para anonimo.
+
+### Estado das capacidades
+
+| Capacidade | Estado | Evidencia |
+|---|---|---|
+| Identidade real com identificador estavel e emissor | **EXERCISED_REAL** | SID da conta, terminal |
+| Concessao persistida com autor e data | **EXERCISED_REAL** | workspace de sandbox real |
+| Bootstrap uma vez, e depois fechado | **EXERCISED_REAL** | segunda tentativa recusada |
+| Revogacao com historia preservada | **EXERCISED_REAL** | listagem antes e depois |
+| Revogado nao decide | CONTRACT_TESTED | escalada aberta, decisao recusada |
+| Provedor nao concede autoridade | CONTRACT_TESTED | auditoria AST + teste por provedor |
+| Substituicao de provedor sem tocar core/ports/engine | CONTRACT_TESTED | provedor inventado no teste |
+| Isolamento entre workspaces e clientes | CONTRACT_TESTED | ids trocados de proposito |
+| Auditoria separa ator de alvo | CONTRACT_TESTED | os dois campos, comparados |
+| Exatamente uma concessao sob concorrencia | CONTRACT_TESTED | dois processos reais |
+| **Identidade real no navegador** | **BLOCKED_REAL_IDENTITY** | nenhum provedor disponivel |
+
+### Limitacoes
+
+**Nao ha identidade real para o navegador.** A conta do sistema autentica o
+terminal, onde o processo E a conta. Uma requisicao HTTP nao carrega essa conta,
+e faze-la carregar exigiria autenticacao integrada -- que este ambiente nao tem.
+O `dev-token` continua sendo o unico mecanismo da tela, continua se anunciando
+como de desenvolvimento, e continua recusando escutar fora do loopback.
+
+**Nao ha fallback, e isso e proposital.** Sem provedor, o principal e anonimo --
+nunca o `dev-token`. Um fallback de autoridade e o modo mais silencioso de perder
+uma fronteira.
+
+**A concessao inicial e uma porta estreita, nao uma ausencia de porta.** Ela
+exige identidade do sistema operacional, so funciona num workspace sem nenhuma
+concessao, e fica registrada com um verbo proprio. Quem roda o processo ja
+controla o arquivo do banco; o bootstrap nao concede nada que essa pessoa nao
+pudesse escrever a mao -- mas deixa registro, que e a diferenca.
+
+**Escrever direto no banco continua concedendo capacidade.** Nao ha defesa
+contra isso num SQLite local, e o marco nao finge que ha. O que foi provado e
+que uma linha forjada **nao pula a policy**.
+
+**Papeis sao tres, fixos.** `operator`, `admin`, `owner`. Nao ha administracao
+de papeis, nem grupos, nem herencia -- e nao havera enquanto nao houver uma
+pergunta real que exija isso.
+
+---
+
 ## Milestone 13 — a primeira escrita humana
 
 Uma acao, e uma so: **decidir uma escalada**. O objetivo nunca foi dar poderes ao

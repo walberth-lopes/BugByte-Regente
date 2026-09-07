@@ -276,6 +276,13 @@ button.choice:hover:not(:disabled) { border-color: var(--human); }
 button.choice:disabled { opacity: .45; cursor: default; }
 .choices .hint { font-size: 11px; color: var(--ink-faint); }
 
+.choices input, .choices select {
+  background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 4px;
+  padding: 6px 9px; font: inherit; font-size: 12px;
+}
+button.choice.revoke { border-color: var(--stuck); color: var(--stuck); }
+
 .outcome:empty { display: none; }
 .outcome {
   margin-top: 9px; font-size: 12px; padding: 7px 11px; border-radius: 4px;

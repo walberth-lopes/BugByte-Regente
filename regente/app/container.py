@@ -19,8 +19,9 @@ from ..engine.gate import Gate
 from ..engine.target import TargetResolver
 from ..engine.orchestrator import Orchestrator
 from ..engine.readiness import diagnose as _diagnose_agent
-from ..adapters.identity.local_terminal import LocalTerminalIdentity
+from ..adapters.identity.os_account import OsAccountIdentity
 from ..engine import readiness
+from ..engine.access import AccessService
 from ..engine.decision import DecisionService
 from ..engine.remote import RemoteDelivery
 from ..engine.store_sqlite import SqliteStore
@@ -81,16 +82,30 @@ class Engine:
             environment=(self.config.projects[0].default_environment
                          if self.config.projects else "staging"))
 
-    def terminal_principal(self):
-        """Quem esta no terminal, com autoridade neste workspace.
+    def access(self) -> AccessService:
+        """Administracao de acesso. UMA, para terminal e navegador."""
+        return AccessService(
+            store=self.store, policy=self.policy or PolicyEngine.from_config([]),
+            organization=self.config.organization, client=self.config.client,
+            workspace_name=self.workspace.name,
+            environment=(self.config.projects[0].default_environment
+                         if self.config.projects else "staging"))
 
-        A concessao e do workspace configurado, e so dele: quem abriu esta
-        configuracao nao ganha autoridade sobre o que mais estiver no banco.
+    def terminal_principal(self):
+        """Quem esta no terminal: identidade real do sistema, e nada mais.
+
+        Duas etapas, nesta ordem, e nunca fundidas: o provedor diz QUEM e; o
+        `AccessService` diz o que essa pessoa PODE, lendo concessoes gravadas.
+
+        Antes, o provedor devolvia as duas coisas -- e quem abria a configuracao
+        concedia a si mesmo autoridade de escrita sem deixar registro.
         """
-        provider = LocalTerminalIdentity(
-            reads=frozenset({self.workspace.id}),
-            decides=frozenset({self.workspace.id}))
-        return provider.principal(provider.authenticate(None))
+        provider = OsAccountIdentity(reads=frozenset({self.workspace.id}))
+        found = provider.authenticate(None)
+        if found is None:
+            from ..core.principal import ANONYMOUS
+            return ANONYMOUS
+        return self.access().authorize(provider.principal(found))
 
     def run_mission(self, execute: bool = False, only: str | None = None):
         """Select one task and, when asked, execute it in isolation.

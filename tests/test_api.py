@@ -92,9 +92,11 @@ def operator(*reads, decides=(), method="test") -> Principal:
     montado sem ele nao passa por nenhuma barreira -- que e exatamente o
     comportamento que se quer.
     """
+    from regente.core.access import abilities_of
     return Principal(subject="operador", display="operador", method=method,
+                     provider=method,
                      workspaces=frozenset(reads) if reads else None,
-                     decides=frozenset(decides))
+                     abilities={w: abilities_of("operator") for w in decides})
 
 
 def get(bench, path, query=None, principal=None):
@@ -345,20 +347,34 @@ def live(tmp_path):
         store.open_approval(a)
         made[wid] = {"task": t, "approval": a}
 
-    identity = DevTokenIdentity(
-        operator="walberth",
-        reads=frozenset({"wks_a"}), decides=frozenset({"wks_a"}))
+    identity = DevTokenIdentity(operator="walberth",
+                                reads=frozenset({"wks_a"}))
+    # A autoridade nao vem mais do provedor: vem de uma concessao GRAVADA, com
+    # autor e data. E por isso que ela e montada aqui, e nao num campo do
+    # adapter -- e por isso que revogar fecha a porta.
+    from regente.core.access import AccessGrant, PrincipalRef, abilities_of
+    store.open_grant(AccessGrant(
+        id=ids.new_id(ids.GRANT), client_id="cli_a", workspace_id="wks_a",
+        principal=PrincipalRef("dev-token", "walberth"),
+        abilities=abilities_of("operator"), granted_by="os-account:fundador",
+        granted_at=T0))
+    regras = PolicyEngine.from_config([
+        {"name": "decidir", "effect": "ALLOW",
+         "match": {"action": ["approval.decide", "workspace.access.grant",
+                              "workspace.access.revoke",
+                              "workspace.access.list"]}}])
     decisions = DecisionService(
-        store=store,
-        policy=PolicyEngine.from_config([
-            {"name": "decidir", "effect": "ALLOW",
-             "match": {"action": "approval.decide"}}]),
-        clock=lambda: T0, organization="org", client="Acme",
-        workspace_name="main")
+        store=store, policy=regras, clock=lambda: T0, organization="org",
+        client="Acme", workspace_name="main")
+    from regente.engine.access import AccessService
+    access = AccessService(store=store, policy=regras, clock=lambda: T0,
+                           organization="org", client="Acme",
+                           workspace_name="main")
 
     httpd = serve(ReadModel(store=store, clock=lambda: T0),
                   host="127.0.0.1", port=0, identity=identity,
-                  decisions=decisions, session_token=identity.token)
+                  decisions=decisions, access=access,
+                  session_token=identity.token)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:

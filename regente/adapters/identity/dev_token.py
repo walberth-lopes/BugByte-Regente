@@ -54,9 +54,13 @@ class DevTokenIdentity(IdentityProvider):
     #: Como a pessoa que rodou o processo se chama. Vem da CONFIGURACAO.
     #: Se viesse da requisicao, qualquer um seria qualquer um.
     operator: str = "operador local"
-    #: Workspaces que este operador le e onde decide. Concessao da composicao.
+    #: Workspaces que este operador LE. Ver e concessao de composicao.
+    #:
+    #: Nao ha campo de escrita aqui, e a ausencia e o ponto: ate o marco
+    #: anterior este provedor devolvia `decides`, entao quem editava a
+    #: configuracao concedia a si mesmo autoridade e nada guardava esse fato.
+    #: Agir agora depende de uma concessao persistida, com autor e data.
     reads: frozenset[str] | None = None
-    decides: frozenset[str] = field(default_factory=frozenset)
     #: False quando o servidor escuta fora do loopback. Recusa tudo.
     bind_is_local: bool = True
 
@@ -80,7 +84,7 @@ class DevTokenIdentity(IdentityProvider):
             return ("dev-token FORA DO LOOPBACK -- recusando autenticar; "
                     "este mecanismo nao serve para exposicao em rede")
         return (f"dev-token (SOMENTE DESENVOLVIMENTO) para '{self.operator}'; "
-                f"decide em {len(self.decides)} workspace(s)")
+                f"autoridade so por concessao gravada")
 
     # ------------------------------------------------------------------
     def authenticate(self, credential: str | None) -> Identity | None:
@@ -97,12 +101,16 @@ class DevTokenIdentity(IdentityProvider):
         if not hmac.compare_digest(credential, self._token):
             return None
         return Identity(subject=self.operator, display=self.operator,
-                        method=self.name)
+                        method=self.name, provider=self.name,
+                        issuer="loopback desta maquina")
 
     def principal(self, identity: Identity) -> Principal:
+        """Identidade, e nenhuma autoridade. Quem concede e o `AccessService`."""
         return Principal(subject=identity.subject, display=identity.display,
-                         method=identity.method, workspaces=self.reads,
-                         decides=self.decides)
+                         method=identity.method, provider=identity.provider,
+                         issuer=identity.issuer,
+                         authenticated_at=identity.authenticated_at,
+                         workspaces=self.reads)
 
     def close(self) -> None:
         """Nada a limpar: o segredo nunca saiu da memoria.

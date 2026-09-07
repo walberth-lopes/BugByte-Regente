@@ -218,6 +218,68 @@ def cmd_health(args) -> int:
             health_module.Level.STUCK: 2}[report.level]
 
 
+def cmd_access(args) -> int:
+    """Administra o acesso deste workspace, pelo mesmo caminho que a tela usa.
+
+    Nao existe um `access` de terminal e outro de navegador: os dois chamam
+    `AccessService`. Duas administracoes de acesso divergem, e a que diverge e
+    sempre a que esquece de conferir alguma coisa.
+    """
+    from .core.access import PrincipalRef, ROLES
+
+    cfg = _load_config(args)
+    motor = container.build(cfg)
+    try:
+        service = motor.access()
+        who = motor.terminal_principal()
+        workspace = motor.workspace.id
+
+        if args.acao == "quem-sou-eu":
+            print(f"identidade : {who.label}")
+            print(f"emissor    : {who.issuer or '(nao informado)'}")
+            print(f"provado em : {who.authenticated_at}")
+            capacidades = sorted(a.value for a in
+                                 who.abilities.get(workspace, ()))
+            print(f"pode aqui  : {', '.join(capacidades) or 'nada'}")
+            return 0
+
+        if args.acao == "inicial":
+            saida = service.bootstrap(who, workspace, note=args.nota or "")
+        elif args.acao == "conceder":
+            saida = service.grant(who, workspace,
+                                  PrincipalRef.parse(args.principal),
+                                  role=args.papel, note=args.nota or "")
+        elif args.acao == "revogar":
+            saida = service.revoke(who, workspace,
+                                   PrincipalRef.parse(args.principal))
+        else:                                    # listar
+            saida = service.listing(who, workspace)
+            if isinstance(saida, list):
+                if not saida:
+                    print("nenhuma concessao registrada neste workspace")
+                    return 0
+                for g in saida:
+                    estado = ("VIVA" if g.active
+                              else f"revogada em {g.revoked_at} por {g.revoked_by}")
+                    print(f"  {g.principal.key}")
+                    print(f"    capacidades : "
+                          f"{', '.join(sorted(a.value for a in g.abilities))}")
+                    print(f"    concedida   : {g.granted_at} por {g.granted_by}")
+                    print(f"    estado      : {estado}")
+                return 0
+
+        if not saida.accepted:
+            print(f"{saida.refusal.value}: {saida.reason}", file=sys.stderr)
+            return 1
+        print(saida.reason)
+        if args.acao in ("inicial", "conceder"):
+            print(f"  ator  : {saida.actor}")
+            print(f"  alvo  : {saida.target}")
+        return 0
+    finally:
+        motor.close()
+
+
 def cmd_ui(args) -> int:
     """Sobe a Mission Control sobre o estado deste workspace.
 
@@ -231,6 +293,7 @@ def cmd_ui(args) -> int:
     """
     from .adapters.identity.dev_token import DevTokenIdentity
     from .app.api import serve
+    from .engine.access import AccessService
     from .app.config import load_policies
     from .core.policy import PolicyEngine
     from .engine.decision import DecisionService
@@ -271,14 +334,9 @@ def cmd_ui(args) -> int:
     if args.all_workspaces:
         visible = None
 
-    # Ler e decidir sao concessoes separadas, e a de escrita e sempre estreita:
-    # o workspace desta configuracao, mesmo quando a leitura foi ampliada.
-    # `--read-only` remove a concessao de escrita sem remover a identidade.
-    decides = frozenset() if args.read_only else frozenset({configured})
-
     identity = DevTokenIdentity(
         operator=args.as_operator or cfg.client,
-        reads=visible, decides=decides, bind_is_local=local)
+        reads=visible, bind_is_local=local)
 
     decisions = DecisionService(
         store=store, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
@@ -287,14 +345,30 @@ def cmd_ui(args) -> int:
         environment=(cfg.projects[0].default_environment
                      if cfg.projects else "staging"))
 
+    access = AccessService(
+        store=store, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
+        organization=cfg.organization, client=cfg.client,
+        workspace_name=cfg.workspace,
+        environment=(cfg.projects[0].default_environment
+                     if cfg.projects else "staging"))
+
     httpd = serve(read, host=args.host, port=args.port, identity=identity,
-                  decisions=decisions, session_token=identity.token)
+                  decisions=decisions, access=access,
+                  session_token=identity.token,
+                  read_only=args.read_only)
     where = f"http://{args.host}:{args.port}/"
     print(f"Mission Control em {where}")
     print(f"identidade: {identity.describe()}")
     if identity.development_only:
         print("ATENCAO: mecanismo de identidade SOMENTE DESENVOLVIMENTO")
-    print(f"escrita permitida: {'nenhuma' if not decides else 'decidir escaladas'}")
+    concedido = access.abilities_for(
+        identity.principal(identity.authenticate(identity.token)).ref)
+    capacidades = sorted(a.value for a in concedido.get(configured, ()))
+    print(f"autoridade desta identidade: {', '.join(capacidades) or 'nenhuma'}"
+          + (" (sessao marcada como somente leitura)" if args.read_only else ""))
+    if not capacidades:
+        print("  conceda com: regente access conceder "
+              f"{identity.name}:{args.as_operator or cfg.client} --papel operator")
     print("ctrl-c para parar")
     try:
         httpd.serve_forever()
@@ -562,6 +636,17 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("rules", help="regras, limites e adapters em vigor")
     p.set_defaults(fn=cmd_rules)
+
+    p = sub.add_parser("access", help="quem pode agir neste workspace")
+    p.add_argument("acao", choices=["listar", "conceder", "revogar", "inicial",
+                                    "quem-sou-eu"])
+    p.add_argument("principal", nargs="?", default="",
+                   help="identidade alvo, na forma provedor:sujeito")
+    p.add_argument("--papel", default="operator",
+                   help="operator, admin ou owner")
+    p.add_argument("--nota", default="")
+    p.add_argument("--config", default="regente.yaml")
+    p.set_defaults(fn=cmd_access)
 
     p = sub.add_parser("ui", help="Mission Control: o estado do motor numa tela")
     p.add_argument("--config", default="regente.yaml")

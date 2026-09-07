@@ -1,79 +1,145 @@
 # -*- coding: utf-8 -*-
-"""Quem esta agindo, e ate onde.
+"""Quem esta agindo, com que procedencia, e ate onde.
 
-Quatro perguntas diferentes, e a confusao entre elas e como uma escrita escapa:
+Cinco perguntas diferentes, e a confusao entre elas e como uma escrita escapa:
 
-    Autenticacao  quem e voce?            -> um `Identity`, provado por alguem
-    Autorizacao   voce manda aqui?        -> `Principal.may_*`, concedido pela composicao
-    Policy        esta acao e permitida?  -> o arquivo de regras, independente
-    Transicao     este estado permite?    -> a maquina de estados
+    Autenticacao  quem e voce?              um `Identity`, provado por um provedor
+    Identidade    qual chave estavel?       `provider` + `subject`, nunca o nome
+    Acesso        voce recebeu concessao?   um `AccessGrant`, com autor e data
+    Policy        esta acao e permitida?    o arquivo de regras, independente
+    Transicao     este estado permite?      a maquina de estados
 
 Nenhuma responde pela outra. Um principal autenticado nao esta autorizado; um
-principal autorizado nao venceu a policy; e uma policy que permite nao torna
-legal uma transicao ilegal.
+autorizado nao venceu a policy; e uma policy que permite nao reabre uma
+aprovacao ja decidida.
 
-O campo mais importante deste arquivo e `method`. Um `Principal` sem ele nao foi
-autenticado por ninguem -- foi *afirmado*. E a diferenca entre "o servidor
-verificou um segredo que ele proprio emitiu" e "o navegador digitou um nome".
+Dois campos carregam o peso.
+
+`method` separa **autenticado** de **afirmado**: vazio significa que ninguem
+provou nada. E a diferenca entre "o servidor verificou um segredo que ele
+proprio emitiu" e "o navegador digitou um nome".
+
+`abilities` separa **autorizado** de **autenticado**. Ele vem de concessoes
+PERSISTIDAS, com autor e data -- nao de um campo de configuracao. Ate o marco
+anterior, quem editava o arquivo concedia a si mesmo autoridade de escrita e
+nada guardava esse fato.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
+from types import MappingProxyType
+from typing import Mapping
+
+from .access import Ability, PrincipalRef
 
 
 @dataclass(frozen=True, slots=True)
 class Principal:
-    """Uma identidade ja autenticada, com o alcance que lhe foi concedido.
+    """Uma identidade autenticada, com a procedencia e o alcance que tem.
 
-    Construir isto NAO autentica ninguem. Quem autentica e um `IdentityProvider`;
-    esta classe so carrega o resultado. Por isso `method` vazio significa
-    anonimo, e nao "autenticado de algum jeito que ninguem anotou".
-
-    Leitura e escrita tem defaults opostos, de proposito:
-
-    * `workspaces=None` significa "todos os que o store guarda" -- o operador
-      local lendo a propria maquina;
-    * `decides` comeca **vazio**. Ninguem decide sem concessao explicita. Uma
-      autoridade de escrita que nasce aberta e uma que ninguem lembra de fechar.
+    Construir isto NAO autentica ninguem e NAO concede nada. Quem autentica e um
+    `IdentityProvider`; quem concede e um `AccessGrant` guardado. Esta classe so
+    carrega o resultado das duas coisas, e por isso ambos os campos que importam
+    comecam vazios.
     """
     subject: str = "anonimo"
     display: str = ""
     #: Como esta identidade foi provada. Vazio = nao foi.
     method: str = ""
-    #: Workspaces que pode LER. `None` = todos.
+    #: QUEM provou. Faz parte da identidade interna: sem ele, duas fontes que
+    #: usem o mesmo sujeito viram a mesma pessoa dentro do motor.
+    provider: str = ""
+    #: Quem emitiu a identidade, como o provedor o nomeia -- a maquina, o
+    #: dominio, o issuer. Diagnostico e auditoria; nao entra na chave.
+    issuer: str = ""
+    #: Quando esta identidade foi provada. `None` para anonimo.
+    authenticated_at: datetime | None = None
+    #: Workspaces que pode LER. `None` = todos os que o store guarda.
+    #: Ver e concessao de composicao; agir nao.
     workspaces: frozenset[str] | None = None
-    #: Workspaces onde pode DECIDIR. Sempre explicito.
-    decides: frozenset[str] = field(default_factory=frozenset)
+    #: O que pode FAZER, por workspace. Vem de concessoes persistidas.
+    #: Vazio por default: ninguem age sem concessao explicita e atribuivel.
+    abilities: Mapping[str, frozenset[Ability]] = field(
+        default_factory=lambda: MappingProxyType({}))
 
     @property
     def authenticated(self) -> bool:
         return bool(self.method)
 
     @property
+    def ref(self) -> PrincipalRef:
+        """A identidade interna. Levanta para um principal nao autenticado.
+
+        De proposito: um anonimo nao tem chave, e inventar uma faria a
+        auditoria registrar concessoes para ninguem.
+        """
+        return PrincipalRef(provider=self.provider or self.method,
+                            subject=self.subject)
+
+    @property
     def label(self) -> str:
         """Como esta identidade aparece na auditoria.
 
-        Carrega o metodo junto do sujeito porque "quem decidiu" e "como
-        provamos que era essa pessoa" sao coisas que um leitor de auditoria
-        precisa ver na mesma linha. `dev-token:walberth` e uma frase honesta;
-        `walberth` sozinho esconde que o token era de desenvolvimento.
+        Carrega o provedor junto do sujeito porque "quem" e "como provamos que
+        era essa pessoa" sao coisas que um leitor de auditoria precisa ver na
+        mesma linha. `dev-token:walberth` e uma frase honesta; `walberth`
+        sozinho esconde que o token era de desenvolvimento.
         """
-        return f"{self.method}:{self.subject}" if self.method else self.subject
+        if not self.authenticated:
+            return self.subject
+        return f"{self.provider or self.method}:{self.subject}"
 
+    # ---- leitura -----------------------------------------------------
     def may_read(self, workspace_id: str) -> bool:
-        return self.workspaces is None or workspace_id in self.workspaces
+        """Ver. Concessao de composicao, ou concessao persistida.
+
+        Quem recebeu uma capacidade num workspace precisa enxergar o workspace,
+        senao a concessao seria inutil -- mas o contrario nao vale, e e isso que
+        as duas linhas separadas garantem.
+        """
+        if self.workspaces is None:
+            return True
+        return workspace_id in self.workspaces or bool(
+            self.abilities.get(workspace_id))
+
+    # ---- acao --------------------------------------------------------
+    def can(self, workspace_id: str, ability: Ability) -> bool:
+        """A unica pergunta de autoridade, e ela e sempre por workspace.
+
+        Autenticado nao basta. Ter capacidade noutro workspace nao basta. Um
+        `if principal.is_admin` que dispensasse esta pergunta seria uma segunda
+        autoridade, e a segunda autoridade e sempre a que esquece alguma coisa.
+        """
+        return (self.authenticated
+                and ability in self.abilities.get(workspace_id, frozenset()))
 
     def may_decide(self, workspace_id: str) -> bool:
-        """Autoridade de escrita, e nunca a de leitura por tabela.
+        return self.can(workspace_id, Ability.DECIDE)
 
-        Ler e decidir sao concessoes separadas. Derivar uma da outra faria de
-        todo observador um decisor -- que e precisamente o que a fila de
-        escalada existe para nao ser.
+    @property
+    def decides(self) -> frozenset[str]:
+        """Onde pode decidir. Derivado das capacidades, nunca o contrario."""
+        return frozenset(w for w, a in self.abilities.items()
+                         if Ability.DECIDE in a)
+
+    def with_abilities(self, abilities: Mapping[str, frozenset[Ability]]
+                       ) -> "Principal":
+        """O mesmo principal, com o que as concessoes disserem.
+
+        Existe para que a composicao monte a identidade primeiro e as
+        capacidades depois -- que e a ordem real dos fatos, e a que impede um
+        provedor de identidade de conceder autoridade de passagem.
         """
-        return self.authenticated and workspace_id in self.decides
+        return Principal(
+            subject=self.subject, display=self.display, method=self.method,
+            provider=self.provider, issuer=self.issuer,
+            authenticated_at=self.authenticated_at,
+            workspaces=self.workspaces,
+            abilities=MappingProxyType(dict(abilities)))
 
 
 #: Ninguem. O default de toda requisicao que ainda nao foi autenticada.
 ANONYMOUS = Principal(subject="anonimo", display="nao autenticado",
-                      workspaces=frozenset(), decides=frozenset())
+                      workspaces=frozenset())

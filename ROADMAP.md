@@ -25,10 +25,16 @@ O marco 12 abriu a janela; o 13 passou uma unica escrita por ela, e nada mais.
 `UI != autoridade` continua valendo: o navegador nao ganhou poder nenhum, ele
 passou a percorrer o mesmo caminho que o terminal ja percorria.
 
-O que segue faltando e **identidade de verdade**. O `dev-token` prova que quem
-chama e quem rodou `regente ui` nesta maquina -- sem usuarios, sem expiracao,
-sem revogacao -- e por isso o servidor recusa escutar fora do loopback. Trocar
-por OIDC/SSO e implementar `IdentityProvider`. Ver `API.md`.
+O marco 14 separou identidade de autoridade. Acesso deixou de ser um campo de
+configuracao e virou concessao gravada, com quem concedeu, quando, com o que, e
+revogacao que preserva a historia. O terminal passou a se identificar pela conta
+do sistema operacional -- identificador estavel, emissor nomeado -- em vez de um
+nome lido de variavel de ambiente.
+
+O que segue faltando e **identidade real no navegador**. Nao ha provedor
+corporativo neste ambiente: sem OIDC, sem SSO, sem dominio. O `dev-token`
+continua sendo o unico mecanismo da tela, continua se anunciando como de
+desenvolvimento, e continua recusando escutar fora do loopback. Ver `API.md`.
 
 O marco 11 fechou o caminho ate onde a autoridade do motor termina. Ele para
 num humano de proposito: sem ReviewerAgent nao ha quem aprove, e um estado de
