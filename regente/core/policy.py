@@ -42,13 +42,13 @@ class AutonomyLevel(IntEnum):
         if isinstance(value, int):
             return cls(value)
         t = str(value).strip().upper()
-        apelidos = {
+        aliases = {
             "READ_ONLY": cls.L0, "READONLY": cls.L0,
             "CODE": cls.L1, "PR": cls.L2,
             "STAGING": cls.L3, "PRODUCTION": cls.L4, "PROD": cls.L4,
         }
-        if t in apelidos:
-            return apelidos[t]
+        if t in aliases:
+            return aliases[t]
         return cls[t]
 
 
@@ -71,6 +71,16 @@ REQUIRED_LEVEL: dict[str, AutonomyLevel] = {
     "db.read": AutonomyLevel.L0,
     "ci.read": AutonomyLevel.L0,
     "workspace.write": AutonomyLevel.L1,
+    # Starting an agent writes only inside the isolated area: it cannot commit,
+    # push, open a pull request or deploy, because those are separate actions
+    # with their own levels and the agent holds none of them. So it sits beside
+    # `workspace.write` rather than higher.
+    #
+    # It does spend money, which is a real concern and a different one --
+    # answered by the budget axis of the readiness diagnosis, not by raising a
+    # ceiling. Conflating the two would make every agent run need a human, which
+    # is the bottleneck this engine exists to remove.
+    "agent.run": AutonomyLevel.L1,
     "repo.branch": AutonomyLevel.L1,
     "repo.commit": AutonomyLevel.L1,
     "repo.push": AutonomyLevel.L2,
@@ -100,7 +110,7 @@ class Action:
     kind: str
     resource: str = "*"
     environment: str = "local"
-    detalhes: dict[str, Any] = field(default_factory=dict)
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,9 +147,9 @@ class Rule:
 
     def matches(self, ctx: dict[str, str]) -> bool:
         """Every declared criterion must match. An absent criterion is a wildcard."""
-        for field, esperado in self.match.items():
+        for field, expected in self.match.items():
             value = ctx.get(field, "")
-            patterns = esperado if isinstance(esperado, (list, tuple)) else [esperado]
+            patterns = expected if isinstance(expected, (list, tuple)) else [expected]
             if not any(_matches_one(value, str(p)) for p in patterns):
                 return False
         return True
@@ -223,11 +233,11 @@ class PolicyEngine:
         names = tuple(r.name for r in matched)
 
         # The autonomy ceiling only tightens: it never turns DENY into ALLOW.
-        exigido = required_level(ctx.action.kind)
-        if winner.effect == Effect.ALLOW and ctx.autonomy < exigido:
+        required = required_level(ctx.action.kind)
+        if winner.effect == Effect.ALLOW and ctx.autonomy < required:
             return Decision(
                 effect=Effect.HUMAN_APPROVAL,
-                reason=(f"'{ctx.action.kind}' requires autonomy {exigido.name} and "
+                reason=(f"'{ctx.action.kind}' requires autonomy {required.name} and "
                         f"this scope only goes up to {ctx.autonomy.name}"),
                 rule="autonomy_ceiling",
                 matched=names,

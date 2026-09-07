@@ -60,11 +60,11 @@ class GitHubRepos(RepositoryProvider):
 
     def verify(self) -> None:
         """Proves authentication and reach with the cheapest call there is."""
-        self._cli(["auth", "status"], json_esperado=False)
+        self._cli(["auth", "status"], expected_json=False)
 
     # ---- execution -------------------------------------------------------
 
-    def _cli(self, args: list[str], json_esperado: bool = True) -> Any:
+    def _cli(self, args: list[str], expected_json: bool = True) -> Any:
         # Per WHOLE INVOCATION, not per verb. `repo list` reads; `repo delete`
         # deletes, and both start with `repo` -- that is how a `repo delete` got
         # through the gate on 06/09/2026.
@@ -83,7 +83,7 @@ class GitHubRepos(RepositoryProvider):
             self._notify_observer(args, started, False, None, f"timeout apos {self.timeout}s")
             raise ProviderUnavailable(f"cli timed out after {self.timeout}s") from e
         except FileNotFoundError as e:
-            self._notify_observer(args, started, False, None, "cli nao encontrada")
+            self._notify_observer(args, started, False, None, "cli not found")
             raise AdapterError(f"'{self.cli_path}' is not on the PATH") from e
 
         if p.returncode != 0:
@@ -104,7 +104,7 @@ class GitHubRepos(RepositoryProvider):
             raise AdapterError(f"cli rc={p.returncode}: {error}")
 
         self._notify_observer(args, started, True, 200, "")
-        if not json_esperado:
+        if not expected_json:
             return p.stdout
         raw = (p.stdout or "").strip()
         if not raw:
@@ -142,9 +142,9 @@ class GitHubRepos(RepositoryProvider):
             capabilities=self.capabilities,
             partial=partial,
             data={k: v for k, v in (
-                ("descricao", raw.get("description")),
-                ("empurrado_em", raw.get("pushedAt")),
-                ("linguagem", (raw.get("primaryLanguage") or {}).get("name")),
+                ("description", raw.get("description")),
+                ("pushed_at", raw.get("pushedAt")),
+                ("language", (raw.get("primaryLanguage") or {}).get("name")),
             ) if v})
 
     # ---- discovery -------------------------------------------------------
@@ -170,11 +170,11 @@ class GitHubRepos(RepositoryProvider):
     def list_branches(self, key: str, filters: dict[str, Any] | None = None) -> list[Branch]:
         target = key if "/" in key else f"{self.org}/{key}"
         base = self.get_repository(target).base_branch
-        per_page = int((filters or {}).get("por_pagina", 100))
+        per_page = int((filters or {}).get("per_page", 100))
         raw = self._cli(["api", f"repos/{target}/branches?per_page={per_page}"])
         if not isinstance(raw, list):
             raise AdapterError("branch listing returned an unexpected shape")
-        default_value = (filters or {}).get("padrao", "")
+        default_value = (filters or {}).get("default", "")
         output = []
         for b in raw:
             name = b.get("name") or ""
@@ -187,8 +187,8 @@ class GitHubRepos(RepositoryProvider):
     def read_file(self, key: str, path: str, ref: str | None = None) -> str:
         import base64
         target = key if "/" in key else f"{self.org}/{key}"
-        rota = f"repos/{target}/contents/{path}" + (f"?ref={ref}" if ref else "")
-        raw = self._cli(["api", rota])
+        route = f"repos/{target}/contents/{path}" + (f"?ref={ref}" if ref else "")
+        raw = self._cli(["api", route])
         if not isinstance(raw, dict) or "content" not in raw:
             raise AdapterError(f"{path} is not a file in {target}")
         return base64.b64decode(raw["content"]).decode("utf-8", "replace")

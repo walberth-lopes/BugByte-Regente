@@ -1,101 +1,94 @@
 # -*- coding: utf-8 -*-
-"""Runners that do not depend on an LLM.
+"""A declared agent: no model, no network, no surprises.
 
-`ScriptedRunner` executes a declared script. It exists for two legitimate things
--- exercising the engine in tests and running the **shadow phase**, in which the
-owner checks the orchestrator's decisions before any real worker touches code. It
-does not pretend to be an agent: its outcome comes from the script, and so no
-architectural defect can hide behind it.
+It exists to exercise the harness -- dispatch, isolation, structured outcome,
+observation, verdict -- with a substrate that behaves identically every run. What
+it demonstrates is the chain. It demonstrates nothing whatever about whether a
+language model can do the work, and its name and `describe()` both say so, so
+that a green run of this adapter can never be quoted as evidence about an agent.
 
-`CommandRunner` executes an external process. That is the real path: any headless
-agentic harness, a script of your own or a loop over LLMProvider all come in
-through here without the Orchestrator knowing the difference.
-
-The JSON keys below (summary, outcome, goal, limits, ...) are the wire contract
-with that external process, and use the same words as the newer
-`ports.agent` protocol so a script written for one reads like the other.
+It also writes a small file into the work area. That is not decoration: it leaves
+a trace an isolation test can look for afterwards, which is how the engine proves
+the area was real and was the agent's own.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ...ports.workspace import AgentRunner, RunRequest, RunResult
+from ...ports.agent import (AgentAvailability, AgentCapabilities,
+                            AgentRunner, AuthMode, Check, Claim, ClaimedFile, Mission, Outcome,
+                            ProcessStatus)
+
+VALID_STATUS = {s.value for s in ProcessStatus}
+VALID_CLAIM = {c.value for c in Claim}
 
 
 @dataclass(slots=True)
-class ScriptedRunner(AgentRunner):
-    name: str = "roteiro"
+class ScriptedAgent(AgentRunner):
+    """Replays a declared outcome for a task key. Not a model."""
+
+    name: str = "scripted"
     #: task key -> declared outcome
     script: dict[str, dict[str, Any]] = field(default_factory=dict)
-    default_value: dict[str, Any] = field(default_factory=lambda: {"ok": True, "summary": "no change"})
+    default_value: dict[str, Any] = field(default_factory=lambda: {
+        "status": "NO_PROGRESS", "claim": "NONE",
+        "summary": "no outcome declared for this task"})
+    #: Whether to leave the trace file. Off for missions that assert on an
+    #: untouched work area -- writing it would BE a change, and the engine
+    #: observes changes for real now.
+    leave_trace: bool = True
 
-    def run(self, request: RunRequest) -> RunResult:
-        key = request.context.get("key", request.task_id)
-        d = self.script.get(key, self.default_value)
-        # The area exists and belongs to the worker: writing in it proves the
-        # isolation worked, and leaves a trace to inspect after the tick.
-        Path(request.area.path).mkdir(parents=True, exist_ok=True)
-        (Path(request.area.path) / "run.json").write_text(
-            json.dumps({"run": request.run_id, "goal": request.goal, "outcome": d},
-                       ensure_ascii=False, indent=2), encoding="utf-8")
-        return RunResult(
-            ok=bool(d.get("ok", True)),
-            summary=str(d.get("summary", "")),
-            outcome=str(d.get("outcome", "FINISHED" if d.get("ok", True) else "ERROR")),
-            cost_usd=float(d.get("cost_usd", 0.0)),
-            tokens=int(d.get("tokens", 0)),
-            tool_calls=int(d.get("tool_calls", 0)),
-            iterations=int(d.get("iterations", 1)),
-            question=d.get("question"))
+    def availability(self) -> AgentAvailability:
+        """Always ready. It is a program, not a service, and needs nobody."""
+        return AgentAvailability(
+            auth_mode=AuthMode.NONE, adapter=self.name,
+            executable=Check.yes("in-process"),
+            protocol=Check.yes("structured outcome, declared"),
+            authentication=Check.yes("no credential is involved"),
+            agent=Check.yes("deterministic; not a model"),
+            capabilities=AgentCapabilities(edits_files=True,
+                                           structured_output=True))
 
+    def describe(self) -> dict[str, str]:
+        return {"capability": self.capability.value, "adapter": self.name,
+                "kind": "declared-not-a-model"}
 
-@dataclass(slots=True)
-class CommandRunner(AgentRunner):
-    """Executes an external command in the worker's area.
+    def run(self, mission: Mission) -> Outcome:
+        started = time.monotonic()
+        declared = self.script.get(mission.task_key, self.default_value)
 
-    Contract with the process: it receives the request as JSON on stdin and must
-    print a result JSON on stdout. Unreadable output is treated as a failure --
-    and not as a silent success -- because a worker that cannot report what it
-    did cannot be considered to have succeeded.
-    """
-    command: list[str] = field(default_factory=list)
-    name: str = "comando"
-    timeout_slack: int = 120
+        if self.leave_trace and mission.allowed_root:
+            area = Path(mission.allowed_root)
+            area.mkdir(parents=True, exist_ok=True)
+            (area / "run.json").write_text(
+                json.dumps({"run": mission.run_id, "goal": mission.goal,
+                            "declared": declared}, ensure_ascii=False, indent=2),
+                encoding="utf-8")
 
-    def run(self, request: RunRequest) -> RunResult:
-        payload = json.dumps({
-            "run_id": request.run_id, "task_id": request.task_id, "agent": request.agent,
-            "goal": request.goal, "area": request.area.path,
-            "branch": request.area.branch, "context": request.context,
-            "limits": {"iterations": request.limit_iterations,
-                        "tool_calls": request.limit_tool_calls,
-                        "cost_usd": request.limit_cost_usd,
-                        "seconds": request.limit_seconds},
-        }, ensure_ascii=False)
-        try:
-            p = subprocess.run(
-                self.command, input=payload, cwd=request.area.path,
-                capture_output=True, encoding="utf-8", errors="replace",
-                timeout=request.limit_seconds + self.timeout_slack)
-        except subprocess.TimeoutExpired:
-            return RunResult(ok=False, summary=f"timed out after {request.limit_seconds}s",
-                             outcome="TIMEBOX")
-        if p.returncode != 0:
-            return RunResult(ok=False, outcome="ERROR",
-                             summary=f"rc={p.returncode}: {(p.stderr or '').strip()[:400]}")
-        try:
-            d = json.loads((p.stdout or "").strip() or "{}")
-        except ValueError:
-            return RunResult(ok=False, outcome="ERROR",
-                             summary=f"output is not JSON: {(p.stdout or '')[:200]}")
-        return RunResult(
-            ok=bool(d.get("ok", False)), summary=str(d.get("summary", "")),
-            outcome=str(d.get("outcome", "FINISHED" if d.get("ok") else "ERROR")),
-            artifacts=d.get("artifacts") or {}, cost_usd=float(d.get("cost_usd", 0.0)),
-            tokens=int(d.get("tokens", 0)), tool_calls=int(d.get("tool_calls", 0)),
-            iterations=int(d.get("iterations", 0)), question=d.get("question"))
+        status = str(declared.get("status", "NO_PROGRESS")).upper()
+        if status not in VALID_STATUS:
+            return Outcome(
+                status=ProcessStatus.ERROR,
+                summary=f"the script declared an unknown status {status!r}",
+                duration_seconds=time.monotonic() - started)
+        claim = str(declared.get("claim", "NONE")).upper()
+
+        return Outcome(
+            status=ProcessStatus(status),
+            claim=Claim(claim) if claim in VALID_CLAIM else Claim.NONE,
+            summary=str(declared.get("summary", "")),
+            claimed_files=tuple(
+                ClaimedFile(path=str(f)) for f in (declared.get("claimed_files") or [])),
+            blockers=tuple(str(b) for b in (declared.get("blockers") or [])),
+            questions=tuple(str(q) for q in (declared.get("questions") or [])),
+            escalation_requested=bool(declared.get("escalation_requested")),
+            escalation_reason=str(declared.get("escalation_reason", "")),
+            cost_usd=float(declared.get("cost_usd", 0.0)),
+            tokens=int(declared.get("tokens", 0)),
+            tool_calls=int(declared.get("tool_calls", 0)),
+            duration_seconds=time.monotonic() - started)

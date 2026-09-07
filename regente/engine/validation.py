@@ -85,8 +85,8 @@ def may_commit(verdict: Verdict, loop_result) -> Judgement:
     """Does the ENGINE consider this change worth committing?
 
     Answered before policy is consulted, and without reading the agent's
-    opinion. `Outcome.FINISHED` does not appear in this function on purpose: an
-    agent declaring itself done is an observation, and observations do not
+    opinion. `ProcessStatus.FINISHED` does not appear in this function on purpose:
+    an agent declaring itself done is an observation, and observations do not
     authorise writes.
     """
     if not loop_result.changed_files:

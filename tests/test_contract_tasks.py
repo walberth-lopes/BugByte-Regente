@@ -39,17 +39,44 @@ def _build_filesystem(tmp_path: Path) -> tuple[TaskProvider, str]:
     folder = tmp_path / "tasks"
     folder.mkdir()
     body = [
-        {"key": "K-1", "titulo": "first", "estado": "TO DO", "prioridade": 10,
-         "descricao": "does something", "labels": ["um"]},
-        {"key": "K-2", "titulo": "second", "estado": "CODING",
-         "depende_de": [{"key": "K-1"}], "descricao": "another thing"},
-        {"key": "K-3", "titulo": "third", "estado": "A STATUS NOBODY MAPPED",
-         "relacionadas": ["K-1"], "descricao": "one more"},
+        {"key": "K-1", "title": "first", "status": "TO DO", "priority": 10,
+         "description": "does something", "labels": ["one"]},
+        {"key": "K-2", "title": "second", "status": "CODING",
+         "depends_on": [{"key": "K-1"}], "description": "another thing"},
+        {"key": "K-3", "title": "third", "status": "A STATUS NOBODY MAPPED",
+         "related": ["K-1"], "description": "one more"},
     ]
     for d in body:
         (folder / f"{d['key']}.yaml").write_text(
             yaml.safe_dump(d, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return FilesystemTasks(folder), "K-1"
+
+
+def test_a_task_file_written_in_pt_br_is_still_readable(tmp_path):
+    """The alias path in `_field`, which the main fixture no longer exercises.
+
+    Standardising the project's vocabulary must not turn somebody's existing
+    task files into unreadable ones, so both spellings resolve and the en-US
+    name wins when a file carries both.
+    """
+    folder = tmp_path / "tasks"
+    folder.mkdir()
+    (folder / "K-9.yaml").write_text(yaml.safe_dump(
+        {"key": "K-9", "titulo": "old spelling", "estado": "TO DO",
+         "prioridade": 7, "descricao": "written before the rename",
+         "depende_de": [{"key": "K-1"}], "relacionadas": ["K-2"]},
+        allow_unicode=True, sort_keys=False), encoding="utf-8")
+    (folder / "K-10.yaml").write_text(yaml.safe_dump(
+        {"key": "K-10", "title": "new", "titulo": "old", "status": "TO DO"},
+        allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    by_key = {t.key: t for t in FilesystemTasks(folder).list_tasks()}
+    old = by_key["K-9"]
+    assert old.title == "old spelling"
+    assert old.priority == 7
+    assert old.description == "written before the rename"
+    assert {link.key for link in old.links} == {"K-1", "K-2"}
+    assert by_key["K-10"].title == "new", "the en-US name has to win"
 
 
 def _build_jira(tmp_path: Path) -> tuple[TaskProvider, str]:
@@ -93,12 +120,12 @@ def test_identity_is_unique(provider):
 
 def test_get_returns_the_same_task_that_the_list(provider):
     port, key = provider
-    um = port.get_task(key)
-    assert um.key == key
+    one = port.get_task(key)
+    assert one.key == key
     from_list = {t.key: t for t in port.list_tasks()}
     if key in from_list:
-        assert from_list[key].title == um.title
-        assert from_list[key].status is um.status
+        assert from_list[key].title == one.title
+        assert from_list[key].status is one.status
 
 
 def test_task_missing_raises_is_not_returns_none(provider):
@@ -112,14 +139,14 @@ def test_task_missing_raises_is_not_returns_none(provider):
 # Normalisation
 # ---------------------------------------------------------------------------
 
-def test_status_is_of_vocabulario_of_motor(provider):
+def test_status_belongs_to_the_engine_vocabulary(provider):
     port, _ = provider
     for t in port.list_tasks():
         assert isinstance(t.status, ExternalStatus)
 
 
 def test_status_raw_is_preserved(provider):
-    """Without it, a DESCONHECIDA status does not say what showed up on the board."""
+    """Without it, an UNKNOWN status does not say what showed up on the board."""
     port, _ = provider
     assert any(t.external_status for t in port.list_tasks())
 
@@ -202,10 +229,10 @@ def test_no_write_is_executed(provider, operation):
 def test_read_transport_has_no_write_verb():
     """The real guarantee of the shadow: no function mutates the external system."""
     from regente.adapters.tasks import transport as t
-    for classe in (t.HttpTransport, t.SnapshotTransport):
-        metodos = {m for m in dir(classe) if not m.startswith("_")}
-        proibidos = metodos & {"post", "put", "patch", "delete", "write", "mutate"}
-        assert not proibidos, f"{classe.__name__} expoe escrita: {proibidos}"
+    for transport_class in (t.HttpTransport, t.SnapshotTransport):
+        methods = {m for m in dir(transport_class) if not m.startswith("_")}
+        forbidden = methods & {"post", "put", "patch", "delete", "write", "mutate"}
+        assert not forbidden, f"{transport_class.__name__} exposes a write: {forbidden}"
 
 
 # ---------------------------------------------------------------------------

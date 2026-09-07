@@ -51,11 +51,11 @@ class DependencyGraph:
         the engine start work whose prerequisite nobody verified.
         """
         ready = set()
-        for no in self._nodes:
-            if no in completed:
+        for node in self._nodes:
+            if node in completed:
                 continue
-            if all(p in completed for p in self._parents[no]):
-                ready.add(no)
+            if all(p in completed for p in self._parents[node]):
+                ready.add(node)
         return frozenset(ready)
 
     def cycles(self) -> list[list[str]]:
@@ -64,10 +64,10 @@ class DependencyGraph:
         stack: list[str] = []
         findings: list[list[str]] = []
 
-        def visit(no: str) -> None:
-            color[no] = 1
-            stack.append(no)
-            for parent in sorted(self._parents[no]):
+        def visit(node: str) -> None:
+            color[node] = 1
+            stack.append(node)
+            for parent in sorted(self._parents[node]):
                 if parent not in color:
                     continue
                 if color[parent] == 0:
@@ -76,11 +76,11 @@ class DependencyGraph:
                     cut = stack[stack.index(parent):]
                     findings.append(list(cut))
             stack.pop()
-            color[no] = 2
+            color[node] = 2
 
-        for no in sorted(self._nodes):
-            if color[no] == 0:
-                visit(no)
+        for node in sorted(self._nodes):
+            if color[node] == 0:
+                visit(node)
         return findings
 
     def in_cycle(self) -> frozenset[str]:

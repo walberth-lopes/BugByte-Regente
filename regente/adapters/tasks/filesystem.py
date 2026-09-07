@@ -114,7 +114,7 @@ class FilesystemTasks(TaskProvider):
             links=links,
             resources=tuple(str(r) for r in (data.get("resources") or [])),
             labels=tuple(str(r) for r in (data.get("labels") or [])),
-            data={"arquivo": str(path)})
+            data={"file": str(path)})
 
     def list_tasks(self, filters: dict[str, Any] | None = None) -> list[ExternalTask]:
         self.verify()
@@ -140,7 +140,7 @@ class FilesystemTasks(TaskProvider):
         data = self._read(self._path_for(key))
         return [Comment(author=str(_field(c, "author", "autor") or "?"),
                         text=str(_field(c, "text", "texto") or ""),
-                        created_at=str(c.get("em", "")), id=str(c.get("id", "")))
+                        created_at=str(_field(c, "created_at", "em") or ""), id=str(c.get("id", "")))
                 for c in (_field(data, "comments", "comentarios") or [])]
 
     # ---- writing ---------------------------------------------------------

@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from regente.adapters.notify.console import Console
-from regente.adapters.runner.scripted import ScriptedRunner
+from regente.adapters.runner.scripted import ScriptedAgent
 from regente.adapters.secrets import ScopedSecrets, SecretMissing, SecretOutOfScope
 from regente.adapters.tasks.filesystem import FilesystemTasks
 from regente.adapters.tasks.jira import JiraTasks
@@ -51,10 +51,10 @@ def _engine(store: SqliteStore, ws_id: str, name: str, provider, tmp_path: Path)
     return Orchestrator(
         store=store, workspace=ws, tasks_provider=provider,
         area_provider=IsolatedDirectory(tmp_path / f"areas-{name}"),
-        runner=ScriptedRunner(),
+        runner=ScriptedAgent(),
         gate=Gate(store=store, policy=PolicyEngine.from_config([]), risk=risk),
         risk=risk, limits=Limits(max_workers=2),
-        notificador=Console(journal=tmp_path / f"{name}.log"))
+        notifier=Console(journal=tmp_path / f"{name}.log"))
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +89,7 @@ def test_the_same_external_key_in_two_clients_is_two_tasks(tmp_path):
     ta = store.task_by_key("wks_a", "filesystem", "SG-1")
     tb = store.task_by_key("wks_b", "filesystem", "SG-1")
     assert ta and tb
-    assert ta.id != tb.id, "a mesma chave externa virou uma task so"
+    assert ta.id != tb.id, "the same external key became a single task"
 
 
 def test_events_and_actions_are_scoped(tmp_path):
@@ -135,7 +135,7 @@ def test_lease_of_a_client_not_blocks_the_other(tmp_path):
 
     assert store.acquire_lease("repo:api", "run_a", "wks_a", 60) is not None
     assert store.acquire_lease("repo:api", "run_b", "wks_b", 60) is not None, (
-        "clientes diferentes competindo pela mesma trava")
+        "different clients competing for the same lock")
     # And within the SAME client the exclusion still holds.
     assert store.acquire_lease("repo:api", "run_a2", "wks_a", 60) is None
 
@@ -149,8 +149,8 @@ def test_releasing_lease_of_a_client_not_releases_the_of_other(tmp_path):
     store.acquire_lease("repo:api", "run_x", "wks_b", 60)
 
     store.release_lease("repo:api", "run_x", workspace_id="wks_a")
-    assert store.acquire_lease("repo:api", "outro", "wks_a", 60) is not None
-    assert store.acquire_lease("repo:api", "outro", "wks_b", 60) is None, (
+    assert store.acquire_lease("repo:api", "another", "wks_a", 60) is not None
+    assert store.acquire_lease("repo:api", "another", "wks_b", 60) is None, (
         "releasing one client's lock released the other's")
 
 
@@ -161,7 +161,7 @@ def test_lease_expired_is_listed_only_to_the_owner_of_scope(tmp_path):
     store.save_workspace(Workspace(id="wks_b", client_id="b", name="B"))
     store.acquire_lease("repo:api", "run_a", "wks_a", 60)
     store.acquire_lease("repo:api", "run_b", "wks_b", 60)
-    store._con.execute("UPDATE leases SET expires_at='2000-01-01T00:00:00.000000Z'")
+    store._conn.execute("UPDATE leases SET expires_at='2000-01-01T00:00:00.000000Z'")
 
     assert [l.owner for l in store.expired_leases("wks_a")] == ["run_a"]
     assert [l.owner for l in store.expired_leases("wks_b")] == ["run_b"]
@@ -259,7 +259,7 @@ def test_two_clients_with_a_same_named_repo_do_not_contend_for_a_lock(tmp_path):
 
     assert store.acquire_lease(ra, "run_a", "wks_a", 60) is not None
     assert store.acquire_lease(rb, "run_b", "wks_b", 60) is not None, (
-        "o cliente B ficou esperando a trava do cliente A")
+        "client B ended up waiting for client A's lock")
     # Within the same client, the exclusion still holds.
     assert store.acquire_lease(ra, "run_a2", "wks_a", 60) is None
 
@@ -269,7 +269,7 @@ def test_providers_of_repo_different_coexist(tmp_path):
     import subprocess
     from regente.adapters.repos.git_local import GitLocal
 
-    def repo(root, name, remoto):
+    def repo(root, name, remote):
         p = root / name
         p.mkdir(parents=True)
         for args in (["init", "-q", "-b", "main"],
@@ -280,7 +280,7 @@ def test_providers_of_repo_different_coexist(tmp_path):
         subprocess.run(["git", "add", "."], cwd=str(p), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-q", "-m", "i"], cwd=str(p), check=True,
                        capture_output=True)
-        subprocess.run(["git", "remote", "add", "origin", remoto], cwd=str(p),
+        subprocess.run(["git", "remote", "add", "origin", remote], cwd=str(p),
                        check=True, capture_output=True)
         return p
 

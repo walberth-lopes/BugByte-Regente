@@ -68,7 +68,7 @@ RULES = [
      "match": {"action": "repo.merge", "environment": "staging"}},
     {"name": "prod", "effect": "HUMAN_APPROVAL",
      "match": {"action": "repo.merge", "environment": "production"}},
-    {"name": "sem_banco", "effect": "DENY", "match": {"action": "db.write*"}},
+    {"name": "no_database_writes", "effect": "DENY", "match": {"action": "db.write*"}},
 ]
 
 
@@ -102,7 +102,7 @@ def test_deny_beats_allow():
     rules = RULES + [{"name": "liberou_tudo", "effect": "ALLOW", "match": {"action": "*"}}]
     d = PolicyEngine.from_config(rules).decide(ctx("db.write"))
     assert d.effect == Effect.DENY
-    assert d.rule == "sem_banco"
+    assert d.rule == "no_database_writes"
 
 
 def test_ceiling_of_autonomy_tightens_allow():

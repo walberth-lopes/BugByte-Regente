@@ -23,19 +23,21 @@ moves in between.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
 from ..core import ids
 from ..core.model import Event, Run, RunState, now
 from ..core.policy import (Action, AutonomyLevel, Effect, PolicyContext,
                            PolicyEngine)
-from ..ports.agent import Budget, CodingAgent, Permissions, Verdict
+from ..ports.agent import AgentRunner, Budget, Mission, Permissions, Verdict
 from ..ports.repository import RepositoryProvider
 from ..ports import AdapterError
 from ..ports.store import Store
 from ..ports.workspace import WorkspaceProvider
-from . import coder, context, metrics, mission, testing, validation
+from . import (coder, context, metrics, mission, observation, testing,
+               validation)
 from .discovery import Source
 from .target import Confidence
 
@@ -77,7 +79,7 @@ class MissionRunner:
     workspace_name: str
     repos: RepositoryProvider
     areas: WorkspaceProvider
-    agent: CodingAgent
+    agent: AgentRunner
     planner: mission.MissionPlanner
     budget: Budget
     permissions: Permissions
@@ -92,6 +94,18 @@ class MissionRunner:
     #: Identity written into the commit. Distinct from any human on purpose:
     #: history must say who actually wrote it.
     commit_author: tuple[str, str] = ("Regente", "regente@localhost.invalid")
+    #: Directories the agent must never touch, watched for the whole run. The
+    #: source clones belong here: a write into one of them would contaminate
+    #: every future area cut from it, and it leaves no trace in the isolated
+    #: area's own git status.
+    watched_sources: tuple[str, ...] = ()
+    #: Vendor-named authority paths, from composition.
+    authority_paths: tuple[str, ...] = ()
+    #: Vendor-named instruction filenames, from composition.
+    instruction_files: tuple[str, ...] = ()
+
+    def _watched_sources(self) -> tuple[str, ...]:
+        return self.watched_sources
 
     # ------------------------------------------------------------------
     def run(self, selection: mission.Selection) -> MissionOutcome:
@@ -133,8 +147,23 @@ class MissionRunner:
             baseline = coder.measure_baseline(test_command, area.path, self.test_timeout)
             del baseline_started
 
-            ctx = context.build(m.task, m.repo, m.discovery, area.path,
-                                constraints=mission.FORBIDDEN_MUTATIONS)
+            ctx = context.build(
+                m.task, m.repo, m.discovery, area.path,
+                constraints=mission.FORBIDDEN_MUTATIONS,
+                validation_commands=((tuple(test_command),) if test_command else ()),
+                instruction_files=self.instruction_files)
+
+            # Captured BEFORE the agent runs. A sentinel taken afterwards would
+            # report "nothing moved" about a world nobody looked at, which is
+            # the most reassuring possible way to miss an escape.
+            sentinel = observation.sentinel_for(
+                Mission(workspace_id=self.workspace_id,
+                        workspace_name=self.workspace_name,
+                        task_key=m.task.key, run_id=run.id,
+                        allowed_root=area.path),
+                area_root=Path(area.path).parent,
+                sources=self._watched_sources(),
+                authority_paths=self.authority_paths)
             briefing = mission.briefing_for(
                 m, workspace_path=area.path, agent=self.agent.name,
                 budget=self.budget, permissions=self.permissions,
@@ -149,10 +178,33 @@ class MissionRunner:
             loop = coder.ValidationLoop(
                 agent=self.agent, budget=self.budget, permissions=self.permissions,
                 test_command=test_command, test_timeout=self.test_timeout,
-                agent_name=self.agent_name)
-            result = loop.execute(run_id=run.id, task_key=m.task.key, path=area.path,
-                                  branch=area.branch, context=ctx, repo=m.repo.ref,
-                                  baseline=baseline)
+                agent_name=self.agent_name, sentinel=sentinel,
+                forbidden_actions=mission.FORBIDDEN_MUTATIONS,
+                authority_paths=self.authority_paths)
+            result = loop.execute(
+                run_id=run.id, task_key=m.task.key,
+                workspace_id=self.workspace_id, workspace_name=self.workspace_name,
+                path=area.path, branch=area.branch, context=ctx, repo=m.repo.ref,
+                baseline=baseline)
+
+            if result.violations:
+                # Recorded as its own event, not folded into the mission
+                # summary. A boundary breach is what someone searches the
+                # timeline for, and it must be findable without reading prose.
+                self._record(
+                    "authority_violation", m.task.key, run.id,
+                    "; ".join(f"{v.kind} {v.path}".strip()
+                              for v in result.violations)[:300],
+                    violations=[{"kind": v.kind, "detail": v.detail,
+                                 "path": v.path} for v in result.violations],
+                    repository=m.repo.ref.key, branch=area.branch)
+            if result.discrepancies:
+                self._record(
+                    "claim_discrepancy", m.task.key, run.id,
+                    f"{len(result.discrepancies)} gap(s) between what the agent "
+                    f"claimed and what the engine observed",
+                    discrepancies=[{"kind": d.kind, "detail": d.detail}
+                                   for d in result.discrepancies])
 
             run.state = (RunState.SUCCEEDED if not result.stopped_early
                          else RunState.FAILED)

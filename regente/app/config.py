@@ -28,7 +28,7 @@ class AdapterConf:
     options: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def de(cls, raw: Any, field: str) -> AdapterConf:
+    def from_raw(cls, raw: Any, field: str) -> AdapterConf:
         if isinstance(raw, str):
             return cls(name=raw)
         if isinstance(raw, dict):
@@ -76,9 +76,13 @@ class Config:
     risk_factors: tuple[dict[str, Any], ...] = ()
     models: dict[str, dict[str, Any]] = field(default_factory=dict)
     #: Shadow: the engine decides and records, but performs no external write.
-    #: It is born on. Turning it off is the owner's explicit decision, never a
-    #: default.
+    #: Born on. Turning it off is the owner's explicit decision, never a default.
     shadow: bool = True
+    #: Directories the agent may never touch, watched for the whole run.
+    #: The source clones go here: a write into one of them contaminates every
+    #: future area cut from it, and leaves no trace in the isolated area's
+    #: `git status` -- the only way to see it is to compare before and after.
+    watched_sources: tuple[str, ...] = ()
 
     @property
     def database(self) -> Path:
@@ -90,7 +94,7 @@ class Config:
 
     @property
     def journal(self) -> Path:
-        return self.root / "jornal.log"
+        return self.root / "journal.log"
 
 
 REQUIRED_FIELDS = ("organization", "client", "workspace")
@@ -111,8 +115,8 @@ def load(path: str | Path) -> Config:
     if missing:
         raise ValueError(f"{p}: required fields are missing: {', '.join(missing)}")
 
-    providers_brutos = raw.get("providers") or {}
-    providers = {k: AdapterConf.de(v, f"providers.{k}") for k, v in providers_brutos.items()}
+    providers_raw = raw.get("providers") or {}
+    providers = {k: AdapterConf.from_raw(v, f"providers.{k}") for k, v in providers_raw.items()}
     without = [c for c in ESSENTIAL_PROVIDERS if c not in providers]
     if without:
         raise ValueError(f"{p}: essential providers missing: {', '.join(without)}")
@@ -155,6 +159,7 @@ def load(path: str | Path) -> Config:
         secrets=tuple(str(x) for x in (raw.get('secrets') or ())),
         targets={k: dict(v) for k, v in (raw.get('targets') or {}).items()},
         risk_factors=tuple(raw.get("risk_factors") or ()),
+        watched_sources=tuple(str(x) for x in (raw.get("watched_sources") or ())),
         models=dict(raw.get("models") or {}),
         shadow=bool(raw.get("shadow", True)),
     )

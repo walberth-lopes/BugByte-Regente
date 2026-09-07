@@ -128,8 +128,8 @@ def _fires(factor: Factor, context: dict[str, Any]) -> str | None:
             p = default_value.lower()
             # A pattern without a wildcard matches by substring: 'auth' has to
             # catch 'src/auth/handler.py' without every rule becoming '*auth*'.
-            bateu = fnmatch.fnmatch(target, p) if ("*" in p or "?" in p) else (p in target)
-            if bateu:
+            matched = fnmatch.fnmatch(target, p) if ("*" in p or "?" in p) else (p in target)
+            if matched:
                 return f"{factor.field}={value}"
     return None
 

@@ -74,22 +74,22 @@ class CloudProvider(Port):
 class Column:
     name: str
     kind: str
-    nulo: bool = True
+    nullable: bool = True
 
 
 @dataclass(frozen=True, slots=True)
 class Table:
     name: str
     schema: str = ""
-    colunas: tuple[Column, ...] = ()
+    columns: tuple[Column, ...] = ()
     approx_rows: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class QueryResult:
-    colunas: tuple[str, ...]
+    columns: tuple[str, ...]
     lines: tuple[tuple[Any, ...], ...]
-    truncado: bool = False
+    truncated: bool = False
 
 
 class DatabaseProvider(Port):

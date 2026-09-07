@@ -32,8 +32,8 @@ class Console(NotificationProvider):
         except UnicodeEncodeError:
             print(line.encode("ascii", "replace").decode("ascii"), file=sys.stderr)
         if self.journal:
-            carimbo = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             self.journal.parent.mkdir(parents=True, exist_ok=True)
             with self.journal.open("a", encoding="utf-8") as f:
-                f.write(f"{carimbo} | {urgency} | {title} | {body}"
+                f.write(f"{stamp} | {urgency} | {title} | {body}"
                         + (f" | {link}" if link else "") + "\n")

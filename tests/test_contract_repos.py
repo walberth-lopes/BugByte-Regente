@@ -7,8 +7,9 @@ If the contract holds for both, it is not written around either one.
 
 The local provider runs over REAL git repositories created on the spot -- there
 is no simulation of git anywhere. The remote one requires a network and a
-credential, so it runs under a marker: `pytest -m rede`. The default suite stays
-fast and offline, and the contract stays the same code in both cases.
+credential, so it is skipped unless `REGENTE_TEST_NETWORK=1` is set. The default
+suite stays fast and offline, and the contract stays the same code in both
+cases.
 """
 
 from __future__ import annotations
@@ -31,21 +32,21 @@ def _git(cwd: Path, *args: str) -> None:
                    capture_output=True, encoding="utf-8", errors="replace")
 
 
-def _make_repo(root: Path, diretorio: str, remoto: str | None,
+def _make_repo(root: Path, directory: str, remote: str | None,
                base: str = "main", branches: tuple[str, ...] = ()) -> Path:
     """Creates a REAL git repository. Nothing here is simulated."""
-    p = root / diretorio
+    p = root / directory
     p.mkdir(parents=True)
     _git(p, "init", "-q", "-b", base)
     _git(p, "config", "user.email", "teste@exemplo.invalido")
     _git(p, "config", "user.name", "Teste")
-    (p / "README.md").write_text(f"# {diretorio}\n", encoding="utf-8")
+    (p / "README.md").write_text(f"# {directory}\n", encoding="utf-8")
     _git(p, "add", "README.md")
     _git(p, "commit", "-q", "-m", "inicial")
     for b in branches:
         _git(p, "branch", b)
-    if remoto:
-        _git(p, "remote", "add", "origin", remoto)
+    if remote:
+        _git(p, "remote", "add", "origin", remote)
         # `origin/HEAD` without a fetch: the adapter has to find the base anyway,
         # and this is the state of a freshly configured clone.
         _git(p, "update-ref", f"refs/remotes/origin/{base}", "HEAD")
@@ -71,8 +72,8 @@ def provider(clones) -> RepositoryProvider:
 
 
 NETWORK = pytest.mark.skipif(
-    os.environ.get("REGENTE_TESTE_REDE") != "1",
-    reason="needs a network and a credential; enable with REGENTE_TESTE_REDE=1")
+    os.environ.get("REGENTE_TEST_NETWORK") != "1",
+    reason="needs a network and a credential; enable with REGENTE_TEST_NETWORK=1")
 
 
 # ---------------------------------------------------------------------------
@@ -85,19 +86,19 @@ def test_declares_the_that_is(provider):
     assert d["adapter"] and d["adapter"] != "unknown"
 
 
-def test_list_returns_repositorios(provider):
+def test_list_returns_repositories(provider):
     repos = provider.list_repositories()
     assert repos
     assert all(r.ref.key for r in repos)
 
 
-def test_identity_vem_of_remote_not_of_directory(provider):
+def test_identity_comes_from_the_remote_not_the_directory(provider):
     """The defect this test prevents was measured on the real disk: the directory
     `scamchecker-legado` points at the repository `scamchecker`."""
-    por_dir = {r.data["directory"]: r for r in provider.list_repositories()}
-    assert por_dir["api"].ref.key == "acme/servico-api"
-    assert por_dir["api"].data.get("directory_differs_from_repo") is True
-    assert por_dir["web"].ref.key == "acme/web"
+    by_dir = {r.data["directory"]: r for r in provider.list_repositories()}
+    assert by_dir["api"].ref.key == "acme/servico-api"
+    assert by_dir["api"].data.get("directory_differs_from_repo") is True
+    assert by_dir["web"].ref.key == "acme/web"
 
 
 def test_identity_is_unique(provider):
@@ -128,9 +129,9 @@ def test_without_a_remote_it_still_has_an_identity(provider):
 
 def test_get_returns_the_same_that_the_list(provider):
     from_list = provider.list_repositories()[0]
-    um = provider.get_repository(from_list.ref.key)
-    assert um.ref == from_list.ref
-    assert um.base_branch == from_list.base_branch
+    one = provider.get_repository(from_list.ref.key)
+    assert one.ref == from_list.ref
+    assert one.base_branch == from_list.base_branch
 
 
 def test_missing_repository_raises(provider):
@@ -143,9 +144,9 @@ def test_missing_repository_raises(provider):
 # ---------------------------------------------------------------------------
 
 def test_branch_base_is_read_never_assumed(provider):
-    por_dir = {r.data["directory"]: r for r in provider.list_repositories()}
-    assert por_dir["api"].base_branch == "main"
-    assert por_dir["web"].base_branch == "master", "presumiu 'main'"
+    by_dir = {r.data["directory"]: r for r in provider.list_repositories()}
+    assert by_dir["api"].base_branch == "main"
+    assert by_dir["web"].base_branch == "master", "presumiu 'main'"
 
 
 def test_branch_current_not_is_confused_with_the_base(provider, clones):
@@ -164,7 +165,7 @@ def test_list_branches_without_duplicating_local_is_remote(provider):
 
 
 def test_filter_of_branch(provider):
-    found = provider.list_branches("acme/servico-api", {"padrao": "K-1"})
+    found = provider.list_branches("acme/servico-api", {"default": "K-1"})
     assert [b.name for b in found] == ["feat/K-1-coisa"]
 
 
@@ -206,7 +207,7 @@ PORT_WRITE_OPS = [
 
 
 @pytest.mark.parametrize("operation,args", PORT_WRITE_OPS)
-def test_write_not_esta_implemented(provider, operation, args):
+def test_write_is_not_implemented(provider, operation, args):
     """The contract exists; the implementation does not. Both are visible."""
     with pytest.raises(NotImplementedError):
         getattr(provider, operation)(*args)
@@ -220,7 +221,7 @@ def test_write_not_esta_implemented(provider, operation, args):
 ])
 def test_git_refuses_invocation_that_writes(provider, clones, invocation):
     """Each of these starts with a verb that has a read form -- which is why an
-    um allowlist por verbo os deixaria passar."""
+    an allowlist by verb would let them through."""
     with pytest.raises(ReadOnlyRefused):
         provider._git(clones / "api", *invocation)
 
@@ -280,7 +281,7 @@ def test_directory_without_git_is_ignored_without_breaking(provider, clones):
 def test_timeout_becomes_error_of_adapter(provider, clones, monkeypatch):
     """Tests the TRANSLATION of the timeout, not the race.
 
-    Um teste que confia em `timeout=0` disparar de fato depende de o processo
+    A test that relies on `timeout=0` actually firing depends on the process
     being slower than the clock's granularity -- and therefore fails every so
     often, on the wrong machine, with nobody understanding why.
     """
@@ -300,16 +301,16 @@ def test_reads_a_file_from_the_base_by_default(provider):
     assert provider.read_file("acme/servico-api", "README.md").strip() == "# api"
 
 
-@pytest.mark.parametrize("url,esperado", [
+@pytest.mark.parametrize("url,expected", [
     ("https://github.com/acme/repo.git", "acme/repo"),
     ("git@github.com:acme/repo.git", "acme/repo"),
-    ("https://gitlab.com/grupo/sub/repo", "sub/repo"),
+    ("https://gitlab.com/group/sub/repo", "sub/repo"),
     ("ssh://git@bitbucket.org/time/repo.git", "time/repo"),
-    ("/caminho/local/repo", "local/repo"),
+    ("/path/local/repo", "local/repo"),
 ])
-def test_identity_survives_any_url_form(url, esperado):
+def test_identity_survives_any_url_form(url, expected):
     """`git@host:org/repo.git` is not a valid URL and escapes every parser."""
-    assert _org_repo(url) == esperado
+    assert _org_repo(url) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -327,9 +328,9 @@ def test_hosting_remote_meets_the_same_contract():
     assert all(r.ref.provider == "github" for r in repos)
     assert len({r.ref.key for r in repos}) == len(repos)
 
-    um = p.get_repository(repos[0].ref.key)
-    assert um.ref == repos[0].ref
-    assert not um.partial and repos[0].partial
+    one = p.get_repository(repos[0].ref.key)
+    assert one.ref == repos[0].ref
+    assert not one.partial and repos[0].partial
 
 
 @NETWORK

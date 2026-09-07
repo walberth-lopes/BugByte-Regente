@@ -138,7 +138,7 @@ class Store(Port):
     def open_delivery(self, workspace_id: str, task_key: str, run_id: str,
                       provider: str, repo_key: str, branch: str,
                       commit_sha: str) -> str:
-        """Abre o registro ANTES de qualquer mutacao remota e devolve o id."""
+        """Opens the record BEFORE any remote mutation and returns the id."""
 
     @abstractmethod
     def record_push(self, delivery_id: str, target: str) -> None: ...

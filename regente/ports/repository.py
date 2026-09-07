@@ -247,7 +247,7 @@ class RepositoryProvider(Port):
     # defect -- which is why it is worth writing them before, and not after,
     # the defect happens.
 
-    def create_branch(self, key: str, name: str, a_partir_de: str) -> Branch:
+    def create_branch(self, key: str, name: str, from_ref: str) -> Branch:
         """`a_partir_de` is mandatory: deriving from the implicit base is the
         short path to a PR born out of stale code."""
         raise NotImplementedError
@@ -274,5 +274,5 @@ class RepositoryProvider(Port):
         raise NotImplementedError
 
     def merge_pull_request(self, key: str, number: int, method: str = "squash",
-                           esperado_sha: str | None = None) -> None:
+                           expected_sha: str | None = None) -> None:
         raise NotImplementedError

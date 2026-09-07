@@ -238,12 +238,12 @@ def _v2_to_v3(c: sqlite3.Connection) -> None:
                    "expira_em": "expires_at", "renovado_em": "renewed_at"},
         "counters": {"dia": "day", "nome": "name", "valor": "value"},
     }
-    for table, mapa in renames.items():
+    for table, column_map in renames.items():
         if not has_table(table):
             continue
-        atuais = columns(table)
-        for old, new in mapa.items():
-            if old in atuais and new not in atuais:
+        existing = columns(table)
+        for old, new in column_map.items():
+            if old in existing and new not in existing:
                 c.execute(f'ALTER TABLE {table} RENAME COLUMN "{old}" TO "{new}"')
 
 
@@ -356,11 +356,31 @@ def _v6_to_v7(c: sqlite3.Connection) -> None:
             c.execute("UPDATE tasks SET data=? WHERE id=?",
                       (json.dumps(data, ensure_ascii=False), task_id))
 
+    # Event payloads carry keys too. `changed_at_source` wrote `de`/`to_state`
+    # -- half-translated, so the pair no longer reads as a pair.
+    rows = c.execute("SELECT id, data FROM events").fetchall()
+    for event_id, blob in rows:
+        try:
+            data = json.loads(blob or "{}")
+        except ValueError:
+            continue                      # unreadable blob: leave it, do not lose it
+        if not isinstance(data, dict):
+            continue
+        moved = False
+        for old, new in _EVENT_DATA_KEYS.items():
+            if old in data and new not in data:
+                data[new] = data.pop(old)
+                moved = True
+        if moved:
+            c.execute("UPDATE events SET data=? WHERE id=?",
+                      (json.dumps(data, ensure_ascii=False), event_id))
+
 
 #: The pt-BR values `_v6_to_v7` rewrites. Kept as data so the migration and this
 #: file's writers cannot drift apart.
 _EVENT_KINDS = {
     "descoberta": "discovered", "despachada": "dispatched", "transicao": "transition",
+    "escalou": "escalated", "decisao_humana": "human_decision",
     "recuperada": "recovered", "adiada": "deferred", "falhou": "failed",
     "implementada": "implemented", "mudou_na_origem": "changed_at_source",
     "tick_inicio": "tick_start", "tick_fim": "tick_end",
@@ -370,9 +390,17 @@ _APPROVAL_CHOICES = {
     "seguir": "follow", "investigar": "investigate",
     "bloquear": "block", "cancelar": "cancel",
 }
+_EVENT_DATA_KEYS = {
+    "de": "from_state",
+}
 _TASK_DATA_KEYS = {
     "situacao_externa": "normalised_status", "estado_externo": "raw_status",
     "rotulos": "labels", "bloqueada_por": "blocked_by",
+    # Written by the adapters and by the risk assessment, not by the store.
+    "arquivo": "file", "sinais": "signals",
+    "tipo": "issue_type", "subtarefa": "subtask",
+    "categoria_status": "status_category", "atualizada_em": "updated_at",
+    "prioridade_externa": "external_priority",
 }
 _EXTERNAL_STATUS = {
     "NAO_INICIADA": "NOT_STARTED", "EM_ANALISE": "IN_ANALYSIS",
@@ -412,26 +440,26 @@ class SqliteStore(Store):
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._con = sqlite3.connect(str(self.path), isolation_level=None,
+        self._conn = sqlite3.connect(str(self.path), isolation_level=None,
                                     check_same_thread=False)
-        self._con.row_factory = sqlite3.Row
-        self._con.execute("PRAGMA journal_mode=WAL")
-        self._con.execute("PRAGMA synchronous=NORMAL")
-        self._con.execute("PRAGMA foreign_keys=ON")
-        self._con.execute("PRAGMA busy_timeout=5000")
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.execute("PRAGMA busy_timeout=5000")
 
     def close(self) -> None:
-        self._con.close()
+        self._conn.close()
 
     @contextmanager
     def _tx(self) -> Iterator[sqlite3.Connection]:
-        self._con.execute("BEGIN IMMEDIATE")
+        self._conn.execute("BEGIN IMMEDIATE")
         try:
-            yield self._con
+            yield self._conn
         except Exception:
-            self._con.execute("ROLLBACK")
+            self._conn.execute("ROLLBACK")
             raise
-        self._con.execute("COMMIT")
+        self._conn.execute("COMMIT")
 
     # ---- esquema ---------------------------------------------------------
 
@@ -443,7 +471,7 @@ class SqliteStore(Store):
         would fail. The DDL is idempotent (`IF NOT EXISTS`), which makes running
         it loose safe; the version record comes after, inside a transaction.
         """
-        self._con.executescript(SCHEMA)
+        self._conn.executescript(SCHEMA)
         with self._tx() as c:
             # `meta` may predate the vocabulary standardisation, in which case
             # `CREATE TABLE IF NOT EXISTS` left the old column names in place and
@@ -490,7 +518,7 @@ class SqliteStore(Store):
                   (SCHEMA_VERSION,))
 
     def verify(self) -> None:
-        line = self._con.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
+        line = self._conn.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
         if line is None:
             raise CorruptedState("database with no schema version: run `regente init`")
 
@@ -510,12 +538,12 @@ class SqliteStore(Store):
                          max_autonomy=AutonomyLevel(r["autonomy"]), root=r["root"])
 
     def workspace(self, workspace_id: str) -> Workspace | None:
-        r = self._con.execute("SELECT * FROM workspaces WHERE id=?", (workspace_id,)).fetchone()
+        r = self._conn.execute("SELECT * FROM workspaces WHERE id=?", (workspace_id,)).fetchone()
         return self._workspace_row(r) if r else None
 
     def workspaces(self) -> list[Workspace]:
         return [self._workspace_row(r) for r in
-                self._con.execute("SELECT * FROM workspaces ORDER BY name")]
+                self._conn.execute("SELECT * FROM workspaces ORDER BY name")]
 
     def save_project(self, p: Project) -> None:
         with self._tx() as c:
@@ -531,7 +559,7 @@ class SqliteStore(Store):
                         default_environment=r["default_environment"],
                         max_autonomy=(AutonomyLevel(r["autonomy"])
                                           if r["autonomy"] is not None else None))
-                for r in self._con.execute(
+                for r in self._conn.execute(
                     "SELECT * FROM projects WHERE workspace_id=? ORDER BY name", (workspace_id,))]
 
     def save_repository(self, r: Repository) -> None:
@@ -582,11 +610,11 @@ class SqliteStore(Store):
                    _iso(t.created_at), _iso(t.updated_at), _j(t.data)))
 
     def task(self, task_id: str) -> Task | None:
-        r = self._con.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+        r = self._conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
         return self._task_row(r) if r else None
 
     def task_by_key(self, workspace_id: str, provider: str, key: str) -> Task | None:
-        r = self._con.execute(
+        r = self._conn.execute(
             "SELECT * FROM tasks WHERE workspace_id=? AND provider=? AND external_key=?",
             (workspace_id, provider, key)).fetchone()
         return self._task_row(r) if r else None
@@ -599,7 +627,7 @@ class SqliteStore(Store):
         else:
             q, args = "SELECT * FROM tasks WHERE workspace_id=?", [workspace_id]
         q += " ORDER BY priority, external_key, id"
-        return [self._task_row(r) for r in self._con.execute(q, args)]
+        return [self._task_row(r) for r in self._conn.execute(q, args)]
 
     def transition(self, task_id: str, destination: TaskState, actor: str,
                     reason: str = "", data: dict | None = None) -> Task:
@@ -639,7 +667,7 @@ class SqliteStore(Store):
     def dependencies(self, workspace_id: str) -> list[Dependency]:
         return [Dependency(task_id=r["task_id"], depends_on=r["depends_on"],
                            kind=r["kind"], reason=r["reason"])
-                for r in self._con.execute(
+                for r in self._conn.execute(
                     """SELECT d.* FROM deps d JOIN tasks t ON t.id = d.task_id
                        WHERE t.workspace_id=?""", (workspace_id,))]
 
@@ -672,16 +700,16 @@ class SqliteStore(Store):
                        _j(r.data)))
 
     def run(self, run_id: str) -> Run | None:
-        r = self._con.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
+        r = self._conn.execute("SELECT * FROM runs WHERE id=?", (run_id,)).fetchone()
         return self._run_row(r) if r else None
 
     def active_runs(self, workspace_id: str) -> list[Run]:
-        return [self._run_row(r) for r in self._con.execute(
+        return [self._run_row(r) for r in self._conn.execute(
             "SELECT * FROM runs WHERE workspace_id=? AND state=? ORDER BY started_at",
             (workspace_id, RunState.RUNNING.value))]
 
     def task_runs(self, task_id: str) -> list[Run]:
-        return [self._run_row(r) for r in self._con.execute(
+        return [self._run_row(r) for r in self._conn.execute(
             "SELECT * FROM runs WHERE task_id=? ORDER BY started_at", (task_id,))]
 
     # ---- trilha ----------------------------------------------------------
@@ -704,7 +732,7 @@ class SqliteStore(Store):
         return [Event(id=r["id"], workspace_id=r["workspace_id"], kind=r["kind"],
                       ts=_dt(r["ts"]), task_id=r["task_id"], run_id=r["run_id"],
                       actor=r["actor"], summary=r["summary"], data=json.loads(r["data"]))
-                for r in self._con.execute(q, args)]
+                for r in self._conn.execute(q, args)]
 
     def record_action(self, a: ActionRecord) -> None:
         with self._tx() as c:
@@ -722,7 +750,7 @@ class SqliteStore(Store):
                              run_id=r["run_id"], rule=r["rule"], reason=r["reason"],
                              result=r["result"], duration_ms=r["duration_ms"],
                              cost_usd=r["cost_usd"], tokens=r["tokens"])
-                for r in self._con.execute(
+                for r in self._conn.execute(
                     "SELECT * FROM actions WHERE workspace_id=? ORDER BY ts DESC LIMIT ?",
                     (workspace_id, limit))]
 
@@ -750,17 +778,17 @@ class SqliteStore(Store):
                        a.recommendation, _iso(a.created_at)))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(now()), "escalou",
+                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(now()), "escalated",
                        a.task_id, a.run_id, "engine", a.what_happened,
                        _j({"approval_id": a.id, "risk": a.risk.name})))
 
     def open_approvals(self, workspace_id: str) -> list[Approval]:
-        return [self._approval_row(r) for r in self._con.execute(
+        return [self._approval_row(r) for r in self._conn.execute(
             "SELECT * FROM approvals WHERE workspace_id=? AND state=? ORDER BY risk DESC, created_at",
             (workspace_id, ApprovalState.OPEN.value))]
 
     def approval(self, approval_id: str) -> Approval | None:
-        r = self._con.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
+        r = self._conn.execute("SELECT * FROM approvals WHERE id=?", (approval_id,)).fetchone()
         return self._approval_row(r) if r else None
 
     def decide_approval(self, approval_id: str, choice: str, by: str, note: str = "") -> Approval:
@@ -782,8 +810,8 @@ class SqliteStore(Store):
                       (a.state.value, choice, by, _iso(a.decided_at), note, approval_id))
             c.execute("""INSERT INTO events(id, workspace_id, ts, kind, task_id, run_id,
                            actor, summary, data) VALUES(?,?,?,?,?,?,?,?,?)""",
-                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(now()), "decisao_humana",
-                       a.task_id, a.run_id, by, f"escolheu '{choice}'",
+                      (ids.new_id(ids.EVENT), a.workspace_id, _iso(now()), "human_decision",
+                       a.task_id, a.run_id, by, f"chose '{choice}'",
                        _j({"approval_id": approval_id, "note": note})))
         return a
 
@@ -793,21 +821,21 @@ class SqliteStore(Store):
                       seconds: int) -> Lease | None:
         """Grants if free, expired, or already held by the same owner (renewal)."""
         ts = now()
-        expira = ts + timedelta(seconds=seconds)
+        expires = ts + timedelta(seconds=seconds)
         with self._tx() as c:
             r = c.execute("SELECT * FROM leases WHERE workspace_id=? AND resource=?",
                           (workspace_id, resource)).fetchone()
             if r is not None:
-                vivo = _dt(r["expires_at"]) > ts
-                if vivo and r["owner"] != owner:
+                alive = _dt(r["expires_at"]) > ts
+                if alive and r["owner"] != owner:
                     return None
             c.execute("""INSERT INTO leases(workspace_id, resource, owner, expires_at, renewed_at)
                          VALUES(?,?,?,?,?)
                          ON CONFLICT(workspace_id, resource) DO UPDATE SET
                            owner=excluded.owner, expires_at=excluded.expires_at,
                            renewed_at=excluded.renewed_at""",
-                      (workspace_id, resource, owner, _iso(expira), _iso(ts)))
-        return Lease(resource=resource, owner=owner, expires_at=expira,
+                      (workspace_id, resource, owner, _iso(expires), _iso(ts)))
+        return Lease(resource=resource, owner=owner, expires_at=expires,
                      workspace_id=workspace_id, renewed_at=ts)
 
     def renew_lease(self, resource: str, owner: str, seconds: int,
@@ -840,7 +868,7 @@ class SqliteStore(Store):
         ts = when or now()
         return [Lease(resource=r["resource"], owner=r["owner"], expires_at=_dt(r["expires_at"]),
                       workspace_id=r["workspace_id"], renewed_at=_dt(r["renewed_at"]))
-                for r in self._con.execute(
+                for r in self._conn.execute(
                     "SELECT * FROM leases WHERE workspace_id=? AND expires_at < ?",
                     (workspace_id, _iso(ts)))]
 
@@ -914,7 +942,7 @@ class SqliteStore(Store):
                  "discovered_at": r["discovered_at"],
                  "confirmed_at": r["confirmed_at"],
                  "confirmations": r["confirmations"]}
-                for r in self._con.execute(q + " ORDER BY task_key", args)]
+                for r in self._conn.execute(q + " ORDER BY task_key", args)]
 
     # ---- deliveries: task -> run -> commit -> push -> PR -> CI ---------
 
@@ -973,7 +1001,7 @@ class SqliteStore(Store):
             q += " AND task_key=?"
             args.append(task_key)
         return [self._delivery(r)
-                for r in self._con.execute(q + " ORDER BY created_at DESC", args)]
+                for r in self._conn.execute(q + " ORDER BY created_at DESC", args)]
 
     def delivery_for_pr(self, workspace_id: str, provider: str, repo_key: str,
                         number: int) -> dict | None:
@@ -983,7 +1011,7 @@ class SqliteStore(Store):
         name, and a lookup that ignored tenancy would answer about the wrong
         one -- confidently.
         """
-        r = self._con.execute(
+        r = self._conn.execute(
             """SELECT * FROM deliveries WHERE workspace_id=? AND repo_provider=?
                  AND repo_key=? AND pr_number=?""",
             (workspace_id, provider, repo_key, int(number))).fetchone()
@@ -996,7 +1024,7 @@ class SqliteStore(Store):
         return d
 
     def dispatch_count(self, workspace_id: str, day: str) -> int:
-        r = self._con.execute(
+        r = self._conn.execute(
             "SELECT value FROM counters WHERE workspace_id=? AND day=? AND name='dispatches'",
             (workspace_id, day)).fetchone()
         return r["value"] if r else 0

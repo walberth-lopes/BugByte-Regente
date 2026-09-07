@@ -243,8 +243,8 @@ class SnapshotTransport:
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         started = time.monotonic()
         self.calls.append(path)
-        for rota, error in self.failures.items():
-            if rota in path:
+        for route, error in self.failures.items():
+            if route in path:
                 self._notify_observer(path, started, False, str(error))
                 raise error
         file = self.directory / self.name_for(path, params)

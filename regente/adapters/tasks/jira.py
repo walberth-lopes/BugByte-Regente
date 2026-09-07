@@ -120,22 +120,22 @@ def _text_from(content: Any, limit: int = 4000) -> str:
         return ""
     if isinstance(content, str):
         return content[:limit]
-    pedacos: list[str] = []
+    chunks: list[str] = []
 
-    def anda(no: Any) -> None:
-        if len(" ".join(pedacos)) > limit:
+    def walk(node: Any) -> None:
+        if len(" ".join(chunks)) > limit:
             return
-        if isinstance(no, dict):
-            if no.get("type") == "text" and isinstance(no.get("text"), str):
-                pedacos.append(no["text"])
-            for filho in (no.get("content") or []):
-                anda(filho)
-        elif isinstance(no, list):
-            for filho in no:
-                anda(filho)
+        if isinstance(node, dict):
+            if node.get("type") == "text" and isinstance(node.get("text"), str):
+                chunks.append(node["text"])
+            for child in (node.get("content") or []):
+                walk(child)
+        elif isinstance(node, list):
+            for child in node:
+                walk(child)
 
-    anda(content)
-    return " ".join(pedacos)[:limit]
+    walk(content)
+    return " ".join(chunks)[:limit]
 
 
 @dataclass(slots=True)
@@ -273,20 +273,20 @@ class JiraTasks(TaskProvider):
             labels=labels,
             partial=partial,
             data={
-                "tipo": str((fields.get("issuetype") or {}).get("name") or ""),
-                "subtarefa": bool((fields.get("issuetype") or {}).get("subtask")),
-                "categoria_status": category,
-                "atualizada_em": str(fields.get("updated") or ""),
-                "prioridade_externa": priority_name,
+                "issue_type": str((fields.get("issuetype") or {}).get("name") or ""),
+                "subtask": bool((fields.get("issuetype") or {}).get("subtask")),
+                "status_category": category,
+                "updated_at": str(fields.get("updated") or ""),
+                "external_priority": priority_name,
             })
 
     def _links_of(self, fields: dict[str, Any]) -> tuple[TaskRef, ...]:
         output: list[TaskRef] = []
 
-        pai = fields.get("parent") or {}
-        if pai.get("key"):
+        parent = fields.get("parent") or {}
+        if parent.get("key"):
             # Hierarchy, not order: the subtask does NOT wait for its parent to finish.
-            output.append(TaskRef(key=str(pai["key"]), kind=PARENT))
+            output.append(TaskRef(key=str(parent["key"]), kind=PARENT))
 
         for link in (fields.get("issuelinks") or []):
             external_kind = str((link.get("type") or {}).get("name") or "")
@@ -322,5 +322,5 @@ class JiraTasks(TaskProvider):
             return ()
         if self.resources_by == "project":
             return (f"project:{(fields.get('project') or {}).get('key') or '?'}",)
-        pai = (fields.get("parent") or {}).get("key")
-        return (f"parent:{pai}",) if pai else (f"issue:{key}",)
+        parent = (fields.get("parent") or {}).get("key")
+        return (f"parent:{parent}",) if parent else (f"issue:{key}",)

@@ -437,7 +437,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("decide", help="decide one item in the queue")
     p.add_argument("approval_id")
     p.add_argument("option")
-    p.add_argument("--by", default="humano")
+    p.add_argument("--by", default="human")
     p.add_argument("--note", default="")
     p.set_defaults(fn=cmd_decide)
 

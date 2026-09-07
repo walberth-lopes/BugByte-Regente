@@ -9,17 +9,22 @@ A milestone does not close without proof on disk.
 | 2 | Mission Control (local UI) | the 4 questions on screen; deciding a queue item from the browser |
 | **3** | **Real TaskProvider** ✅ | a real adapter reading the real board in shadow; the contract passes on two providers; zero mutation |
 | **4** | **RepositoryProvider** ✅ | two real providers in shadow; identity within the tenancy; write contract declared, nothing implemented |
-| **5** | **AgentRunner + validation loop** ✅ | missão selecionada, alvo resolvido, clone isolado, agente executado, teste com linha de base, veredito e commit — DECLARED e DISCOVERED provados ponta a ponta |
-| 6 | CI + PR | the engine follows checks and reacts to red |
-| 7 | ReviewerAgent | a review pinned to the reviewed SHA, with a second pass on high risk |
-| 8 | CloudProvider | reading resources, logs and metrics |
-| 9 | Deploy to staging | governed deploy + smoke, with rollback |
-| 10 | Genuinely parallel workers | 2+ real simultaneous workers without collision |
-| 11 | Mature escalation | notification outside the terminal; one-click decision |
-| 12 | **Second client** | another set of providers running **without touching `core/` or `engine/`** |
+| **5** | **AgentRunner + validation loop** ✅ | mission selected, target resolved, clone isolated, agent run, test with a baseline, verdict and commit -- DECLARED and DISCOVERED proved end to end |
+| **6** | **CI + PR** ⚠ | the full path implemented and tested against the contract; **real remote proof blocked at `NEEDS_HUMAN`** for want of an eligible task |
+| **7** | **Real AgentRunner** ⚠ | the engine observes the world for itself and does not believe the agent; sandbox with no command execution; **real model blocked** for want of a credential the engine can resolve |
+| 8 | ReviewerAgent | a review pinned to the SHA reviewed, with a second pass on high risk |
+| 9 | CloudProvider | reading resources, logs and metrics |
+| 10 | Deploy to staging | governed deploy + smoke, with rollback |
+| 11 | Genuinely parallel workers | 2+ real workers at once with no collision |
+| 12 | Mature escalation | notification outside the terminal; a one-click decision |
+| 13 | **Second client** | another set of providers running **without touching `core/` or `engine/`** |
 
-Milestone 12 is the only honest test of the architecture. The other eleven can
-pass with an engine secretly coupled to the first client.
+The second-client milestone is the only honest test of the architecture. Every
+other one can pass with an engine secretly coupled to the first client.
+
+⚠ = capability finished and proved against the contract, with the real
+integration blocked by a named external dependency. See `CAPABILITIES.md`: a
+green suite never substitutes for real proof.
 
 ## The order of the bets
 
@@ -31,4 +36,4 @@ expensive thing to redo if the abstraction turns out to be wrong.
 
 `shadow: true` is born on. Turning it off is an explicit decision, after the
 owner has read what the engine would have done and answered yes to the question:
-*would I sign this with my name?*
+nome?*

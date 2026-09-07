@@ -42,22 +42,25 @@ class StopVerdict:
     """What the supervisor orders. A closed vocabulary, not free text."""
     stop: bool
     reason: str = ""
-    #: 'seguir' | 'retentar' | 'trocar_estrategia' | 'escalar' | 'abortar'
-    #: The values stay as they are: the orchestrator branches on them.
-    next_action: str = "seguir"
+    #: 'follow' | 'retry' | 'change_strategy' | 'escalate' | 'abort'
+    #: A closed vocabulary the orchestrator branches on. It reaches storage
+    #: only inside free-text reasons and summaries, so renaming it needed no
+    #: migration: old rows keep the words they were written with, which is
+    #: what an append-only history is for.
+    next_action: str = "follow"
 
 
 def over_budget(run: Run, budget: Budget, when: datetime | None = None) -> StopVerdict:
     ts = when or now()
     if run.iterations > budget.max_iterations:
-        return StopVerdict(True, f"{run.iterations} iterations (cap {budget.max_iterations})", "escalar")
+        return StopVerdict(True, f"{run.iterations} iterations (cap {budget.max_iterations})", "escalate")
     if run.tool_calls > budget.max_tool_calls:
-        return StopVerdict(True, f"{run.tool_calls} tool calls (cap {budget.max_tool_calls})", "escalar")
+        return StopVerdict(True, f"{run.tool_calls} tool calls (cap {budget.max_tool_calls})", "escalate")
     if run.cost_usd > budget.max_cost_usd:
-        return StopVerdict(True, f"US$ {run.cost_usd:.2f} spent (cap {budget.max_cost_usd:.2f})", "escalar")
+        return StopVerdict(True, f"US$ {run.cost_usd:.2f} spent (cap {budget.max_cost_usd:.2f})", "escalate")
     elapsed = (ts - run.started_at).total_seconds()
     if elapsed > budget.max_seconds:
-        return StopVerdict(True, f"{int(elapsed)}s elapsed (cap {budget.max_seconds}s)", "trocar_estrategia")
+        return StopVerdict(True, f"{int(elapsed)}s elapsed (cap {budget.max_seconds}s)", "change_strategy")
     return StopVerdict(False)
 
 
@@ -90,7 +93,7 @@ class LoopDetector:
         n = self.register(kind, detail)
         if n >= self.limit:
             return StopVerdict(True, f"{kind} repeated {n}x with no progress: {detail[:120]}",
-                            "trocar_estrategia")
+                            "change_strategy")
         return StopVerdict(False)
 
 
@@ -104,17 +107,17 @@ def no_progress(task: Task, runs: list[Run], window: int = 3) -> StopVerdict:
     if len(finished_runs) < window:
         return StopVerdict(False)
     if all(r.state in (RunState.FAILED, RunState.ABORTED) for r in finished_runs):
-        return StopVerdict(True, f"{window} consecutive runs without leaving {task.state.value}", "escalar")
+        return StopVerdict(True, f"{window} consecutive runs without leaving {task.state.value}", "escalate")
     return StopVerdict(False)
 
 
 def next_recovery_step(task: Task, budget: Budget) -> str:
     """The recovery ladder, based on how many times the task has already failed."""
     if task.attempts <= 0:
-        return "retentar"
+        return "retry"
     if task.attempts < budget.max_attempts - 1:
-        return "trocar_estrategia"
-    return "escalar"
+        return "change_strategy"
+    return "escalate"
 
 
 def backoff_delay(attempts: int, base_seconds: int = 60, cap_seconds: int = 1800) -> timedelta:

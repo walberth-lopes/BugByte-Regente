@@ -21,7 +21,7 @@ from regente.ports.tasks import ExternalStatus, ExternalTask
 
 RULES = [
     {"name": "codigo", "effect": "ALLOW", "match": {"action": "repo.branch*"}},
-    {"name": "nada_em_producao", "effect": "DENY",
+    {"name": "nothing_in_production", "effect": "DENY",
      "match": {"action": "repo.*", "environment": "production"}},
 ]
 
@@ -82,7 +82,7 @@ def test_name_short_ambiguous_not_enters_in_index():
     assert a.confidence is Confidence.ABSENT
 
 
-def test_branch_existente_is_evidence_observed():
+def test_an_existing_branch_is_observed_evidence():
     a = TargetResolver().resolve(
         task("K-1"), REPOS,
         branches={"acme/api": [Branch(name="feat/K-1-coisa")]})
@@ -91,7 +91,7 @@ def test_branch_existente_is_evidence_observed():
     assert "K-1" in a.reason
 
 
-def test_branch_casa_by_word_whole():
+def test_a_branch_matches_by_whole_word():
     """`K-1` must not match `K-11`: that would be work in the wrong repository."""
     a = TargetResolver().resolve(
         task("K-1"), REPOS, branches={"acme/api": [Branch(name="feat/K-11-outra")]})
@@ -106,7 +106,7 @@ def test_declared_beats_observed():
     assert a.repo.ref.key == "acme/web"
 
 
-def test_tie_is_ambiguous_is_the_motor_not_tiebreak():
+def test_a_tie_is_ambiguous_and_the_engine_does_not_break_it():
     a = TargetResolver().resolve(
         task("K-1"), REPOS,
         branches={"acme/api": [Branch(name="feat/K-1-x")],
@@ -128,8 +128,8 @@ def test_every_evidence_is_auditable():
     a = TargetResolver(by_label={"backend": "acme/api"}).resolve(
         task("K-1", labels=["backend"]), REPOS,
         branches={"acme/api": [Branch(name="feat/K-1-x")]})
-    fontes = {e.source for e in a.candidates[0].evidence}
-    assert fontes == {"map:label", "branch"}
+    sources = {e.source for e in a.candidates[0].evidence}
+    assert sources == {"map:label", "branch"}
     assert all(e.detail for e in a.candidates[0].evidence)
 
 
@@ -153,7 +153,7 @@ def build(tasks, repos=None, resolver=None, autonomy=AutonomyLevel.L2,
         autonomy=autonomy, branches=branches, environment=environment)
 
 
-def test_chain_completa_produces_candidate():
+def test_a_complete_chain_produces_a_candidate():
     r = build([task("K-1")], resolver=TargetResolver(by_task={"K-1": "acme/api"}))
     p = r.steps[0]
     assert p.link is Stage.CANDIDATE
@@ -216,7 +216,7 @@ def test_policy_blocks_production():
               environment="production")
     p = r.steps[0]
     assert p.link is Stage.BLOCKED_BY_POLICY
-    assert p.decision.rule == "nada_em_producao"
+    assert p.decision.rule == "nothing_in_production"
 
 
 def test_resource_is_scoped_by_workspace_in_chain():

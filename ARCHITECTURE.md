@@ -139,6 +139,100 @@ Each item carries a decision, not a diagnosis: what happened, why it matters,
 what the agent already tried, options, recommendation, risk. Logs stay in the
 event, on demand.
 
+## The agent is an executor, never an authority
+
+The contract answers four questions and refuses five.
+
+```
+Answers:                           Does not answer:
+  May I run this agent?              Is this agent trustworthy?
+  How do I run it?                   May it commit?
+  What capabilities does it expose?  May it push?
+  What happened when it ran?         May it open a PR?
+                                     May it deploy?
+```
+
+The five on the right remain the Engine's and the Policy's. No adapter field
+speaks about them, and a structural test enforces it -- a field with an
+authority name on an adapter type would be the vendor voting on its own
+permission.
+
+### Readiness: six axes, two authorities
+
+```
+adapter -> executable | protocol | authentication | agent
+engine  -> policy | budget
+```
+
+Only the adapter knows the first four. Only the engine may decide the last two
+-- an adapter that filled in its own `policy=ALLOW` would be a vendor
+authorising itself. Consequence: **an adapter alone never becomes READY**.
+
+`UNKNOWN` blocks. "Could not check" never turns into "everything is fine", and
+the first axis that fails is the one reported: fixing a later axis while an
+earlier one is broken solves nothing.
+
+### Authentication is the adapter's business
+
+Five exchange formats, none preferred:
+
+| Mode | Who holds the credential |
+|---|---|
+| `SESSION` | the tool itself (corporate subscription, CLI login, SSO) |
+| `RESOLVED_SECRET` | the engine, scoped to the workspace |
+| `GATEWAY` | the engine, for an intermediary |
+| `DELEGATED` | a host process; never assumed, reported as `UNKNOWN` |
+| `NONE` | nobody |
+
+They are formats, not products -- which is why they can live in the port. A
+diagnosis that said "variable X is missing" would give the wrong advice to every
+client that authenticates some other way, which is most of them.
+
+### Vendors do not know each other
+
+```
+core/ | ports/ | engine/
+        v
+  agent contract
+        v
+adapters/runner/            <- shared base and infrastructure
+adapters/runner/vendors/    <- one module per vendor
+```
+
+A module in `vendors/` never imports another module in `vendors/`. A structural
+rule, verified by AST, and it exists because the violation happened right here:
+the second profile imported a helper from the first, nothing broke, the suite
+stayed green, and the property this milestone asserts -- swapping agents is one
+file -- had silently stopped being true.
+
+Shared work moves up a level. What a second vendor would want is not, by
+definition, vendor-specific.
+
+### The constraint lives outside the model
+
+The agent gets read and edit. It gets no tool that executes a command.
+`git push`, `gh pr create`, `gcloud`, `terraform` and every escalation route
+nobody has thought of yet are variations on a single capability, and denying
+that capability closes all of them at once.
+
+Two indirect routes remained, and both are closed:
+
+- **`.git/config`.** The agent only edits files, but rewriting the remote turns
+  a refused push into a permitted one. `git status` sees nothing inside `.git/`,
+  so the guard is a fingerprint, not a diff.
+- **The test suite.** The agent writes files, tests are files, and the engine
+  runs the suite to reach a verdict -- so an agent that executes nothing could
+  make the ENGINE execute for it. Writing tests is work we want; giving that
+  code a badge is not. The verification environment is composed from scratch,
+  the same as the agent's.
+
+### Capability is not permission
+
+`AgentCapabilities.runs_commands` says what the tool CAN do.
+`Permissions.run_commands` says what the engine allows. From outside they look
+alike and demand opposite answers: the first is a configuration to live with,
+the second is a boundary to enforce.
+
 ## Multi-tenancy
 
 `Organization → Client → Workspace → Project → Repository`, present from the very

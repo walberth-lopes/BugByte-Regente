@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""WorkspaceProvider and AgentRunner: where the worker lives and how it is run."""
+"""WorkspaceProvider: where the worker lives, and what it may do in there."""
 
 from __future__ import annotations
 
@@ -111,60 +111,11 @@ class WorkspaceProvider(Port):
         raise NotImplementedError
 
 
-@dataclass(frozen=True, slots=True)
-class RunRequest:
-    """What the engine hands to a worker.
-
-    `context` arrives already assembled and reduced: the engine collects what is
-    needed and nothing more. Dumping the whole project in here is what makes an
-    agent expensive, slow and imprecise all at once.
-    """
-    run_id: str
-    task_id: str
-    agent: str
-    goal: str
-    area: WorkArea
-    context: dict[str, Any] = field(default_factory=dict)
-    #: Actions this worker may even attempt. The Policy Engine still decides
-    #: each call; this list merely avoids offering the agent what it could never
-    #: use.
-    tools: tuple[str, ...] = ()
-    limit_iterations: int = 24
-    limit_tool_calls: int = 120
-    limit_cost_usd: float = 5.0
-    limit_seconds: int = 2700
-
-
-@dataclass(frozen=True, slots=True)
-class RunResult:
-    ok: bool
-    summary: str
-    #: How the worker finished: 'FINISHED', 'TIMEBOX', 'NO_PROGRESS', 'BUDGET',
-    #: 'ERROR', 'NEEDS_HUMAN'. The engine decides the next step from this --
-    #: which is why it is a closed vocabulary, not free text. Same spelling as
-    #: `ports.agent.Outcome`, so the two runner protocols agree.
-    outcome: str = "FINISHED"
-    artifacts: dict[str, Any] = field(default_factory=dict)
-    cost_usd: float = 0.0
-    tokens: int = 0
-    tool_calls: int = 0
-    iterations: int = 0
-    #: Question for the human, when `outcome == 'NEEDS_HUMAN'`.
-    question: dict[str, Any] | None = None
-
-
-class AgentRunner(Port):
-    """Runs an agent. The implementation decides the substrate.
-
-    This port is what keeps the engine from becoming hostage to one harness. A
-    runner can be an off-the-shelf agentic harness, a loop of its own over
-    LLMProvider, or a deterministic script. The Orchestrator does not change in
-    any of those cases.
-    """
-    capability = Capability.RUNNER
-
-    @abstractmethod
-    def run(self, request: RunRequest) -> RunResult: ...
-
-    def cancel(self, run_id: str) -> None:
-        return None
+# The runner contract used to live here as a SECOND `AgentRunner`, with its own
+# `RunRequest`/`RunResult`. Two ports claimed `Capability.RUNNER` and were not
+# interchangeable: adapters registered under one name implemented `.run(RunRequest)`
+# and adapters under another implemented `.execute(ExecutionRequest)`, so a
+# configuration that picked the wrong one raised `AttributeError` deep in a
+# mission instead of failing at composition.
+#
+# One capability, one port. The single contract lives in `ports/agent.py`.

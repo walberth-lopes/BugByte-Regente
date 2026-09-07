@@ -52,9 +52,9 @@ def git_is_read(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
     """Returns (allowed, reason for refusal)."""
     if not args:
         return False, "empty invocation"
-    cmd, resto = args[0], list(args[1:])
+    cmd, rest = args[0], list(args[1:])
 
-    forbidden = [a for a in resto if a in GIT_WRITE_FLAGS]
+    forbidden = [a for a in rest if a in GIT_WRITE_FLAGS]
     if forbidden:
         return False, f"flag de escrita: {', '.join(forbidden)}"
 
@@ -63,26 +63,26 @@ def git_is_read(args: list[str] | tuple[str, ...]) -> tuple[bool, str]:
 
     if cmd == "remote":
         # `get-url` reads; `add`, `remove`, `set-url`, `rename`, `prune` write.
-        if resto[:1] == ["get-url"]:
+        if rest[:1] == ["get-url"]:
             return True, ""
         return False, "only 'remote get-url' is a read"
 
     if cmd == "symbolic-ref":
         # One ref = a read. Two = it writes the ref. The difference is only the
         # arity, which is why an allowlist by verb could not have caught it.
-        refs = [a for a in resto if not a.startswith("-")]
+        refs = [a for a in rest if not a.startswith("-")]
         if len(refs) != 1:
             return False, f"symbolic-ref with {len(refs)} refs writes; a read has 1"
         return True, ""
 
     if cmd == "config":
         # `--get` and `--list` read; any other form writes.
-        if any(a in ("--get", "--get-all", "--list", "-l") for a in resto):
+        if any(a in ("--get", "--get-all", "--list", "-l") for a in rest):
             return True, ""
         return False, "only 'config --get/--list' is a read"
 
     if cmd == "branch":
-        if any(a in ("--list", "-l", "--show-current") for a in resto):
+        if any(a in ("--list", "-l", "--show-current") for a in rest):
             return True, ""
         return False, "only 'branch --list/--show-current' is a read"
 

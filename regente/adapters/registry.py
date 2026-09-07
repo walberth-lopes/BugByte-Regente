@@ -63,11 +63,10 @@ def _workspace_worktree(o: dict[str, Any]) -> Port:
 def _tasks_jira(o: dict[str, Any]) -> Port:
     """Jira Cloud, read only.
 
-    Two transports through the same adapter: `http` talks to the real site,
-    `snapshot` replays real recorded responses. The adapter is identical in
-    both cases -- which is why the contract test exercises the same code that
-    runs against the network. The transport names are configuration values and
-    stay as they are.
+    Two transports behind one adapter: `http` talks to the real site,
+    `snapshot` replays real responses already captured. The adapter is identical
+    in both cases -- which is why the contract test exercises the same code that
+    runs against the network.
     """
     from .tasks.jira import JiraTasks
     from .tasks.transport import HttpTransport, SnapshotTransport
@@ -115,17 +114,105 @@ def _repos_github(o: dict[str, Any]) -> Port:
                        list_limit=int(o.get("limit", 200)))
 
 
-def _agent_external(o: dict[str, Any]) -> Port:
-    from .runner.external import ExternalAgent
-    return ExternalAgent(command=list(o["command"]), env=dict(o.get("env", {})))
+def _agent_headless(o: dict[str, Any]) -> Port:
+    """Any headless agent that speaks JSON on stdin/stdout, sandboxed.
+
+    This is the factory for an agent reached over an API or through a corporate
+    gateway: the process is whatever the client wrote, and the engine resolves
+    the credential it needs and hands it over in a composed environment.
+    """
+    from .runner.headless import HeadlessAgent, SandboxProfile
+
+    mode, env = _auth({**o, "auth": o.get("auth", "none")})
+    return HeadlessAgent(
+        command=list(o["command"]),
+        auth_mode=mode,
+        sandbox=SandboxProfile(
+            allowed_tools=tuple(o.get("tools", ())),
+            denied_tools=tuple(o.get("denied_tools", ())),
+            allow_command_execution=bool(o.get("allow_command_execution", False)),
+            allow_network=bool(o.get("allow_network", False)),
+            env=env,
+            max_cost_usd=float(o.get("max_cost_usd", 2.0))))
+
+
+def _auth(o: dict[str, Any]) -> tuple[Any, dict[str, str]]:
+    """Resolve whatever THIS workspace's agent authenticates with.
+
+    Five shapes, and the engine picks none of them: the workspace's
+    configuration does. A client with a corporate coding-agent subscription
+    writes `auth: session` and the engine resolves nothing. A client with a key
+    writes `auth: resolved_secret` and names the reference. A client behind an
+    internal gateway writes `auth: gateway` and names its own variables.
+
+    The credential values never appear here -- only references, resolved through
+    the workspace's own SecretProvider, which is what keeps one client's
+    credential out of another client's agent.
+    """
+    from ..ports.agent import AuthMode
+
+    mode = AuthMode(str(o.get("auth", "session")).upper())
+    secrets = o.get("secrets")
+    env: dict[str, str] = {}
+
+    # `credentials` maps the variable the agent expects -> the reference the
+    # engine resolves. Both sides are the workspace's choice; neither is
+    # hard-coded, because hard-coding either one is what made the engine look
+    # like it only supported a single vendor's API key.
+    for variable, reference in (o.get("credentials") or {}).items():
+        if secrets is None:
+            raise KeyError(
+                f"'{variable}' must be resolved through a SecretProvider and "
+                f"none was supplied to this adapter")
+        env[str(variable)] = secrets.resolve(str(reference))
+
+    if mode in (AuthMode.RESOLVED_SECRET, AuthMode.GATEWAY) and not env:
+        raise KeyError(
+            f"auth mode '{mode.value}' needs a `credentials` mapping of "
+            f"variable -> secret reference; none was configured")
+    return mode, env
+
+
+def _agent_claude_code(o: dict[str, Any]) -> Port:
+    """One headless coding-agent CLI. The vendor's name stops at this factory."""
+    from .runner.vendors.claude_code import ClaudeCodeAgent, restricted_profile
+
+    mode, env = _auth(o)
+    return ClaudeCodeAgent(
+        cli_path=o["cli"],
+        model=str(o.get("model", "sonnet")),
+        auth_mode=mode,
+        sandbox=restricted_profile(
+            max_cost_usd=float(o.get("max_cost_usd", 2.0)), env=env),
+        extra_args=tuple(o.get("extra_args", ())))
+
+
+def _agent_codex_cli(o: dict[str, Any]) -> Port:
+    """A second headless coding-agent CLI, to prove the swap is a config line.
+
+    Identical shape to the factory above and to nothing above `adapters/`. If
+    adding this had required a change in `core/`, `ports/` or `engine/`, the
+    abstraction would have failed and the boundary test would say so.
+    """
+    from .runner.vendors.codex_cli import CodexCliAgent, restricted_profile
+
+    mode, env = _auth(o)
+    return CodexCliAgent(
+        cli_path=o["cli"],
+        model=str(o.get("model", "")),
+        auth_mode=mode,
+        sandbox=restricted_profile(
+            max_cost_usd=float(o.get("max_cost_usd", 2.0)), env=env),
+        extra_args=tuple(o.get("extra_args", ())))
 
 
 def _agent_deterministic(o: dict[str, Any]) -> Port:
     from .runner.external import DeterministicAgent
-    return DeterministicAgent(script=dict(o.get("script", {})),
-                              fallback=dict(o.get("fallback", {})) or None
-                              or {"outcome": "NO_PROGRESS",
-                                  "summary": "no edit declared for this task"})
+    return DeterministicAgent(
+        script=dict(o.get("script", {})),
+        fallback=dict(o.get("fallback", {})) or {
+            "status": "NO_PROGRESS",
+            "summary": "no edit declared for this task"})
 
 
 def _repos_github_write(o: dict[str, Any]) -> Port:
@@ -158,13 +245,12 @@ def _notify_console(o: dict[str, Any]) -> Port:
 
 
 def _runner_script(o: dict[str, Any]) -> Port:
-    from .runner.scripted import ScriptedRunner
-    return ScriptedRunner(script=o.get("script", {}), default_value=o.get("fallback", {"ok": True, "summary": "no change"}))
-
-
-def _runner_command(o: dict[str, Any]) -> Port:
-    from .runner.scripted import CommandRunner
-    return CommandRunner(command=list(o["command"]))
+    from .runner.scripted import ScriptedAgent
+    return ScriptedAgent(
+        script=o.get("script", {}),
+        default_value=o.get("fallback", {
+            "status": "NO_PROGRESS", "summary": "no outcome declared"}),
+        leave_trace=bool(o.get("leave_trace", True)))
 
 
 register(Capability.TASKS, "filesystem", _tasks_filesystem)
@@ -179,6 +265,7 @@ register(Capability.WORKSPACE, "worktree", _workspace_worktree)
 register(Capability.WORKSPACE, "clone", _workspace_clone)
 register(Capability.NOTIFICATION, "console", _notify_console)
 register(Capability.RUNNER, "script", _runner_script)
-register(Capability.RUNNER, "command", _runner_command)
-register(Capability.RUNNER, "external-agent", _agent_external)
+register(Capability.RUNNER, "headless-agent", _agent_headless)
+register(Capability.RUNNER, "claude-code", _agent_claude_code)
+register(Capability.RUNNER, "codex-cli", _agent_codex_cli)
 register(Capability.RUNNER, "deterministic-agent", _agent_deterministic)

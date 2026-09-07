@@ -31,7 +31,9 @@ from ..core.states import TaskState
 from ..ports import AdapterError
 from ..ports.support import NotificationProvider
 from ..ports.tasks import ExternalTask, ExternalStatus, TaskProvider
-from ..ports.workspace import AgentRunner, RunRequest, WorkspaceProvider
+from ..ports.agent import (AgentRunner, Budget as AgentBudget, ContextItem,
+                           ContextPackage, Mission, Outcome, ProcessStatus)
+from ..ports.workspace import WorkspaceProvider
 from ..ports.store import Store
 from . import escalation, supervisor
 from .gate import Scope, Gate
@@ -103,7 +105,7 @@ class Orchestrator:
     risk: RiskEngine
     limits: Limits = field(default_factory=Limits)
     budget: supervisor.Budget = field(default_factory=supervisor.Budget)
-    notificador: NotificationProvider | None = None
+    notifier: NotificationProvider | None = None
     project_id: str = "prj_default"
     #: Lifetime of a lease in seconds. The worker renews it; if it dies, the
     #: lease expires and recovery returns the task to the queue.
@@ -207,13 +209,10 @@ class Orchestrator:
     def _refresh(self, task: Task, e: ExternalTask, rel: TickReport) -> None:
         """Re-reads what changed at the source. The engine does NOT inherit its state.
 
-        The source rules over what is its own -- title, priority, who is on the
-        task. The engine's state belongs to the engine: if somebody moved the
-        issue on the board, that changes the *relevance* of the work, not the
-        step at which the worker stopped.
-
-        The `data` keys below (normalised_status, raw_status, labels) are
-        persisted JSON; old databases are migrated by `_v4_to_v5` in the store.
+        The source owns what is its own -- title, priority, who is on the task.
+        The engine's state belongs to the engine: if a person moved the issue on
+        the board, that changes the *relevance* of the work, not the stage the
+        worker stopped at.
         """
         before = task.data.get("normalised_status")
         current_status = e.status.value
@@ -228,7 +227,7 @@ class Orchestrator:
             rel.changes += ((task.key, before, current_status),)
             self._record("changed_at_source", task_id=task.id,
                         summary=f"{before} -> {current_status} ({e.external_status})",
-                        de=before, to_state=current_status)
+                        from_state=before, to_state=current_status)
 
     def _create_task(self, e: ExternalTask) -> Task:
         t = Task(
@@ -251,7 +250,7 @@ class Orchestrator:
         The analysis in this milestone is deterministic: risk from declared
         signals and resources by convention. A PlannerAgent slots in here later,
         at the same point -- it enriches `resources` and `dependencies`, and the
-        rest of the engine does not change.
+        muda.
         """
         # Work the source says is blocked by third parties can come back to the
         # queue when the source changes its mind. This is the only way back: a
@@ -302,7 +301,7 @@ class Orchestrator:
             self.store.save_task(t)
             self.store.transition(t.id, TaskState.READY, actor="planner",
                                    reason=f"risk {assessment.level.name}",
-                                   data={"sinais": list(assessment.reasons)})
+                                   data={"signals": list(assessment.reasons)})
             rel.analyzed += 1
 
     # ---- 4/5. plan and dispatch -----------------------------------------
@@ -380,16 +379,22 @@ class Orchestrator:
         self._record("dispatched", task_id=task.id, run_id=run.id,
                     summary=f"{run.agent} in {area.path}")
 
-        request = RunRequest(
-            run_id=run.id, task_id=task.id, agent=run.agent,
-            goal=task.title, area=area,
-            context={"description": task.description, "key": task.key,
-                      "risk": task.risk.name if task.risk else "LOW",
-                      "resources": list(task.resources)},
-            limit_iterations=self.budget.max_iterations,
-            limit_tool_calls=self.budget.max_tool_calls,
-            limit_cost_usd=self.budget.max_cost_usd,
-            limit_seconds=self.budget.max_seconds)
+        request = Mission(
+            workspace_id=self.workspace.id, workspace_name=self.workspace.name,
+            task_key=task.key, run_id=run.id, branch=area.branch or "",
+            allowed_root=area.path, goal=task.title, agent=run.agent,
+            context=ContextPackage(
+                goal=task.title,
+                items=(ContextItem(
+                    kind="task", ref=task.key,
+                    reason="the work itself; without it there is no mission",
+                    content=task.description or ""),)),
+            budget=AgentBudget(
+                max_iterations=self.budget.max_iterations,
+                max_tool_calls=self.budget.max_tool_calls,
+                max_cost_usd=self.budget.max_cost_usd,
+                max_seconds=self.budget.max_seconds,
+                max_process_seconds=self.budget.max_seconds))
 
         try:
             result = self.runner.run(request)
@@ -411,9 +416,10 @@ class Orchestrator:
             return
 
         run.cost_usd, run.tokens = result.cost_usd, result.tokens
-        run.tool_calls, run.iterations = result.tool_calls, result.iterations
+        run.tool_calls, run.iterations = result.tool_calls, 1
 
-        if result.outcome == "NEEDS_HUMAN":
+        if (result.status is ProcessStatus.NEEDS_HUMAN
+                or result.escalation_requested):
             run.state, run.reason = RunState.ABORTED, result.summary
             self.store.save_run(run)
             self.store.transition(task_id, TaskState.WAITING_HUMAN, actor=run.agent,
@@ -421,7 +427,7 @@ class Orchestrator:
             self._escalate(task_id, run, result, rel)
             return
 
-        if result.ok:
+        if result.status is ProcessStatus.FINISHED:
             run.state, run.reason = RunState.SUCCEEDED, result.summary
             self.store.save_run(run)
             task = self.store.task(task_id)
@@ -432,7 +438,8 @@ class Orchestrator:
                         summary=result.summary[:200])
             return
 
-        self._failed(task_id, run, result.summary, rel, outcome=result.outcome)
+        self._failed(task_id, run, result.summary, rel,
+                     outcome=result.status.value)
 
     def _failed(self, task_id: str, run: Run, reason: str, rel: TickReport,
                 outcome: str = "ERROR") -> None:
@@ -451,9 +458,9 @@ class Orchestrator:
 
         step_name = supervisor.next_recovery_step(task, self.budget)
         if supervisor.no_progress(task, self.store.task_runs(task.id)).stop:
-            step_name = "escalar"
+            step_name = "escalate"
 
-        if step_name == "escalar":
+        if step_name == "escalate":
             self.store.transition(task.id, TaskState.WAITING_HUMAN, actor="supervisor",
                                    reason=reason)
             self._escalate_failure(task, run, reason, step_name, rel)
@@ -466,13 +473,13 @@ class Orchestrator:
     # ---- escalation ------------------------------------------------------
     def _escalate(self, task_id: str, run: Run, result, rel: TickReport) -> None:
         task = self.store.task(task_id)
-        p = result.question or {}
         approval = escalation.build(
             task=task,
-            what_happened=p.get("what_happened", result.summary),
-            why_it_matters=p.get("why_it_matters", "the agent stopped without being able to decide on its own"),
-            attempts=tuple(p.get("attempts", ())),
-            recommendation=p.get("recommendation", escalation.FOLLOW.id),
+            what_happened=result.summary,
+            why_it_matters=(result.escalation_reason
+                            or "the agent stopped without being able to decide on its own"),
+            attempts=tuple(result.questions),
+            recommendation=escalation.FOLLOW.id,
             risk=task.risk or RiskLevel.MEDIUM,
             run_id=run.id)
         self._publish(approval, task, rel)
@@ -509,9 +516,9 @@ class Orchestrator:
     def _publish(self, approval, task: Task, rel: TickReport) -> None:
         self.store.open_approval(approval)
         rel.escalated += (task.key,)
-        if self.notificador:
+        if self.notifier:
             b = escalation.briefing(approval, task)
-            self.notificador.notify(f"{task.key} needs you", b.what_happened,
+            self.notifier.notify(f"{task.key} needs you", b.what_happened,
                                     urgency="high" if approval.risk >= RiskLevel.HIGH else "normal")
 
     # ---- utilities -------------------------------------------------------

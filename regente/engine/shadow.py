@@ -141,7 +141,9 @@ def execute(
     r.largest_group = max((len(c) for c in layers), default=0)
 
     transport = getattr(provider, "transport", None)
-    r.calls = len(getattr(transport, "chamadas", []) or [])
+    # `calls`, not `chamadas`: the attribute was renamed and this getattr was
+    # not, so the default silently made every shadow report say zero calls.
+    r.calls = len(getattr(transport, "calls", []) or [])
     return r
 
 
