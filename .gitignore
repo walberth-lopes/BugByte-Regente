@@ -7,12 +7,12 @@ regente.yaml
 *.egg-info/
 sombra-sg/
 
-# Reports written by `regente sombra|cadeia|mission --output <file>`.
+# Reports written by `regente shadow|chain|mission --output <file>`.
 #
 # The name is whatever the caller passes, so no pattern catches all of them --
 # a stray `--output r.txt` in the repo root is still untracked and still one
 # `git add -A` away from being committed. These cover the convention already in
-# use (SHADOW-REPORT.txt, CADEIA-REPORT.txt) plus a directory to aim --output at
+# use (SHADOW-REPORT.txt, CHAIN-REPORT.txt) plus a directory to aim --output at
 # when the name does not matter.
 #
 # Deliberately NOT `*-PROOF.txt`: AGENTRUNNER-PROOF.txt is tracked evidence.

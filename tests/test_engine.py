@@ -115,7 +115,7 @@ def test_failure_of_adapter_not_becomes_absence_of_work(bench):
     write_task(bench.tasks, "A-1")
     orq, store = bench()
     orq.tick()
-    (bench.tasks / "quebrado.yaml").write_text("isto: [nao\n fecha", encoding="utf-8")
+    (bench.tasks / "broken.yaml").write_text("this: [not\n closed", encoding="utf-8")
     rel = orq.tick()
     assert rel.errors
     assert "adapter" in rel.errors[0]

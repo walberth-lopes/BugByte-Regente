@@ -58,12 +58,12 @@ CREATE TABLE IF NOT EXISTS tasks (
   resources TEXT NOT NULL DEFAULT '[]', attempts INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
   data TEXT NOT NULL DEFAULT '{}');
--- Identidade externa e unica por workspace: o mesmo FAXINA-183 em dois clientes
--- sao duas tasks distintas, e nunca podem colidir.
-CREATE UNIQUE INDEX IF NOT EXISTS ix_tasks_externa
+-- The external identity is unique PER WORKSPACE: the same FAXINA-183 in two
+-- clients is two distinct tasks, and they can never collide.
+CREATE UNIQUE INDEX IF NOT EXISTS ix_tasks_external
   ON tasks(workspace_id, provider, external_key)
   WHERE provider IS NOT NULL;
-CREATE INDEX IF NOT EXISTS ix_tasks_estado ON tasks(workspace_id, state);
+CREATE INDEX IF NOT EXISTS ix_tasks_state ON tasks(workspace_id, state);
 
 CREATE TABLE IF NOT EXISTS deps (
   task_id TEXT NOT NULL, depends_on TEXT NOT NULL,
@@ -104,14 +104,14 @@ CREATE TABLE IF NOT EXISTS approvals (
   attempts TEXT NOT NULL DEFAULT '[]', options TEXT NOT NULL DEFAULT '[]',
   recommendation TEXT, created_at TEXT NOT NULL, decided_at TEXT,
   decided_by TEXT, choice TEXT, note TEXT NOT NULL DEFAULT '');
-CREATE INDEX IF NOT EXISTS ix_approvals_abertos ON approvals(workspace_id, state);
+CREATE INDEX IF NOT EXISTS ix_approvals_open ON approvals(workspace_id, state);
 
--- A trava e (workspace, resource), nunca so o recurso.
+-- The lock is (workspace, resource), never the resource alone.
 --
--- Dois clientes com um repositorio de MESMO NOME sao dois repositorios. Com o
--- resource nu como key, um cliente atrasaria o outro: conservador o bastante
--- para nunca corromper nada, e errado o bastante para ninguem descobrir por que
--- o motor do cliente B fica parado quando o cliente A trabalha.
+-- Two clients with a repository of the SAME NAME have two repositories. With
+-- the bare resource as the key, one client would hold up the other:
+-- conservative enough never to corrupt anything, and wrong enough that nobody
+-- would work out why client B's engine sits still while client A works.
 CREATE TABLE IF NOT EXISTS leases (
   workspace_id TEXT NOT NULL, resource TEXT NOT NULL, owner TEXT NOT NULL,
   expires_at TEXT NOT NULL, renewed_at TEXT NOT NULL,
@@ -252,7 +252,14 @@ def _v4_to_v5(c: sqlite3.Connection) -> None:
 
     Rewritten in Python rather than SQL because `tasks.data` is a JSON blob and
     SQLite's json1 is not guaranteed present in every build this has to run on.
+
+    The three pt-BR index names are dropped here rather than renamed; the schema
+    recreates them in en-US, so a migrated database does not end up carrying
+    both spellings.
     """
+    for old in ("ix_tasks_externa", "ix_tasks_estado", "ix_approvals_abertos"):
+        c.execute(f"DROP INDEX IF EXISTS {old}")   # recreated in en-US by the schema
+
     for old, new in _EVENT_KINDS.items():
         c.execute("UPDATE events SET kind=? WHERE kind=?", (new, old))
 
@@ -382,6 +389,9 @@ class SqliteStore(Store):
                 row = c.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
                 found = row["value"] if row else None
             elif "valor" in cols:
+                # pt-BR on purpose, and the last of it: a pre-v3 database really
+                # does have `chave`/`valor` columns and a row keyed 'esquema'.
+                # Translating this is how you stop being able to read old state.
                 row = c.execute("SELECT valor FROM meta WHERE chave='esquema'").fetchone()
                 found = row[0] if row else None
             else:
