@@ -28,6 +28,10 @@ FORNECEDORES = [
     "jira", "github", "gitlab", "linear", "bitbucket", "asana",
     "gcloud", "bigquery", "cloudrun", "aws", "azure", "kubernetes",
     "postgres", "mysql", "anthropic", "openai", "slack",
+    # Coding agents. Added in the milestone that introduced one: the list had
+    # no entry for this category, so `CLAUDE.md` sat in `engine/context.py`
+    # through a full green suite. A guard is only as wide as its vocabulary.
+    "claude", "codex", "aider", "cursor", "copilot", "gemini", "windsurf",
 ]
 
 #: Bibliotecas que caracterizam I/O. O dominio nao pode importar nenhuma.

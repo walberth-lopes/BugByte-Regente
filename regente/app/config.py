@@ -78,6 +78,11 @@ class Config:
     #: Sombra: o motor decide e registra, mas nao executa escrita externa.
     #: Nasce ligado. Desligar e decisao explicita do dono, nunca default.
     shadow: bool = True
+    #: Diretorios que o agente nunca pode tocar, vigiados durante todo o run.
+    #: Os clones de origem entram aqui: uma escrita num deles contamina toda
+    #: area futura recortada dele, e nao deixa rastro no git status da area
+    #: isolada -- o unico jeito de ver e comparar antes e depois.
+    watched_sources: tuple[str, ...] = ()
 
     @property
     def banco(self) -> Path:
@@ -154,6 +159,7 @@ def load(path: str | Path) -> Config:
         secrets=tuple(str(x) for x in (raw.get('secrets') or ())),
         targets={k: dict(v) for k, v in (raw.get('targets') or {}).items()},
         risk_factors=tuple(raw.get("risk_factors") or ()),
+        watched_sources=tuple(str(x) for x in (raw.get("watched_sources") or ())),
         modelos=dict(raw.get("models") or {}),
         shadow=bool(raw.get("shadow", True)),
     )

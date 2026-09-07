@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from regente.adapters.runner.external import DeterministicAgent, parse_result
+from regente.adapters.runner.external import DeterministicAgent
 from regente.core.policy import AutonomyLevel, Effect, PolicyEngine
 from regente.core.risk import RiskEngine, RiskLevel
 from regente.engine import coder, mission, testing
@@ -22,8 +22,8 @@ from regente.engine.discovery import Discovery, Investigator, Source
 from regente.engine.mission import MissionPlanner, Refusal
 from regente.engine.runner import InvariantViolated, MissionRunner
 from regente.engine.target import Confidence, Evidence, TargetResolver
-from regente.ports.agent import (Budget, ChangedFile, ExecutionResult, Outcome,
-                                 Permissions, TestResult, Verdict)
+from regente.ports.agent import (Budget, Permissions, ProcessStatus, TestResult,
+                                 Verdict)
 from regente.ports.repository import (READ_CAPS, Branch, RepoCapability, RepoInfo,
                                       RepoRef, RepositoryProvider)
 from regente.ports.tasks import BLOCKS, ExternalStatus, ExternalTask, TaskRef
@@ -279,187 +279,6 @@ def test_a_refused_selection_runs_nothing(tmp_path, store):
     assert out.refused
     assert out.verdict is None
     assert not store.active_runs("wks_1")
-
-
-# ---------------------------------------------------------------------------
-# The validation loop
-# ---------------------------------------------------------------------------
-
-class Agent:
-    """A scripted agent for loop tests. Returns whatever it is told, in order."""
-    name = "fake"
-    capability = None
-
-    def __init__(self, *results):
-        self.results = list(results)
-        self.requests = []
-
-    def execute(self, request):
-        self.requests.append(request)
-        return self.results.pop(0) if self.results else ExecutionResult(
-            outcome=Outcome.NO_PROGRESS, summary="nothing left")
-
-
-def changed(n=1) -> tuple[ChangedFile, ...]:
-    return tuple(ChangedFile(path=f"f{i}.py", additions=3) for i in range(n))
-
-
-def loop(agent, **kw) -> coder.ValidationLoop:
-    return coder.ValidationLoop(
-        agent=agent, budget=kw.pop("budget", Budget(max_iterations=3, max_seconds=30)),
-        permissions=Permissions(write_code=True), **kw)
-
-
-def execute(l, **kw):
-    from regente.ports.agent import Context
-    return l.execute(run_id="r", task_key="K-1", path=".", branch="b",
-                     context=Context(goal="g"), **kw)
-
-
-def test_agent_finishing_is_not_the_task_being_resolved():
-    """The distinction the whole milestone rests on."""
-    a = Agent(ExecutionResult(outcome=Outcome.FINISHED, summary="done!",
-                              changed_files=changed()))
-    r = execute(loop(a))
-    assert r.verdict is not Verdict.RESOLVED
-    assert r.verdict is Verdict.READY_FOR_REVIEW
-
-
-def test_no_change_is_not_success():
-    a = Agent(ExecutionResult(outcome=Outcome.FINISHED, summary="all good"))
-    r = execute(loop(a))
-    assert r.verdict is Verdict.NO_CHANGE
-
-
-def test_needs_human_stops_the_loop_immediately():
-    a = Agent(ExecutionResult(outcome=Outcome.NEEDS_HUMAN, summary="ambiguous contract",
-                              question={"why_it_matters": "breaks a consumer"}))
-    r = execute(loop(a))
-    assert r.verdict is Verdict.NEEDS_HUMAN
-    assert len(r.attempts) == 1
-
-
-def test_the_loop_retries_after_a_failure_and_names_it():
-    from regente.ports.agent import Context
-    a = Agent(
-        ExecutionResult(outcome=Outcome.FINISHED, summary="try 1", changed_files=changed(),
-                        test_command="pytest", test_exit_code=1,
-                        test_output="FAILED tests/test_x.py::test_a"),
-        ExecutionResult(outcome=Outcome.FINISHED, summary="try 2", changed_files=changed(),
-                        test_command="pytest", test_exit_code=0, test_output="ok"))
-    base = testing.TestRun("pytest", 0, "", 0.1)
-    r = execute(loop(a), baseline=base)
-    assert r.verdict is Verdict.READY_FOR_REVIEW
-    assert len(r.attempts) == 2
-    # The second turn must know what broke on the first.
-    assert a.requests[1].iteration == 2
-    assert a.requests[1].previous_failures
-
-
-def test_the_same_failure_twice_ends_the_loop():
-    """A third identical attempt is a third identical purchase."""
-    same = ExecutionResult(outcome=Outcome.FINISHED, summary="try", changed_files=changed(),
-                           test_command="pytest", test_exit_code=1,
-                           test_output="FAILED tests/test_x.py::test_a")
-    a = Agent(same, same, same)
-    r = execute(loop(a, budget=Budget(max_iterations=9, max_seconds=30)),
-                baseline=testing.TestRun("pytest", 0, "", 0.1))
-    assert len(r.attempts) == 2, "the loop bought the same answer a third time"
-    assert r.verdict is Verdict.REGRESSED
-
-
-def test_iterations_are_a_hard_limit():
-    a = Agent(*[ExecutionResult(outcome=Outcome.FINISHED, summary=f"try {i}",
-                                changed_files=changed(), test_command="pytest",
-                                test_exit_code=1, test_output=f"FAILED t::t{i}")
-                for i in range(9)])
-    r = execute(loop(a, budget=Budget(max_iterations=2, max_seconds=30)),
-                baseline=testing.TestRun("pytest", 0, "", 0.1))
-    assert len(r.attempts) <= 2
-
-
-def test_an_environment_failure_does_not_condemn_the_agent():
-    a = Agent(ExecutionResult(outcome=Outcome.FINISHED, summary="wrote it",
-                              changed_files=changed(), test_command="pytest",
-                              test_exit_code=1,
-                              test_output="ModuleNotFoundError: No module named 'psycopg2'"))
-    r = execute(loop(a), baseline=testing.TestRun("pytest", 0, "", 0.1))
-    assert r.verdict is Verdict.BLOCKED
-    assert r.test_verdict.result is TestResult.ENVIRONMENT_FAILURE
-    assert len(r.attempts) == 1, "retrying would only buy the same missing dependency"
-
-
-def test_an_inherited_failure_still_allows_review():
-    a = Agent(ExecutionResult(outcome=Outcome.FINISHED, summary="wrote it",
-                              changed_files=changed(), test_command="pytest",
-                              test_exit_code=1,
-                              test_output="FAILED tests/test_old.py::test_legacy"))
-    base = testing.TestRun("pytest", 1, "FAILED tests/test_old.py::test_legacy", 0.1)
-    r = execute(loop(a), baseline=base)
-    assert r.verdict is Verdict.READY_FOR_REVIEW
-    assert r.test_verdict.result is TestResult.PREEXISTING_FAILURE
-
-
-def test_an_exception_in_the_agent_does_not_kill_the_loop():
-    class Boom:
-        name = "boom"
-
-        def execute(self, request):
-            raise RuntimeError("exploded")
-
-    r = execute(loop(Boom(), budget=Budget(max_iterations=3, max_seconds=30)))
-    assert r.verdict is Verdict.FAILED
-    assert r.attempts
-
-
-def test_time_to_useful_change_is_none_when_nothing_useful_happened():
-    a = Agent(ExecutionResult(outcome=Outcome.FINISHED, summary="nothing"))
-    assert execute(loop(a)).time_to_useful_change_s is None
-
-
-def test_time_to_useful_change_is_measured_when_it_happens():
-    a = Agent(ExecutionResult(outcome=Outcome.FINISHED, summary="ok",
-                              changed_files=changed(), test_command="pytest",
-                              test_exit_code=0, test_output="ok"))
-    r = execute(loop(a), baseline=testing.TestRun("pytest", 0, "", 0.1))
-    assert r.time_to_useful_change_s is not None
-    assert r.time_to_useful_change_s >= 0
-
-
-# ---------------------------------------------------------------------------
-# The external contract: unknown shapes never become success
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("payload", [
-    None, [], "done", {"summary": "no outcome"}, {"outcome": "TOTALLY_FINE"},
-    {"outcome": ""}, {"outcome": "finished "},
-])
-def test_an_unparseable_report_is_an_error_not_a_success(payload):
-    assert parse_result(payload).outcome is Outcome.ERROR
-
-
-def test_a_valid_report_is_parsed_whole():
-    r = parse_result({
-        "outcome": "FINISHED", "summary": "did it",
-        "changed_files": [{"path": "a.py", "additions": 3, "deletions": 1}],
-        "commits": ["abc1234"], "test_command": "pytest", "test_exit_code": 0,
-        "findings": [{"kind": "risk", "text": "touches auth"}],
-        "blockers": [], "cost_usd": 0.02, "tokens": 100, "tool_calls": 4})
-    assert r.outcome is Outcome.FINISHED
-    assert r.changed_lines == 4
-    assert r.commits == ("abc1234",)
-    assert r.findings[0].kind == "risk"
-
-
-def test_the_deterministic_agent_refuses_to_escape_its_area(tmp_path):
-    from regente.ports.agent import Context, ExecutionRequest
-    a = DeterministicAgent(script={"K-1": {"edits": {"../escaped.txt": "x"}}})
-    out = a.execute(ExecutionRequest(run_id="r", task_key="K-1", agent="d",
-                                     path=str(tmp_path), branch="b",
-                                     context=Context(goal="g")))
-    assert out.outcome is Outcome.ERROR
-    assert "escapes" in out.summary
-    assert not (tmp_path.parent / "escaped.txt").exists()
 
 
 # ---------------------------------------------------------------------------

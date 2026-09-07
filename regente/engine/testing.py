@@ -17,13 +17,16 @@ with the baseline in hand.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..core import childenv
 from ..ports.agent import TestResult
 
 #: Marks that the problem is the ENVIRONMENT, not the code. Deliberately
@@ -86,12 +89,51 @@ class TestVerdict:
         return self.result in (TestResult.PASSED, TestResult.PREEXISTING_FAILURE)
 
 
+def _fresh_environment() -> dict[str, str]:
+    """Force the verification run to read the files, not a cached compilation.
+
+    Found by running this engine against a real repository, and it failed in the
+    worst possible direction. The sequence:
+
+      1. the engine measures the baseline -- the suite compiles `app.py` and
+         writes `__pycache__/app.cpython-313.pyc`, stamped with the source's
+         modification time;
+      2. the agent edits `app.py` a fraction of a second later;
+      3. the engine runs the suite again to check the change.
+
+    If both writes land inside the filesystem's timestamp granularity -- routine
+    on Windows, and the whole sequence takes well under a second -- the stamp
+    matches and Python imports the STALE bytecode. The engine then verifies the
+    code as it was BEFORE the agent touched it, sees green, and reports
+    `changes exist and the tests are green` about a change that breaks the
+    build. It reproduced roughly half the time.
+
+    A verifier that can silently test the previous revision is not a verifier.
+    Sending the cache to a fresh directory per run costs nothing and removes the
+    class: there is no prior compilation to find.
+
+    The environment is composed rather than inherited, and that is a second,
+    unrelated defect this function now closes. The agent is given no tool that
+    runs commands -- but it can write files, tests are files, and THIS is where
+    the engine runs them. An agent that cannot execute anything could still write
+    a test and have the engine execute it holding every credential in the
+    engine's environment. Running agent-authored tests is work we want; handing
+    them a wallet is not.
+    """
+    return childenv.compose(
+        os.environ,
+        childenv.BASE_ALLOWLIST + childenv.TEST_RUNNER_ALLOWLIST,
+        extra={"PYTHONDONTWRITEBYTECODE": "1",
+               "PYTHONPYCACHEPREFIX": tempfile.mkdtemp(prefix="regente-pyc-")})
+
+
 def run(command: list[str], cwd: str | Path, timeout: int = 900) -> TestRun:
     """Execute the repository's test command. Never raises."""
     started = time.monotonic()
     try:
         p = subprocess.run(command, cwd=str(cwd), capture_output=True,
-                           encoding="utf-8", errors="replace", timeout=timeout)
+                           encoding="utf-8", errors="replace", timeout=timeout,
+                           env=_fresh_environment())
     except subprocess.TimeoutExpired:
         return TestRun(" ".join(command), -1, f"[timed out after {timeout}s]",
                        time.monotonic() - started)

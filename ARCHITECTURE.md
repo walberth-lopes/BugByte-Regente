@@ -137,6 +137,99 @@ Cada item carrega decisão, não diagnóstico: o que aconteceu, por que importa,
 que o agente já tentou, opções, recomendação, risco. Log fica no evento, sob
 demanda.
 
+## O agente e um executor, nunca uma autoridade
+
+O contrato responde quatro perguntas e recusa cinco.
+
+```
+Responde:                          Nao responde:
+  Posso executar este agente?        Este agente e confiavel?
+  Como executo?                      Ele pode commitar?
+  Que capacidades ele expoe?         Ele pode dar push?
+  O que aconteceu quando rodou?      Ele pode abrir PR?
+                                     Ele pode fazer deploy?
+```
+
+As cinco da direita continuam sendo do Engine e da Policy. Nenhum campo do
+adapter fala sobre elas, e um teste estrutural garante isso -- campo com nome de
+autoridade num tipo do adapter seria o fornecedor votando na propria permissao.
+
+### Prontidao: seis eixos, duas autoridades
+
+```
+adapter -> executable | protocol | authentication | agent
+engine  -> policy | budget
+```
+
+Os quatro primeiros so o adapter sabe. Os dois ultimos so o motor pode decidir --
+adapter que preenchesse o proprio `policy=ALLOW` seria fornecedor se autorizando.
+Consequencia: **adapter sozinho nunca fica READY**.
+
+`UNKNOWN` bloqueia. "Nao deu para checar" nunca vira "esta tudo bem", e o
+primeiro eixo que falha e o reportado: consertar um eixo posterior enquanto um
+anterior esta quebrado nao resolve nada.
+
+### Autenticacao e assunto do adapter
+
+Cinco formatos de troca, nenhum preferido:
+
+| Modo | Quem guarda a credencial |
+|---|---|
+| `SESSION` | a propria ferramenta (assinatura corporativa, login de CLI, SSO) |
+| `RESOLVED_SECRET` | o motor, escopado ao workspace |
+| `GATEWAY` | o motor, para um intermediario |
+| `DELEGATED` | um processo hospedeiro; nunca presumido, reportado `UNKNOWN` |
+| `NONE` | ninguem |
+
+Sao formatos, nao produtos -- e por isso podem viver na port. Diagnostico que
+dissesse "falta a variavel X" daria conselho errado para todo cliente que
+autentica de outra forma, que e a maioria deles.
+
+### Vendors nao se conhecem
+
+```
+core/ | ports/ | engine/
+        v
+  agent contract
+        v
+adapters/runner/            <- base e infraestrutura compartilhada
+adapters/runner/vendors/    <- um modulo por fornecedor
+```
+
+Modulo em `vendors/` nunca importa outro modulo em `vendors/`. Regra estrutural,
+verificada por AST, e existe porque a violacao aconteceu aqui: o segundo perfil
+importou um helper do primeiro, nada quebrou, a suite ficou verde, e a
+propriedade que este marco afirma -- trocar de agente e um arquivo -- tinha
+deixado de ser verdade em silencio.
+
+Trabalho compartilhado sobe um nivel. O que um segundo fornecedor ia querer nao
+e, por definicao, especifico de fornecedor.
+
+### A restricao mora fora do modelo
+
+O agente recebe leitura e edicao. Nao recebe nenhuma ferramenta que execute
+comando. `git push`, `gh pr create`, `gcloud`, `terraform` e toda rota de
+escalonamento que ninguem pensou ainda sao variacoes de uma capacidade so, e
+negar essa capacidade fecha todas de uma vez.
+
+Duas rotas indiretas ficaram, e ambas estao fechadas:
+
+- **`.git/config`.** O agente so edita arquivos, mas reescrever o remote
+  converte um push recusado em permitido. `git status` nao ve nada dentro de
+  `.git/`, entao a guarda e impressao digital, nao diff.
+- **A suite de testes.** O agente escreve arquivos, testes sao arquivos, e o
+  motor executa a suite para chegar a um veredito -- entao um agente que nao
+  executa nada podia fazer o MOTOR executar por ele. Escrever teste e trabalho
+  que queremos; dar carteira a esse codigo nao e. O ambiente da verificacao e
+  composto do zero, igual ao do agente.
+
+### Capacidade nao e permissao
+
+`AgentCapabilities.runs_commands` diz o que a ferramenta CONSEGUE fazer.
+`Permissions.run_commands` diz o que o motor permite. De fora parecem iguais e
+pedem respostas opostas: a primeira e uma configuracao com a qual conviver, a
+segunda e uma fronteira a fazer valer.
+
 ## Multi-tenancy
 
 `Organization → Client → Workspace → Project → Repository`, presente desde a

@@ -15,7 +15,7 @@ import pytest
 import yaml
 
 from regente.adapters.notify.console import Console
-from regente.adapters.runner.scripted import ScriptedRunner
+from regente.adapters.runner.scripted import ScriptedAgent
 from regente.adapters.tasks.filesystem import FilesystemTasks
 from regente.adapters.workspace.local import IsolatedDirectory
 from regente.core.model import RunState, Workspace, now
@@ -53,7 +53,14 @@ def bench(tmp_path):
             store=store, workspace=ws,
             tasks_provider=FilesystemTasks(tasks_dir),
             area_provider=IsolatedDirectory(tmp_path / "areas"),
-            runner=ScriptedRunner(script=script or {}),
+            # The adapter's own default is NO_PROGRESS -- an agent never
+            # declares its own success. These tests exercise orchestration, so
+            # the bench declares a finished process explicitly rather than
+            # relying on an optimistic default that no longer exists.
+            runner=ScriptedAgent(
+                script=script or {},
+                default_value={"status": "FINISHED", "claim": "COMPLETE",
+                               "summary": "declarado pelo bench"}),
             gate=Gate(store=store, policy=PolicyEngine.from_config([]), risk=risk),
             risk=risk, limits=limits or Limits(max_workers=3),
             notificador=Console(journal=tmp_path / "jornal.log"),
@@ -210,7 +217,7 @@ def test_state_survives_to_process(bench):
 def test_worker_dead_returns_the_task_to_the_queue(bench):
     """O criterio de morte e o lease vencido, nao a ausencia de processo."""
     write_task(bench.tasks, "A-1", resources=["repo:a"])
-    orq, store = bench(script={"A-1": {"ok": True, "resumo": "feito"}})
+    orq, store = bench(script={"A-1": {"status": "FINISHED", "claim": "COMPLETE", "summary": "feito"}})
     orq.tick()
 
     # Simula um worker que travou: run vivo, lease ja vencido.
@@ -256,7 +263,7 @@ def test_lease_expired_can_ser_taken(bench):
 
 def test_first_failure_retries_without_bothering_the_owner(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
-    orq, store = bench(script={"A-1": {"ok": False, "resumo": "teste vermelho"}})
+    orq, store = bench(script={"A-1": {"status": "ERROR", "summary": "teste vermelho"}})
     orq.tick()
     rel = orq.tick()
 
@@ -268,7 +275,7 @@ def test_first_failure_retries_without_bothering_the_owner(bench):
 
 def test_ladder_ends_is_escalates(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
-    orq, store = bench(script={"A-1": {"ok": False, "resumo": "mesmo error"}})
+    orq, store = bench(script={"A-1": {"status": "ERROR", "summary": "mesmo error"}})
     for _ in range(5):
         orq.tick()
 
@@ -283,12 +290,10 @@ def test_ladder_ends_is_escalates(bench):
 def test_worker_can_pedir_decision_human(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
     orq, store = bench(script={"A-1": {
-        "ok": False, "desfecho": "precisa_humano",
-        "resumo": "contrato da API publica e ambiguo",
-        "pergunta": {"o_que_aconteceu": "contrato da API publica e ambiguo",
-                     "por_que_importa": "escolher errado quebra cliente em producao",
-                     "tentativas": ["li os dois consumidores", "procurei ADR"],
-                     "recomendacao": "seguir"}}})
+        "status": "NEEDS_HUMAN", "claim": "NEEDS_HUMAN",
+        "summary": "contrato da API publica e ambiguo",
+        "escalation_reason": "escolher errado quebra cliente em producao",
+        "questions": ["li os dois consumidores", "procurei ADR"]}})
     orq.tick()
     rel = orq.tick()
 
@@ -305,7 +310,7 @@ def test_worker_can_pedir_decision_human(bench):
 def test_decision_human_is_recorded_is_resumes(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
     orq, store = bench(script={"A-1": {
-        "ok": False, "desfecho": "precisa_humano", "resumo": "ambiguo",
+        "status": "NEEDS_HUMAN", "summary": "ambiguo",
         "pergunta": {"por_que_importa": "afeta contrato publico"}}})
     orq.tick()
     orq.tick()
@@ -323,7 +328,7 @@ def test_decision_human_is_recorded_is_resumes(bench):
 def test_choice_outside_of_options_is_refused(bench):
     write_task(bench.tasks, "A-1", resources=["repo:a"])
     orq, store = bench(script={"A-1": {
-        "ok": False, "desfecho": "precisa_humano", "resumo": "x",
+        "status": "NEEDS_HUMAN", "summary": "x",
         "pergunta": {"por_que_importa": "y"}}})
     orq.tick()
     orq.tick()
@@ -333,7 +338,7 @@ def test_choice_outside_of_options_is_refused(bench):
 
 
 def test_worker_that_blowing_up_not_bringing_down_the_tick(bench):
-    class Explode(ScriptedRunner):
+    class Explode(ScriptedAgent):
         def run(self, request):
             raise RuntimeError("estourou")
 
@@ -390,7 +395,7 @@ def test_task_recovered_returns_the_ser_schedulable(bench):
 def test_area_of_work_is_of_task_is_survives_the_resume(bench):
     """O WIP da tentativa anterior precisa estar la quando o worker volta."""
     write_task(bench.tasks, "A-1", resources=["repo:a"])
-    orq, store = bench(script={"A-1": {"ok": False, "resumo": "caiu"}})
+    orq, store = bench(script={"A-1": {"status": "ERROR", "summary": "caiu"}})
     orq.tick()
     orq.tick()
 

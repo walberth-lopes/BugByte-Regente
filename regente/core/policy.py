@@ -70,6 +70,16 @@ REQUIRED_LEVEL: dict[str, AutonomyLevel] = {
     "db.read": AutonomyLevel.L0,
     "ci.read": AutonomyLevel.L0,
     "workspace.write": AutonomyLevel.L1,
+    # Starting an agent writes only inside the isolated area: it cannot commit,
+    # push, open a pull request or deploy, because those are separate actions
+    # with their own levels and the agent holds none of them. So it sits beside
+    # `workspace.write` rather than higher.
+    #
+    # It does spend money, which is a real concern and a different one --
+    # answered by the budget axis of the readiness diagnosis, not by raising a
+    # ceiling. Conflating the two would make every agent run need a human, which
+    # is the bottleneck this engine exists to remove.
+    "agent.run": AutonomyLevel.L1,
     "repo.branch": AutonomyLevel.L1,
     "repo.commit": AutonomyLevel.L1,
     "repo.push": AutonomyLevel.L2,

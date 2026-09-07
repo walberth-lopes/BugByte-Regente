@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..adapters import registry
+from ..adapters import conventions, registry
 from ..core import ids
 from ..core.model import Event, Project, Workspace
 from ..core.policy import PolicyEngine
@@ -18,6 +18,8 @@ from ..core.risk import RiskEngine
 from ..engine.gate import Gate
 from ..engine.target import TargetResolver
 from ..engine.orchestrator import Orchestrator
+from ..engine.readiness import diagnose as _diagnose_agent
+from ..engine import readiness
 from ..engine.remote import RemoteDelivery
 from ..engine.store_sqlite import SqliteStore
 from ..ports import Capability
@@ -26,7 +28,8 @@ from ..core.errors import CapabilityMissing
 from ..ports import AdapterError
 from ..ports.repository import RepositoryProvider
 from ..ports.tasks import TaskProvider
-from ..ports.workspace import AgentRunner, WorkspaceProvider
+from ..ports.agent import AgentRunner
+from ..ports.workspace import WorkspaceProvider
 from .config import Config, load_policies
 
 
@@ -120,7 +123,12 @@ class Engine:
             permissions=Permissions(read=True, write_code=True, run_tests=True,
                                     commit=True),
             policy=self.policy, autonomy=self.workspace.max_autonomy,
-            organization=self.config.organization, client=self.config.client)
+            organization=self.config.organization, client=self.config.client,
+            # The vendor names come from the adapter layer, which is where a
+            # CI provider's filenames are allowed to be known.
+            authority_paths=conventions.default_authority_paths(),
+            instruction_files=conventions.INSTRUCTION_FILES,
+            watched_sources=self.config.watched_sources)
         if not execute:
             from ..engine.runner import MissionOutcome
             if selection.mission is None:
@@ -287,7 +295,8 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
                 extras = {"root": str(cfg.areas)}
             elif cap is Capability.NOTIFICATION:
                 extras = {"journal": str(cfg.journal)}
-            elif cap in (Capability.TASKS, Capability.REPOSITORY):
+            elif cap in (Capability.TASKS, Capability.REPOSITORY,
+                         Capability.RUNNER):
                 extras = {"secrets": registry.create(
                     Capability.SECRETS, "scoped",
                     {"allowed": cfg.secrets, "workspace": cfg.workspace})}
@@ -297,5 +306,29 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
         expect_prefix(f"provider {key}", prova)
 
     expect_prefix("policies", lambda: f"{len(load_policies(cfg.policies))} regra(s)")
+
+    # Seis eixos, um por linha. Reportar "falta a variavel X" seria conselho
+    # errado para quem autentica o agente de outra forma -- e a maioria dos
+    # clientes autentica de outra forma.
+    if "runner" in cfg.providers:
+        def prontidao() -> str:
+            conf = cfg.providers["runner"]
+            agent = registry.create(Capability.RUNNER, conf.name, {
+                **conf.options,
+                "secrets": registry.create(
+                    Capability.SECRETS, "scoped",
+                    {"allowed": cfg.secrets, "workspace": cfg.workspace})})
+            state = readiness.diagnose(
+                agent, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
+                autonomy=cfg.autonomy, organization=cfg.organization,
+                client=cfg.client, workspace=cfg.workspace,
+                ceiling_usd=cfg.budget.max_cost_usd,
+                max_dispatches=cfg.limits.max_dispatches_per_day)
+            if state.ready:
+                return f"READY ({state.auth_mode.value})"
+            raise AdapterError(
+                f"{state.readiness.value} -- {state.blocking_reason()}")
+        expect_prefix("prontidao do agente", prontidao)
+
     output.append(("modo", True, "sombra" if cfg.shadow else "VALENDO"))
     return output

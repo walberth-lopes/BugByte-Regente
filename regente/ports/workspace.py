@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""WorkspaceProvider e AgentRunner: onde o worker vive e como ele e executado."""
+"""WorkspaceProvider: onde o worker vive, e o que ele pode fazer la dentro."""
 
 from __future__ import annotations
 
@@ -111,58 +111,11 @@ class WorkspaceProvider(Port):
         raise NotImplementedError
 
 
-@dataclass(frozen=True, slots=True)
-class RunRequest:
-    """O que o motor entrega a um worker.
-
-    `contexto` ja vem montado e reduzido: o motor coleta o necessario e nada
-    alem. Despejar o projeto inteiro aqui e o que torna um agente caro, lento e
-    impreciso ao mesmo tempo.
-    """
-    run_id: str
-    task_id: str
-    agent: str
-    goal: str
-    area: WorkArea
-    contexto: dict[str, Any] = field(default_factory=dict)
-    #: Acoes que este worker pode sequer tentar. O Policy Engine ainda decide
-    #: cada chamada; esta lista so evita oferecer ao agente o que ele nunca
-    #: poderia usar.
-    tools: tuple[str, ...] = ()
-    limit_iterations: int = 24
-    limit_tool_calls: int = 120
-    limit_cost_usd: float = 5.0
-    limit_seconds: int = 2700
-
-
-@dataclass(frozen=True, slots=True)
-class RunResult:
-    ok: bool
-    summary: str
-    #: Como o worker terminou: 'concluido', 'timebox', 'sem_progresso',
-    #: 'orcamento', 'error', 'precisa_humano'. O motor decide o proximo passo a
-    #: partir daqui -- por isso e vocabulario fechado, nao texto livre.
-    outcome: str = "concluido"
-    artifacts: dict[str, Any] = field(default_factory=dict)
-    cost_usd: float = 0.0
-    tokens: int = 0
-    tool_calls: int = 0
-    iterations: int = 0
-    #: Pergunta ao humano, quando `desfecho == 'precisa_humano'`.
-    question: dict[str, Any] | None = None
-
-
-class AgentRunner(Port):
-    """Executa um agente. A implementacao decide o substrato.
-
-    Esta port e o que impede o motor de virar refem de um harness. Um runner
-    pode ser um harness agentico ja pronto, um laco proprio sobre LLMProvider, ou
-    um script deterministico. O Orchestrator nao muda em nenhum dos casos.
-    """
-    capability = Capability.RUNNER
-
-    @abstractmethod
-    def run(self, request: RunRequest) -> RunResult: ...
-
-    def cancel(self, run_id: str) -> None:
-        return None
+# The runner contract used to live here as a SECOND `AgentRunner`, with its own
+# `RunRequest`/`RunResult`. Two ports claimed `Capability.RUNNER` and were not
+# interchangeable: adapters registered under one name implemented `.run(RunRequest)`
+# and adapters under another implemented `.execute(ExecutionRequest)`, so a
+# configuration that picked the wrong one raised `AttributeError` deep in a
+# mission instead of failing at composition.
+#
+# One capability, one port. The single contract lives in `ports/agent.py`.

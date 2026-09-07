@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from regente.adapters.notify.console import Console
-from regente.adapters.runner.scripted import ScriptedRunner
+from regente.adapters.runner.scripted import ScriptedAgent
 from regente.adapters.secrets import ScopedSecrets, SecretMissing, SecretOutOfScope
 from regente.adapters.tasks.filesystem import FilesystemTasks
 from regente.adapters.tasks.jira import JiraTasks
@@ -51,7 +51,7 @@ def _engine(store: SqliteStore, ws_id: str, name: str, provider, tmp_path: Path)
     return Orchestrator(
         store=store, workspace=ws, tasks_provider=provider,
         area_provider=IsolatedDirectory(tmp_path / f"areas-{name}"),
-        runner=ScriptedRunner(),
+        runner=ScriptedAgent(),
         gate=Gate(store=store, policy=PolicyEngine.from_config([]), risk=risk),
         risk=risk, limits=Limits(max_workers=2),
         notificador=Console(journal=tmp_path / f"{name}.log"))

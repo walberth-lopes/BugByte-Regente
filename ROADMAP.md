@@ -10,16 +10,21 @@ Marco não fecha sem prova em disco.
 | **3** | **TaskProvider real** ✅ | adapter real lendo o board de verdade em sombra; contrato passa em dois provedores; zero mutacao |
 | **4** | **RepositoryProvider** ✅ | dois provedores reais em sombra; identidade dentro da tenancy; contrato de escrita declarado, nada implementado |
 | **5** | **AgentRunner + validation loop** ✅ | missão selecionada, alvo resolvido, clone isolado, agente executado, teste com linha de base, veredito e commit — DECLARED e DISCOVERED provados ponta a ponta |
-| 6 | CI + PR | motor acompanha checks e reage a vermelho |
-| 7 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
-| 8 | CloudProvider | leitura de recursos, logs e métricas |
-| 9 | Deploy em staging | deploy governado + smoke, com rollback |
-| 10 | Workers paralelos de verdade | 2+ workers reais simultâneos sem colisão |
-| 11 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
-| 12 | **Segundo cliente** | outro conjunto de provedores rodando **sem tocar em `core/` nem `engine/`** |
+| **6** | **CI + PR** ⚠ | caminho completo implementado e testado em contrato; **prova remota real bloqueada em `NEEDS_HUMAN`** por ausencia de task elegivel |
+| **7** | **AgentRunner real** ⚠ | motor observa o mundo por conta propria e nao acredita no agente; sandbox sem execucao de comando; **modelo real bloqueado** por falta de credencial que o motor possa resolver |
+| 8 | ReviewerAgent | parecer fixado no SHA revisado, com segunda passada em risco alto |
+| 9 | CloudProvider | leitura de recursos, logs e métricas |
+| 10 | Deploy em staging | deploy governado + smoke, com rollback |
+| 11 | Workers paralelos de verdade | 2+ workers reais simultâneos sem colisão |
+| 12 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
+| 13 | **Segundo cliente** | outro conjunto de provedores rodando **sem tocar em `core/` nem `engine/`** |
 
-O marco 12 é o único teste honesto da arquitetura. Os outros onze podem passar
-com um motor secretamente acoplado ao primeiro cliente.
+O marco do segundo cliente é o único teste honesto da arquitetura. Todos os
+outros podem passar com um motor secretamente acoplado ao primeiro cliente.
+
+⚠ = capacidade pronta e provada em contrato, com a integracao real bloqueada por
+uma dependencia externa nomeada. Ver `CAPABILITIES.md`: suite verde nunca
+substitui prova real.
 
 ## Ordem das apostas
 

@@ -31,7 +31,9 @@ from ..core.states import TaskState
 from ..ports import AdapterError
 from ..ports.support import NotificationProvider
 from ..ports.tasks import ExternalTask, ExternalStatus, TaskProvider
-from ..ports.workspace import AgentRunner, RunRequest, WorkspaceProvider
+from ..ports.agent import (AgentRunner, Budget as AgentBudget, ContextItem,
+                           ContextPackage, Mission, Outcome, ProcessStatus)
+from ..ports.workspace import WorkspaceProvider
 from ..ports.store import Store
 from . import escalation, supervisor
 from .gate import Scope, Gate
@@ -376,16 +378,22 @@ class Orchestrator:
         self._record("despachada", task_id=task.id, run_id=run.id,
                     summary=f"{run.agent} em {area.path}")
 
-        request = RunRequest(
-            run_id=run.id, task_id=task.id, agent=run.agent,
-            goal=task.title, area=area,
-            contexto={"descricao": task.description, "chave": task.key,
-                      "risco": task.risk.name if task.risk else "LOW",
-                      "resources": list(task.resources)},
-            limit_iterations=self.budget.max_iterations,
-            limit_tool_calls=self.budget.max_tool_calls,
-            limit_cost_usd=self.budget.max_cost_usd,
-            limit_seconds=self.budget.max_seconds)
+        request = Mission(
+            workspace_id=self.workspace.id, workspace_name=self.workspace.name,
+            task_key=task.key, run_id=run.id, branch=area.branch or "",
+            allowed_root=area.path, goal=task.title, agent=run.agent,
+            context=ContextPackage(
+                goal=task.title,
+                items=(ContextItem(
+                    kind="task", ref=task.key,
+                    reason="the work itself; without it there is no mission",
+                    content=task.description or ""),)),
+            budget=AgentBudget(
+                max_iterations=self.budget.max_iterations,
+                max_tool_calls=self.budget.max_tool_calls,
+                max_cost_usd=self.budget.max_cost_usd,
+                max_seconds=self.budget.max_seconds,
+                max_process_seconds=self.budget.max_seconds))
 
         try:
             resultado = self.runner.run(request)
@@ -407,9 +415,10 @@ class Orchestrator:
             return
 
         run.cost_usd, run.tokens = resultado.cost_usd, resultado.tokens
-        run.tool_calls, run.iterations = resultado.tool_calls, resultado.iterations
+        run.tool_calls, run.iterations = resultado.tool_calls, 1
 
-        if resultado.outcome == "precisa_humano":
+        if (resultado.status is ProcessStatus.NEEDS_HUMAN
+                or resultado.escalation_requested):
             run.state, run.reason = RunState.ABORTED, resultado.summary
             self.store.save_run(run)
             self.store.transition(task_id, TaskState.WAITING_HUMAN, actor=run.agent,
@@ -417,7 +426,7 @@ class Orchestrator:
             self._escalate(task_id, run, resultado, rel)
             return
 
-        if resultado.ok:
+        if resultado.status is ProcessStatus.FINISHED:
             run.state, run.reason = RunState.SUCCEEDED, resultado.summary
             self.store.save_run(run)
             task = self.store.task(task_id)
@@ -428,7 +437,8 @@ class Orchestrator:
                         summary=resultado.summary[:200])
             return
 
-        self._failed(task_id, run, resultado.summary, rel, outcome=resultado.outcome)
+        self._failed(task_id, run, resultado.summary, rel,
+                     outcome=resultado.status.value)
 
     def _failed(self, task_id: str, run: Run, reason: str, rel: TickReport,
                 outcome: str = "error") -> None:
@@ -462,13 +472,13 @@ class Orchestrator:
     # ---- escalonamento ---------------------------------------------------
     def _escalate(self, task_id: str, run: Run, resultado, rel: TickReport) -> None:
         task = self.store.task(task_id)
-        p = resultado.question or {}
         approval = escalation.build(
             task=task,
-            what_happened=p.get("o_que_aconteceu", resultado.summary),
-            why_it_matters=p.get("por_que_importa", "o agente parou sem conseguir decidir sozinho"),
-            attempts=tuple(p.get("tentativas", ())),
-            recommendation=p.get("recomendacao", escalation.FOLLOW.id),
+            what_happened=resultado.summary,
+            why_it_matters=(resultado.escalation_reason
+                            or "o agente parou sem conseguir decidir sozinho"),
+            attempts=tuple(resultado.questions),
+            recommendation=escalation.FOLLOW.id,
             risk=task.risk or RiskLevel.MEDIUM,
             run_id=run.id)
         self._publish(approval, task, rel)
