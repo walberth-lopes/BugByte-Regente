@@ -30,6 +30,10 @@ from ...ports.repository import (READ_CAPS, Branch, RepoCapability, RepoInfo, Re
 from ..tasks.transport import (Call, AuthFailure, RateLimited,
                                 NotFound, Observer, ProviderUnavailable,
                                 MalformedResponse)
+from ...core.credential import Use
+from ...ports.support import CredentialBroker
+from .cli_process import DEFAULT_CREDENTIAL_ENV
+from . import cli_process
 from .readonly import cli_is_read
 
 
@@ -52,18 +56,42 @@ class GitHubRepos(RepositoryProvider):
     observer: Observer | None = None
     timeout: int = 60
     list_limit: int = 200
+    #: A porta governada, ja presa a quem age, a que workspace e a que provider.
+    #: `None` significa: este adapter nao tem credencial -- e entao ele RECUSA,
+    #: em vez de procurar uma no ambiente. Era exatamente essa procura que
+    #: deixava a ferramenta se autenticar sozinha pelo chaveiro do sistema.
+    credentials: CredentialBroker | None = None
+    #: Sob que nome o material entra no processo filho. Da configuracao do
+    #: workspace, com o default do fornecedor -- nunca de uma constante do motor.
+    credential_env: tuple[str, ...] = DEFAULT_CREDENTIAL_ENV
+    #: Onde a ferramenta procura a configuracao DELA. Vazio usa um caminho que
+    #: nao existe, que e o que fecha a credencial propria.
+    config_dir: str = ""
+
+    def _launch(self, use):
+        """O ambiente deste filho. Uma linha, um lugar, nenhuma alternativa."""
+        ambiente = cli_process.child_environment(
+            self.credential_env, self.credentials, self.config_dir)
+        return ambiente.launch(use) if use is not None else ambiente.plain()
 
     def describe(self) -> dict[str, str]:
         return {"capability": self.capability.value, "adapter": self.name,
-                "modo": "somente-leitura", "org": self.org}
+                "modo": "somente-leitura", "org": self.org,
+                "credencial": "governada" if self.credentials else "nenhuma"}
 
     def verify(self) -> None:
-        """Prova autenticacao e alcance com a chamada mais barata que existe."""
-        self._cli(["auth", "status"], json_esperado=False)
+        """Prova que a ferramenta EXISTE E RODA -- nao que ela esta autenticada.
+
+        Eram a mesma checagem, e nao sao a mesma pergunta. Autenticacao se prova
+        por `regente credentials testar`, que responde quatro fatos separados.
+        """
+        cli_process.refuse_if_config_reachable(self.config_dir)
+        self._cli(["--version"], json_esperado=False, use=None)
 
     # ---- execucao --------------------------------------------------------
 
-    def _cli(self, args: list[str], json_esperado: bool = True) -> Any:
+    def _cli(self, args: list[str], json_esperado: bool = True,
+             use: Use | None = Use.REPO_READ) -> Any:
         # Por INVOCACAO INTEIRA, nao por verbo. `repo list` le; `repo delete`
         # apaga, e os dois comecam com `repo` -- foi assim que um `repo delete`
         # atravessou o portao em 06/09/2026.
@@ -73,10 +101,12 @@ class GitHubRepos(RepositoryProvider):
                 f"'{self.cli_path} {' '.join(args)}' recusado: {reason}. "
                 f"Nenhuma mutacao e executavel neste marco.")
 
+        # Resolvido AQUI, imediatamente antes do processo, e nunca guardado.
+        launch = self._launch(use)
         inicio = time.monotonic()
         try:
             p = subprocess.run(
-                [self.cli_path, *args], capture_output=True,
+                [self.cli_path, *args], capture_output=True, env=launch.env,
                 encoding="utf-8", errors="replace", timeout=self.timeout)
         except subprocess.TimeoutExpired as e:
             self._notify_observer(args, inicio, False, None, f"timeout apos {self.timeout}s")
@@ -86,7 +116,9 @@ class GitHubRepos(RepositoryProvider):
             raise AdapterError(f"'{self.cli_path}' nao esta no PATH") from e
 
         if p.returncode != 0:
-            error = (p.stderr or "").strip()[:400]
+            # Limpo ANTES de truncar: cortar primeiro pode deixar metade de um
+            # token, e metade e a parte que ninguem deveria ter escrito.
+            error = launch.scrub((p.stderr or "").strip())[:400]
             baixo = error.lower()
             self._notify_observer(args, inicio, False, None, error)
             # Traduzir a falha e o que permite o motor decidir: retentar,

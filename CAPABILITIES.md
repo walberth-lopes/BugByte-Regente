@@ -17,6 +17,123 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 6.1 — o material chega ao subprocesso, e so por ali
+
+O marco 16 provou **autoridade**: uma porta unica decide se um adapter pode ter
+credencial. Faltava a outra metade, e ela nao vem de graca junto.
+
+> Uma fechadura numa porta que ninguem usa nao tranca nada.
+
+### O defeito, medido antes de qualquer codigo
+
+Registrado em `MILESTONE-6.1-RECON.md`. Os tres adapters que invocam a CLI de
+hospedagem chamavam `subprocess.run` **sem `env=`**, e o filho herdava o
+ambiente inteiro do motor. A ferramenta entao se autenticava sozinha:
+
+```
+(ambiente herdado, como o adapter rodava)   gh api user -> aceita, sem token
+(ambiente isolado, sem token)               gh api user -> recusa
+(ambiente isolado, token invalido)          gh api user -> 401
+```
+
+A primeira linha era o motor agindo com uma autoridade que ninguem lhe deu.
+`broker.material()` podia recusar o dia inteiro: `gh pr create` funcionaria
+assim mesmo, porque nunca precisou do resultado. Revogar nao fechava nada, e a
+capacidade da credencial (`repo.read`, e so) nao limitava o alcance do token do
+chaveiro.
+
+As outras duas linhas provaram que da para fechar.
+
+### O contrato
+
+```
+broker.material(use) --> ambiente do filho --> subprocesso
+```
+
+**Ambiente, nunca argv**, e a razao nao e estilo: `argv` e legivel por qualquer
+usuario da maquina (`ps -ef`, o Gerenciador de Tarefas); o ambiente e legivel
+pelo dono do processo. Ambiente e melhor, e nao e invisivel -- a promessa
+honesta e "nao vaza para outro usuario, nem para log, estado, evento, excecao ou
+remote", nunca "e inextraivel".
+
+**Montado do vazio.** O ambiente do filho comeca em `{}` e recebe so o que foi
+nomeado, mais a credencial governada, mais o isolamento da configuracao da
+propria ferramenta.
+
+**Uma porta so, para todo subprocesso.** O agente foi movido para a mesma:
+`material()` e chamado em **um unico arquivo** de `adapters/`, e um teste
+estrutural recusa qualquer segundo lugar.
+
+**`use` e argumento obrigatorio.** Ler um pull request e `repo.read`; abrir um e
+`repo.pr`. Um parametro opcional daria a cada chamada a autoridade que a
+anterior tinha.
+
+### Defeitos encontrados
+
+| # | Defeito | Como apareceu |
+|---|---|---|
+| 1 | **O subprocesso herdava o ambiente do motor.** Toda credencial do processo pai -- inclusive de outro provedor -- ficava visivel para a ferramenta, e ela usava a que achasse. | Medido no levantamento, com tres invocacoes reais. Nenhum teste falhava. |
+| 2 | **`verify()` perguntava "estou autenticado?".** Com o isolamento, `gh auth status` passa a responder nao -- e `doctor` acusaria um provedor saudavel. Sao duas perguntas: a ferramenta EXISTE E RODA (`--version`, sem credencial) e a credencial serve (`credentials testar`, quatro respostas). | Apareceu ao fechar o defeito 1. |
+| 3 | **O `stderr` do provedor ia cru para o evento persistido.** Um provedor que recusa um token costuma cita-lo na mensagem, e o banco sai em backup e em anexo de bug. | Encontrado ao escrever o teste da ferramenta que ecoa. |
+| 4 | **A redacao existente nao cobria material conhecido.** `redact_url` remove userinfo de URL; nao remove um token que a ferramenta imprimiu solto. `scrub` foi somado ao modulo existente -- nao uma segunda implementacao. | Consequencia do 3. |
+
+### Exercitado de verdade
+
+Mesma credencial dos marcos 15 e 16: chaveiro do sistema, produzida por ajudante
+no momento do uso, nunca guardada pelo Regente.
+
+```
+motor          : engine:wks_d95fd24e9eb9, capacidades ['workspace.credential.use']
+porta          : BoundBroker, variaveis ('GH_TOKEN',)
+anuncia repo.read? True     anuncia repo.pr? False
+
+LEITURA REAL   walberth-lopes/BugByte-Regente@main -> a4f1ca2adc19
+CAPACIDADE     repo.pr -> NO_CAPABILITY, nenhum processo criado
+REVOGACAO      antes: leu a4f1ca2adc19 | depois: REVOKED, mesmo adapter
+```
+
+**A contraprova que decide o marco.** O broker entregou um token
+deliberadamente invalido e o provedor respondeu `401 Bad credentials`. Se a
+ferramenta ainda alcancasse o chaveiro, teria funcionado -- ela usou **o valor
+que o broker entregou**, e nao um que encontrou sozinha.
+
+E o inverso: o mesmo ambiente **menos** a variavel do broker devolve
+`rc=4 / "please run gh auth login"`. Sem material governado, a ferramenta nao
+alcanca nada.
+
+`create_pull_request` NAO foi disparado contra um repositorio real. A barreira
+mora no ponto onde o material seria obtido, e e ali que foi provada -- abrir um
+pull request so para produzir evidencia e o que este marco proibe.
+
+### Sweep de mutacao
+
+13 mutacoes sobre a fronteira, **13 capturadas**. Entre elas: material em argv,
+material lido do ambiente, material cacheado, broker ausente caindo para o
+ambiente, isolamento removido, `stderr` cru, redacao no-op, e o ambiente do
+filho voltando a herdar o do pai.
+
+Uma escapou na primeira rodada -- e o defeito era do meu driver, que rodava um
+subconjunto de arquivos sem o que cobria aquele guard. Re-executada com o
+arquivo certo, foi capturada por dois testes. Contada como captura, e o erro
+registrado como meu.
+
+### Limitacoes
+
+**O `git push` continua com credencial propria.** Os subprocessos `git` seguem
+herdando o ambiente, e o levantamento diz por que: compor do vazio removeria
+`SSH_AUTH_SOCK`, `GIT_SSH_COMMAND` e proxy, quebrando clone real; e mesmo
+composto, `git` acharia o `credential.helper` global via `HOME`. Fechar isso
+direito e uma allowlist propria mais isolamento de `gitconfig`. E o M6.2.
+
+**Fechar o caminho ambiente muda comportamento.** Um workspace com
+`gh auth login` feito e sem credencial registrada para de falar com o provedor.
+Nao e regressao: era o motor agindo com autoridade que ninguem podia revogar. A
+recusa nomeia o que fazer.
+
+**Um provider real.** Jira e agente continuam CONTRACT_TESTED.
+
+---
+
 ## Milestone 16 — o caminho legado deixou de existir
 
 O marco 15 construiu e provou o caminho governado. Este removeu o outro.

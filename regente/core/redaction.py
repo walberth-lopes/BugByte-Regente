@@ -60,3 +60,39 @@ def carries_credential(text: str | None) -> bool:
     # limpo -- e um teste que nunca fica verde deixa de ser lido.
     return any(m.group("userinfo") != MASK_USERINFO
                for m in _USERINFO.finditer(text))
+
+
+#: O que aparece no lugar de um material conhecido. Diferente da mascara de
+#: URL: dizer QUE tipo de coisa foi removida ajuda quem le o log a entender o
+#: que aconteceu sem lhe dar nada.
+MASK_SECRET = "<credencial>"
+
+
+def scrub(text: str | None, secrets=()) -> str:
+    """`text` sem nenhum material conhecido, e sem credencial embutida em URL.
+
+    Existe porque `redact_url` sozinho nao basta a partir do momento em que o
+    motor ENTREGA material a um subprocesso: a ferramenta pode ecoar o que
+    recebeu, e o `stderr` dela vira evento persistido. `redact_url` remove o que
+    tem forma de credencial numa URL; isto remove o que sabidamente E a
+    credencial, porque quem chama acabou de entrega-la.
+
+    Nao e uma segunda implementacao de redacao: as duas se compoem, e esta
+    chama aquela. Um valor vazio e ignorado -- substituir '' casaria em todo
+    lugar e apagaria o texto inteiro, que e ruido no lugar de protecao.
+    """
+    saida = text or ""
+    for material in secrets or ():
+        if material:
+            saida = saida.replace(material, MASK_SECRET)
+    return redact_url(saida)
+
+
+def carries(text: str | None, secrets=()) -> bool:
+    """True quando algum material conhecido sobreviveu em `text`.
+
+    Para um teste afirmar ausencia sem repetir a busca, e para um guard poder
+    recusar a gravar em vez de gravar mascarado onde o lugar for sensivel
+    demais para conter sequer a marca.
+    """
+    return any(m and m in (text or "") for m in (secrets or ()))

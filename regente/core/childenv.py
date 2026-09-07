@@ -46,6 +46,24 @@ TEST_RUNNER_ALLOWLIST: tuple[str, ...] = (
     "GRADLE_USER_HOME", "M2_HOME",
 )
 
+#: What a tool that talks to the network needs to keep working behind a
+#: corporate perimeter. Separate from `BASE_ALLOWLIST` for the same reason as
+#: the test-runner list: a reader should see which caller asked for them.
+#:
+#: A proxy URL can itself carry userinfo. That is the operator's own network
+#: credential, not the provider's, and withholding it would break every client
+#: behind a proxy -- so it passes, and this comment is where that is admitted
+#: rather than discovered.
+#:
+#: `SSL_CERT_FILE` and `SSL_CERT_DIR` are deliberately NOT here: "CERT" is a
+#: credential mark, so `compose` would drop them anyway and the entries would be
+#: decoration. A workspace that needs a custom CA bundle states it as a fixed
+#: variable of its adapter, where the choice is visible.
+NETWORK_ALLOWLIST: tuple[str, ...] = (
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "no_proxy",
+)
+
 #: Substrings that mark a name as credential-shaped. A second layer under the
 #: allowlist, because an allowlist is edited by people and this catches the edit
 #: that was made in a hurry.

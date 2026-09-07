@@ -32,9 +32,13 @@ escrita humana pelo navegador, atravessando as mesmas barreiras do terminal.
 **Marcos 14–16** — a cadeia de autoridade fechada:
 
 ```
-Identidade real → concessão gravada → policy → credencial
-                → capacidade → segredo → operação → auditoria
+Identidade real → concessão gravada → policy → credencial → capacidade
+                → segredo → ambiente do filho → subprocesso → auditoria
 ```
+
+O último elo é do marco 6.1: autorizar não é entregar. Enquanto a ferramenta
+externa se autenticava sozinha pelo chaveiro do sistema, a barreira podia
+recusar sem mudar nada no mundo.
 
 Identidade humana com procedência verificável; acesso concedido por alguém, com
 data e revogação; credenciais com capacidades explícitas e validade; e **uma
@@ -59,9 +63,20 @@ querer.
 ## Instalar
 
 ```bash
+git clone https://github.com/walberth-lopes/BugByte-Regente.git Regente
+cd Regente
 uv venv --python 3.13
+```
+
+Ative o ambiente — `.venv\Scripts\Activate.ps1` no PowerShell,
+`source .venv/bin/activate` no Linux e macOS — e instale:
+
+```bash
 uv pip install -e ".[dev]"
 ```
+
+Sem ativar, `regente` não existe no PATH. O tutorial abaixo detalha isso, com a
+linha certa para cada terminal.
 
 ## Tutorial: do zero até a primeira decisão
 
@@ -72,20 +87,66 @@ várias vezes, de propósito.
 O caminho inteiro roda **na sua máquina**, em modo sombra, sem tocar em nada de
 ninguém.
 
-### 1. Preparar o ambiente
+### 1. Instalar
 
-Você precisa de [Python 3.13](https://www.python.org/downloads/) e do
-[uv](https://docs.astral.sh/uv/getting-started/installation/).
+Você precisa de [Python 3.13](https://www.python.org/downloads/), do
+[git](https://git-scm.com/downloads) e do
+[uv](https://docs.astral.sh/uv/getting-started/installation/). Instale os três
+antes de continuar; o resto é o Regente.
+
+Baixe o código e entre na pasta:
+
+```bash
+git clone https://github.com/walberth-lopes/BugByte-Regente.git Regente
+cd Regente
+```
+
+Crie o ambiente isolado do projeto e **ative-o**:
 
 ```bash
 uv venv --python 3.13
+```
+
+A ativação é diferente em cada terminal. Use a linha do seu:
+
+| terminal | comando |
+|---|---|
+| PowerShell (Windows) | `.\.venv\Scripts\Activate.ps1` |
+| Prompt de comando (Windows) | `.\.venv\Scripts\activate.bat` |
+| Git Bash (Windows) | `source .venv/Scripts/activate` |
+| Linux / macOS | `source .venv/bin/activate` |
+
+O prompt passa a começar com `(Regente)`. Agora instale:
+
+```bash
 uv pip install -e ".[dev]"
 ```
+
+Confira que funcionou:
+
+```bash
+regente --help
+```
+
+Se aparecer a lista de comandos, está pronto.
+
+> **`'regente' is not recognized` / `command not found`?**
+> O ambiente não está ativo. Isso é normal: a ativação vale **só para a janela
+> de terminal em que você a rodou** — abriu outra, ative de novo. Rode a linha
+> de ativação da tabela acima e tente outra vez.
+>
+> Se preferir não ativar nada, todo comando deste tutorial também funciona
+> prefixado com `uv run`, a partir da pasta do projeto:
+> `uv run regente --help`.
+>
+> No PowerShell, se a ativação for barrada por política de execução, rode
+> `Set-ExecutionPolicy -Scope Process RemoteSigned` nessa mesma janela e tente
+> de novo.
 
 ### 2. Criar uma pasta de trabalho
 
 O Regente roda dentro de uma pasta que tem um `regente.yaml`. Crie uma nova —
-não use a pasta do código-fonte:
+não use a pasta do código-fonte, para o trabalho não se misturar com o motor:
 
 ```bash
 mkdir meu-regente
@@ -94,6 +155,10 @@ regente init
 ```
 
 Isso cria o `regente.yaml` e uma pasta `tasks/`.
+
+O ambiente continua ativo depois do `cd` — é a janela do terminal que está
+ativada, não a pasta. Daqui em diante todos os comandos rodam **dentro de
+`meu-regente`**.
 
 ### 3. Ver se o motor sobe
 

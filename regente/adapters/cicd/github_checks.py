@@ -19,9 +19,12 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from ...core.credential import Use
 from ...ports import AdapterError
 from ...ports.delivery import CICDProvider, Check, PipelineStatus
+from ..repos import cli_process
 from ..repos.readonly import cli_is_read
+from ...ports.support import CredentialBroker
 from ..tasks.transport import (AuthFailure, Call, MalformedResponse, NotFound,
                                Observer, ProviderUnavailable, RateLimited)
 
@@ -35,25 +38,48 @@ class GitHubChecks(CICDProvider):
     name: str = "github-checks"
     observer: Observer | None = None
     timeout: int = 60
+    #: A porta governada, ja presa a quem age, a que workspace e a que provider.
+    #: `None` significa: este adapter nao tem credencial -- e entao ele RECUSA,
+    #: em vez de procurar uma no ambiente. Era exatamente essa procura que
+    #: deixava a ferramenta se autenticar sozinha pelo chaveiro do sistema.
+    credentials: CredentialBroker | None = None
+    #: Sob que nome o material entra no processo filho. Da configuracao do
+    #: workspace, com o default do fornecedor -- nunca de uma constante do motor.
+    credential_env: tuple[str, ...] = cli_process.DEFAULT_CREDENTIAL_ENV
+    #: Onde a ferramenta procura a configuracao DELA. Vazio usa um caminho que
+    #: nao existe, que e o que fecha a credencial propria.
+    config_dir: str = ""
+
+    def _launch(self, use):
+        """O ambiente deste filho. Uma linha, um lugar, nenhuma alternativa."""
+        ambiente = cli_process.child_environment(
+            self.credential_env, self.credentials, self.config_dir)
+        return ambiente.launch(use) if use is not None else ambiente.plain()
 
     def describe(self) -> dict[str, str]:
         return {"capability": self.capability.value, "adapter": self.name,
-                "mode": "observe-only", "org": self.org}
+                "mode": "observe-only", "org": self.org,
+                "credential": "governed" if self.credentials else "none"}
 
     def verify(self) -> None:
-        self._cli(["auth", "status"], json_expected=False)
+        """The tool exists and runs. Authentication is a separate question."""
+        cli_process.refuse_if_config_reachable(self.config_dir)
+        self._cli(["--version"], json_expected=False, use=None)
 
-    def _cli(self, args: list[str], json_expected: bool = True) -> Any:
+    def _cli(self, args: list[str], json_expected: bool = True,
+             use: Use | None = Use.CI_READ) -> Any:
         ok, reason = cli_is_read(args)
         if not ok:
             raise AdapterError(
                 f"'{self.cli_path} {' '.join(args)}' refused: {reason}")
 
+        # Resolved here, immediately before the process, and never held.
+        launch = self._launch(use)
         started = time.monotonic()
         try:
             p = subprocess.run([self.cli_path, *args], capture_output=True,
                                encoding="utf-8", errors="replace",
-                               timeout=self.timeout)
+                               env=launch.env, timeout=self.timeout)
         except subprocess.TimeoutExpired as e:
             self._notify(args, started, False, "timeout")
             raise ProviderUnavailable(f"cli exceeded {self.timeout}s") from e
@@ -62,7 +88,9 @@ class GitHubChecks(CICDProvider):
             raise AdapterError(f"'{self.cli_path}' is not on PATH") from e
 
         if p.returncode != 0:
-            error = (p.stderr or "").strip()[:400]
+            # Scrubbed before truncating: half a token is still the half nobody
+            # should have written down.
+            error = launch.scrub((p.stderr or "").strip())[:400]
             low = error.lower()
             self._notify(args, started, False, error)
             if "authentication" in low or "not logged" in low or "401" in low:

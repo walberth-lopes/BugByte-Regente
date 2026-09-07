@@ -45,6 +45,10 @@ CLI_READ_INVOCATIONS: frozenset[tuple[str, str | None]] = frozenset({
     ("pr", "list"), ("pr", "view"), ("pr", "diff"), ("pr", "checks"),
     ("auth", "status"),
     ("api", None),
+    # Perguntar a versao. Nao contata nada, nao le configuracao e nao precisa
+    # de credencial -- e por isso e a checagem certa para `doctor`, que prova
+    # que a ferramenta EXISTE E RODA sem transformar saude em autenticacao.
+    ("--version", None),
 })
 
 

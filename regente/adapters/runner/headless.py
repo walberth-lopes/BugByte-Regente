@@ -40,6 +40,7 @@ from typing import Any
 
 from ...core import childenv
 from ...ports import AdapterError
+from ..childproc import ChildEnvironment
 from ...ports.agent import (AgentAvailability, AgentCapabilities, AgentRunner,
                             AuthMode, Check, Claim, ClaimedFile, ClaimedTest,
                             Finding, Mission, Outcome, ProcessStatus)
@@ -246,7 +247,7 @@ class HeadlessAgent(AgentRunner):
             # refaz tudo na hora de rodar, de qualquer forma.
             from ...core.credential import Use
 
-            if self.sandbox.broker.allows(Use.AGENT_RUN):
+            if self._environment().allows(Use.AGENT_RUN):
                 return Check.yes(
                     f"a governed credential authorises this agent for "
                     f"{len(self.sandbox.credential_env)} variable(s)")
@@ -272,8 +273,23 @@ class HeadlessAgent(AgentRunner):
                 "reopens every authority the engine withholds. If it is really "
                 "wanted, it must be stated in configuration and reviewed there")
 
+    def _environment(self) -> ChildEnvironment:
+        """The recipe. Holds NAMES; the material is asked for at launch.
+
+        The same object the repository adapters use. One door for every
+        subprocess this engine starts, so there is exactly one place where
+        material can enter a child -- and therefore exactly one place where it
+        could leak. Two doors would drift, and the one that drifted would be the
+        one that forgot the allowlist.
+        """
+        return ChildEnvironment(
+            names=self.sandbox.credential_env,
+            broker=self.sandbox.broker,
+            allow=self.sandbox.env_allowlist,
+            fixed=tuple(self.sandbox.env.items()))
+
     def _child_env(self) -> dict[str, str]:
-        """The child's extra variables, resolved NOW and never before.
+        """The child's environment, resolved NOW and never before.
 
         Each name goes through the broker, which redoes the whole authorisation
         -- identity, grant, scope, state, capability, policy. A credential
@@ -284,20 +300,12 @@ class HeadlessAgent(AgentRunner):
         the credential it was told to expect would produce a failure the agent
         cannot explain, blamed on the wrong thing.
         """
-        extra = dict(self.sandbox.env)
-        if not self.sandbox.credential_env:
-            return extra
-        if self.sandbox.broker is None:
-            raise AdapterError(
-                f"this agent expects {len(self.sandbox.credential_env)} "
-                f"credential variable(s) and no governed credential path was "
-                f"supplied; it will not read the ambient environment instead")
-
         from ...core.credential import Use
 
-        for name in self.sandbox.credential_env:
-            extra[name] = self.sandbox.broker.material(Use.AGENT_RUN)
-        return extra
+        recipe = self._environment()
+        if not self.sandbox.credential_env:
+            return recipe.plain().env
+        return recipe.launch(Use.AGENT_RUN).env
 
     def run(self, mission: Mission) -> Outcome:
         payload = json.dumps(mission.as_dict(), ensure_ascii=False)
@@ -307,7 +315,7 @@ class HeadlessAgent(AgentRunner):
             p = subprocess.run(
                 self.command, input=payload, cwd=mission.allowed_root,
                 capture_output=True, encoding="utf-8", errors="replace",
-                env=compose_env(self.sandbox.env_allowlist, self._child_env()),
+                env=self._child_env(),
                 timeout=limit)
         except subprocess.TimeoutExpired:
             return Outcome(

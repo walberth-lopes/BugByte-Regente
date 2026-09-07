@@ -110,6 +110,25 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
         site=o.get("site", ""))
 
 
+def _credencial(o: dict[str, Any]) -> dict[str, Any]:
+    """A porta governada e o nome sob o qual o material entra no filho.
+
+    Uma so montagem para os tres adapters que disparam a CLI de hospedagem.
+    Tres montagens divergiriam, e a que divergisse seria a que esqueceu de
+    passar a porta -- e um adapter sem porta procura credencial sozinho, que e
+    o defeito que o marco 6.1 fechou.
+
+    `credential_env` so entra quando a configuracao diz: ausente significa "use
+    o default do fornecedor", e nao "nenhuma variavel".
+    """
+    saida: dict[str, Any] = {"credentials": o.get("credentials"),
+                             "config_dir": str(o.get("config_dir", ""))}
+    nomes = o.get("credential_env")
+    if nomes is not None:
+        saida["credential_env"] = tuple(str(n) for n in nomes)
+    return saida
+
+
 def _repos_git_local(o: dict[str, Any]) -> Port:
     from .repos.git_local import GitLocal
     return GitLocal(root=o["root"], observer=o.get("observer"),
@@ -121,7 +140,8 @@ def _repos_github(o: dict[str, Any]) -> Port:
     return GitHubRepos(org=o["org"], cli_path=o.get("cli", "gh"),
                        observer=o.get("observer"),
                        timeout=int(o.get("timeout", 60)),
-                       list_limit=int(o.get("limit", 200)))
+                       list_limit=int(o.get("limit", 200)),
+                       **_credencial(o))
 
 
 def _agent_headless(o: dict[str, Any]) -> Port:
@@ -231,13 +251,13 @@ def _agent_deterministic(o: dict[str, Any]) -> Port:
 def _repos_github_write(o: dict[str, Any]) -> Port:
     from .repos.github_write import GitHubWrite
     return GitHubWrite(org=o["org"], cli_path=o.get("cli", "gh"),
-                       observer=o.get("observer"))
+                       observer=o.get("observer"), **_credencial(o))
 
 
 def _cicd_github(o: dict[str, Any]) -> Port:
     from .cicd.github_checks import GitHubChecks
     return GitHubChecks(org=o["org"], cli_path=o.get("cli", "gh"),
-                        observer=o.get("observer"))
+                        observer=o.get("observer"), **_credencial(o))
 
 
 def _scoped_secrets(o: dict[str, Any]) -> Port:

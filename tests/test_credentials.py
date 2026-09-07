@@ -857,8 +857,13 @@ def test_an_agent_without_a_broker_refuses_instead_of_reading_the_environment(
         sandbox=SandboxProfile(credential_env=("TOKEN_DO_AGENTE",),
                                broker=None))
 
-    with pytest.raises(AdapterError, match="governed credential path"):
+    # A mensagem passou a vir da porta unica de subprocesso do marco 6.1, onde
+    # a regra e escrita uma vez para o agente e para os adapters de CLI. O que
+    # o teste afirma nao mudou: ele RECUSA, e nao le a variavel que esta ali.
+    with pytest.raises(AdapterError, match="nao vai ler o ambiente"):
         agente._child_env()
+    assert os.environ["TOKEN_DO_AGENTE"] == "material-do-ambiente", \
+        "a variavel estava mesmo la; a recusa e uma escolha, nao uma ausencia"
 
 
 def test_agent_readiness_says_no_when_no_credential_authorises_it(tmp_path):

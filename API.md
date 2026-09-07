@@ -174,6 +174,11 @@ Administrar credenciais e uma capacidade humana separada de administrar pessoas:
 o papel `keeper` tem `workspace.credential.*` e nao decide escalada; `admin`
 administra pessoas e nao toca em credencial; `owner` tem os tres conjuntos.
 
+O material sai do motor por um caminho so, e ele nao passa por aqui: o
+`CredentialBroker` o entrega ao AMBIENTE de um subprocesso, no instante em que
+o processo comeca. Nao ha rota HTTP nesse caminho, e nao ha rota HTTP que o
+devolva.
+
 **Usar credencial e uma quinta capacidade** (`workspace.credential.use`),
 separada de administrar. Ja foi "qualquer capacidade neste workspace", e isso
 transformava quem responde a fila humana em usuario de credencial por tabela.

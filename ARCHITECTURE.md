@@ -749,6 +749,41 @@ volta, e a mais facil de justificar. Em vez disso ele tem identidade
 (`engine:<workspace_id>`), concessao gravada e um papel de uma capacidade so.
 Sem concessao, o motor nao usa credencial nenhuma.
 
+### Como o material atravessa a fronteira do processo
+
+Autorizar nao entrega. Uma fechadura numa porta que ninguem usa nao tranca
+nada: enquanto a ferramenta se autenticava sozinha pelo chaveiro do sistema, o
+broker podia recusar sem mudar o que acontecia no mundo.
+
+```
+broker.material(use) --> ambiente do filho --> subprocesso
+```
+
+**Ambiente, nunca argv.** `argv` e legivel por QUALQUER usuario da maquina --
+`ps -ef`, o Gerenciador de Tarefas -- e nao ha permissao a pedir. O ambiente e
+legivel pelo dono do processo. Ambiente e melhor, e nao e invisivel: a promessa
+e "nao vaza para outro usuario, nem para log, estado, evento, excecao ou
+remote", nunca "e inextraivel". Onde a ferramenta aceita stdin, stdin e melhor
+ainda, e a sonda de credencial usa stdin por isso.
+
+**Montado do vazio.** O ambiente do filho comeca em `{}` e recebe so o que foi
+nomeado. Herdar era o que deixava um subprocesso encontrar credencial que
+ninguem lhe deu -- inclusive de outro provedor.
+
+**A ferramenta nao alcanca a propria configuracao.** Sem isso ela se autentica
+por conta propria e o caminho governado vira decoracao. Se o diretorio de
+isolamento voltar a conter a configuracao dela, `verify()` recusa em vez de
+seguir funcionando.
+
+**Uma porta para todo subprocesso.** O agente e os adapters de repositorio usam
+o mesmo objeto: `material()` e chamado em um unico arquivo da camada de
+adapters, e um teste estrutural recusa um segundo. Uma porta a mais e uma porta
+que esquece do allowlist.
+
+**`verify()` pergunta se a ferramenta RODA, nao se ela esta autenticada.** Eram
+a mesma checagem e nao sao a mesma pergunta -- e a segunda exigiria credencial
+de um comando de saude, que e o caminho mais curto para extrair material.
+
 ### Uma escrita, e as mesmas barreiras
 
 A tela ganhou exatamente uma acao: **decidir uma escalada**. Ela nao ganhou

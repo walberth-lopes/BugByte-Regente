@@ -26,7 +26,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from ...core.credential import Use
 from ...ports import AdapterError, ReadOnlyRefused
+from ...ports.support import CredentialBroker
+from . import cli_process
 from ...ports.repository import (MARKER_PREFIX, FileChange, PullRequest,
                                  RepoRef, build_marker, read_marker)
 from ..tasks.transport import (AuthFailure, Call, MalformedResponse, NotFound,
@@ -47,21 +50,55 @@ class GitHubWrite:
     name: str = "github-write"
     observer: Observer | None = None
     timeout: int = 120
+    #: A porta governada, ja presa a quem age, a que workspace e a que provider.
+    #: `None` significa: este adapter nao tem credencial -- e entao ele RECUSA,
+    #: em vez de procurar uma no ambiente. Era exatamente essa procura que
+    #: deixava a ferramenta se autenticar sozinha pelo chaveiro do sistema.
+    credentials: CredentialBroker | None = None
+    #: Sob que nome o material entra no processo filho. Da configuracao do
+    #: workspace, com o default do fornecedor -- nunca de uma constante do motor.
+    credential_env: tuple[str, ...] = cli_process.DEFAULT_CREDENTIAL_ENV
+    #: Onde a ferramenta procura a configuracao DELA. Vazio usa um caminho que
+    #: nao existe, que e o que fecha a credencial propria.
+    config_dir: str = ""
+
+    def _launch(self, use):
+        """O ambiente deste filho. Uma linha, um lugar, nenhuma alternativa."""
+        ambiente = cli_process.child_environment(
+            self.credential_env, self.credentials, self.config_dir)
+        return ambiente.launch(use) if use is not None else ambiente.plain()
 
     def describe(self) -> dict[str, str]:
         return {"adapter": self.name, "org": self.org,
-                "writes": "pull request creation only"}
+                "writes": "pull request creation only",
+                "credential": "governed" if self.credentials else "none"}
 
     def verify(self) -> None:
-        self._cli(["auth", "status"], write=False, json_expected=False)
+        """A ferramenta existe e roda. NAO "estou autenticado".
+
+        Eram a mesma checagem ate o marco 6.1, e nao sao a mesma pergunta.
+        `doctor` prova que o adapter sobe; autenticacao se prova por
+        `regente credentials testar`, que responde quatro fatos separados em vez
+        de um verde. Perguntar autenticacao aqui exigiria credencial de um
+        comando de saude, que e o caminho mais curto para extrair material.
+        """
+        cli_process.refuse_if_config_reachable(self.config_dir)
+        self._cli(["--version"], write=False, use=None, json_expected=False)
 
     # ---- execution -------------------------------------------------------
 
-    def _cli(self, args: list[str], write: bool, json_expected: bool = True) -> Any:
+    def _cli(self, args: list[str], write: bool, use: Use | None,
+             json_expected: bool = True) -> Any:
         """One door per intent. `write` selects which allowlist applies.
 
         The caller must say which door it wants. A read call site can therefore
         never reach a write, however the arguments are shaped.
+
+        `use` says what the CREDENTIAL is being asked for, and it is a required
+        argument for the same reason `write` is: a call site that could leave it
+        out would silently get whichever authority the previous one had. Reading
+        a pull request is `repo.read`; creating one is `repo.pr`. The adapter
+        declares intent -- the broker decides, every single call.
         """
         check = cli_is_allowed_write if write else cli_is_read
         ok, reason = check(args)
@@ -69,10 +106,14 @@ class GitHubWrite:
             raise ReadOnlyRefused(
                 f"'{self.cli_path} {' '.join(args)}' refused: {reason}")
 
+        # Resolved HERE, immediately before the process starts, and never held.
+        # A refusal stops the call before anything leaves the machine.
+        launch = self._launch(use)
         started = time.monotonic()
         try:
             p = subprocess.run([self.cli_path, *args], capture_output=True,
                                encoding="utf-8", errors="replace",
+                               env=launch.env,
                                timeout=self.timeout)
         except subprocess.TimeoutExpired as e:
             self._notify(args, started, False, f"timed out after {self.timeout}s")
@@ -82,7 +123,9 @@ class GitHubWrite:
             raise AdapterError(f"'{self.cli_path}' is not on PATH") from e
 
         if p.returncode != 0:
-            error = (p.stderr or "").strip()[:400]
+            # Scrubbed BEFORE truncating: cutting first can leave half a token,
+            # and half a token is still the part nobody should have written down.
+            error = launch.scrub((p.stderr or "").strip())[:400]
             low = error.lower()
             self._notify(args, started, False, error)
             if "authentication" in low or "not logged" in low or "401" in low:
@@ -143,7 +186,7 @@ class GitHubWrite:
     def get_pull_request(self, repo: str, number: int) -> PullRequest:
         target = repo if "/" in repo else f"{self.org}/{repo}"
         raw = self._cli(["pr", "view", str(number), "--repo", target,
-                         "--json", PR_FIELDS], write=False)
+                         "--json", PR_FIELDS], write=False, use=Use.REPO_READ)
         if not isinstance(raw, dict):
             raise AdapterError(f"pr view returned {type(raw).__name__}")
         return self._normalize(raw, target)
@@ -158,7 +201,7 @@ class GitHubWrite:
         target = repo if "/" in repo else f"{self.org}/{repo}"
         raw = self._cli(["pr", "list", "--repo", target, "--head", branch,
                          "--state", "open", "--limit", "10",
-                         "--json", PR_FIELDS], write=False)
+                         "--json", PR_FIELDS], write=False, use=Use.REPO_READ)
         if not isinstance(raw, list):
             raise AdapterError("pr list returned an unexpected shape")
         return self._normalize(raw[0], target) if raw else None
@@ -175,7 +218,7 @@ class GitHubWrite:
         target = repo if "/" in repo else f"{self.org}/{repo}"
         try:
             raw = self._cli(["api", f"repos/{target}/git/ref/heads/{branch}"],
-                            write=False)
+                            write=False, use=Use.REPO_READ)
         except NotFound:
             return None
         if not isinstance(raw, dict):
@@ -203,7 +246,7 @@ class GitHubWrite:
         created = self._cli(
             ["pr", "create", "--repo", target, "--head", branch, "--base", base,
              "--title", title, "--body", full_body],
-            write=True, json_expected=False)
+            write=True, use=Use.REPO_PR, json_expected=False)
 
         # `pr create` prints a URL, not JSON. The number is read back from the
         # remote rather than parsed out of it: the engine must confirm what was
