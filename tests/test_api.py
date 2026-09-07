@@ -26,7 +26,8 @@ from regente.core import ids
 from regente.core.model import ExternalRef, Run, RunState, Task, Workspace
 from regente.core.policy import AutonomyLevel
 from regente.core.states import TaskState
-from regente.app.api import Api, Principal
+from regente.app.api import Api
+from regente.core.principal import ANONYMOUS, Principal
 from regente.engine.readmodel import ReadModel
 from regente.engine.store_sqlite import SqliteStore
 
@@ -84,8 +85,24 @@ def bench(tmp_path):
     store.close()
 
 
+def operator(*reads, decides=(), method="test") -> Principal:
+    """Uma identidade JA autenticada, com alcance explicito.
+
+    `method` preenchido e o que separa autenticado de afirmado. Um principal
+    montado sem ele nao passa por nenhuma barreira -- que e exatamente o
+    comportamento que se quer.
+    """
+    return Principal(subject="operador", display="operador", method=method,
+                     workspaces=frozenset(reads) if reads else None,
+                     decides=frozenset(decides))
+
+
 def get(bench, path, query=None, principal=None):
-    return bench.api.resolve("GET", path, query or {}, principal)
+    # Leitura autenticada por default: o que se testa em cada caso e o ESCOPO,
+    # e um default anonimo faria todos falharem pelo mesmo motivo, escondendo o
+    # que cada teste queria dizer. O anonimo tem testes proprios.
+    who = operator() if principal is None else principal
+    return bench.api.resolve("GET", path, query or {}, who)
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +146,7 @@ def test_there_is_no_route_that_mutates(bench):
 @pytest.mark.parametrize("suffix", SCOPED)
 def test_every_scoped_route_refuses_a_workspace_the_principal_cannot_read(
         bench, suffix):
-    only_a = Principal(name="a", workspaces=frozenset({"wks_a"}))
+    only_a = operator("wks_a")
     assert get(bench, f"/api/workspaces/wks_a{suffix}", principal=only_a).status == 200
     r = get(bench, f"/api/workspaces/wks_b{suffix}", principal=only_a)
     assert r.status == 404, f"{suffix} vazou para outro tenant"
@@ -140,7 +157,7 @@ def test_a_workspace_that_does_not_exist_answers_the_same_as_one_forbidden(
         bench, suffix):
     """Distinguir as duas confirmaria a existencia de um workspace alheio."""
     forbidden = get(bench, f"/api/workspaces/wks_b{suffix}",
-                    principal=Principal(workspaces=frozenset({"wks_a"})))
+                    principal=operator("wks_a"))
     absent = get(bench, f"/api/workspaces/wks_ghost{suffix}")
     assert forbidden.status == absent.status == 404
     assert forbidden.payload == absent.payload
@@ -176,20 +193,20 @@ def test_a_delivery_of_one_tenant_never_appears_in_the_other(bench):
 
 
 def test_the_workspace_list_shows_only_what_the_principal_may_read(bench):
-    only_a = Principal(workspaces=frozenset({"wks_a"}))
+    only_a = operator("wks_a")
     payload = get(bench, "/api/workspaces", principal=only_a).payload
     assert [w["id"] for w in payload["workspaces"]] == ["wks_a"]
     assert len(get(bench, "/api/workspaces").payload["workspaces"]) == 2
 
 
 def test_the_client_list_hides_a_client_with_no_readable_workspace(bench):
-    only_a = Principal(workspaces=frozenset({"wks_a"}))
+    only_a = operator("wks_a")
     payload = get(bench, "/api/clients", principal=only_a).payload
     assert [c["name"] for c in payload["clients"]] == ["Acme"]
 
 
 def test_global_health_covers_only_readable_workspaces(bench):
-    only_a = Principal(workspaces=frozenset({"wks_a"}))
+    only_a = operator("wks_a")
     payload = get(bench, "/api/health", principal=only_a).payload
     assert [w["id"] for w in payload["workspaces"]] == ["wks_a"]
 
@@ -285,73 +302,326 @@ def test_an_unknown_api_route_is_not_silently_a_page(bench):
 # ---------------------------------------------------------------------------
 # HTTP de verdade
 # ---------------------------------------------------------------------------
+#
+# A UI e cliente. A API e fronteira. O Core e autoridade.
+#
+# Estes testes nao passam pela tela: falam HTTP direto. "O botao nao aparece"
+# nao e defesa nenhuma -- qualquer requisicao valida pode TENTAR, e o que
+# importa e o que a fronteira faz com ela.
 
-@pytest.mark.slow
-def test_the_server_actually_serves(tmp_path):
-    """Roteamento certo com servidor que nao sobe ainda e uma tela em branco."""
+@pytest.fixture
+def live(tmp_path):
+    """Um servidor de verdade, com identidade de verdade e uma escalada aberta."""
     import threading
-    import urllib.request
 
+    from regente.adapters.identity.dev_token import DevTokenIdentity
     from regente.app.api import serve
+    from regente.core.policy import PolicyEngine
+    from regente.core.risk import RiskLevel
+    from regente.engine import escalation
+    from regente.engine.decision import DecisionService
 
     store = SqliteStore(tmp_path / "live.db", clock=lambda: T0)
     store.migrate()
     store.save_client("cli_a", "org", "Acme")
-    store.save_workspace(Workspace(id="wks_a", client_id="cli_a", name="main",
-                                   max_autonomy=AutonomyLevel.L2))
+    store.save_client("cli_b", "org", "Beta")
+    for wid, client in (("wks_a", "cli_a"), ("wks_b", "cli_b")):
+        store.save_workspace(Workspace(id=wid, client_id=client, name="main",
+                                       max_autonomy=AutonomyLevel.L3))
+
+    made = {}
+    for wid in ("wks_a", "wks_b"):
+        t = Task(id=ids.new_id(ids.TASK), workspace_id=wid, project_id="p",
+                 title="precisa de gente", state=TaskState.READY,
+                 externo=ExternalRef(provider="filesystem", key="SAME-1"))
+        store.save_task(t)
+        for step in (TaskState.ASSIGNED, TaskState.WAITING_HUMAN):
+            store.transition(t.id, step, actor="t", reason="setup",
+                             workspace_id=wid)
+        a = escalation.build(task=store.task(t.id, wid),
+                             what_happened="o agente parou",
+                             why_it_matters="alguem precisa escolher",
+                             risk=RiskLevel.MEDIUM)
+        store.open_approval(a)
+        made[wid] = {"task": t, "approval": a}
+
+    identity = DevTokenIdentity(
+        operator="walberth",
+        reads=frozenset({"wks_a"}), decides=frozenset({"wks_a"}))
+    decisions = DecisionService(
+        store=store,
+        policy=PolicyEngine.from_config([
+            {"name": "decidir", "effect": "ALLOW",
+             "match": {"action": "approval.decide"}}]),
+        clock=lambda: T0, organization="org", client="Acme",
+        workspace_name="main")
+
     httpd = serve(ReadModel(store=store, clock=lambda: T0),
-                  host="127.0.0.1", port=0)
-    port = httpd.server_address[1]
+                  host="127.0.0.1", port=0, identity=identity,
+                  decisions=decisions, session_token=identity.token)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     try:
-        with urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/api/workspaces", timeout=10) as r:
-            assert r.status == 200
-            body = json.loads(r.read())
-        assert body["workspaces"][0]["client"] == "Acme"
-
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10) as r:
-            assert r.status == 200
-            assert b"mission control" in r.read()
-
-        # Escrita recusada tambem no caminho HTTP, nao so no roteador.
-        request = urllib.request.Request(
-            f"http://127.0.0.1:{port}/api/workspaces", method="POST",
-            data=b"{}")
-        try:
-            urllib.request.urlopen(request, timeout=10)
-            raise AssertionError("a API aceitou uma escrita por HTTP")
-        except urllib.error.HTTPError as e:
-            # 405 com motivo, e nao o 501 generico da stdlib: "metodo nao
-            # suportado" le-se como "ainda nao implementado".
-            assert e.code == 405
-            assert json.loads(e.read())["error"] == "read_only"
+        yield SimpleNamespace(
+            port=httpd.server_address[1], token=identity.token, store=store,
+            made=made, identity=identity)
     finally:
         httpd.shutdown()
         httpd.server_close()
         thread.join(timeout=10)
+        identity.close()
         store.close()
 
 
-def test_a_symlink_out_of_the_ui_directory_is_refused(bench, tmp_path):
-    """A segunda guarda dos estaticos, exercitada sozinha.
+def call(live, path, method="GET", body=None, token="__default__"):
+    """Uma requisicao HTTP crua. Devolve (status, payload)."""
+    import urllib.error
+    import urllib.request
 
-    A checagem de segmentos suspeitos pega `..` no caminho pedido. O que ela nao
-    pega e um link dentro da propria pasta apontando para fora -- e e por isso
-    que o caminho resolvido tambem e conferido contra a raiz.
+    url = f"http://127.0.0.1:{live.port}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    request = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        request.add_header("Content-Type", "application/json")
+    used = live.token if token == "__default__" else token
+    if used:
+        request.add_header("Authorization", f"Bearer {used}")
+    try:
+        with urllib.request.urlopen(request, timeout=15) as r:
+            return r.status, json.loads(r.read() or b"null")
+    except urllib.error.HTTPError as e:
+        raw = e.read()
+        try:
+            return e.code, json.loads(raw or b"null")
+        except ValueError:
+            return e.code, {"raw": raw.decode(errors="replace")}
+
+
+@pytest.mark.slow
+def test_an_authenticated_read_works_and_an_anonymous_one_sees_nothing(live):
+    status, payload = call(live, "/api/workspaces")
+    assert status == 200
+    assert [w["id"] for w in payload["workspaces"]] == ["wks_a"]
+
+    status, payload = call(live, "/api/workspaces", token="")
+    assert status == 200
+    assert payload["workspaces"] == [], (
+        "uma requisicao sem credencial enxergou workspaces")
+
+
+@pytest.mark.slow
+def test_a_wrong_token_is_not_a_partial_identity(live):
+    status, payload = call(live, "/api/workspaces", token="quase-o-token")
+    assert status == 200 and payload["workspaces"] == []
+
+
+@pytest.mark.slow
+def test_a_decision_over_http_crosses_every_barrier_and_persists(live):
+    """O caminho inteiro, sem tela: autenticar, escopo, policy, Core, auditoria."""
+    approval = live.made["wks_a"]["approval"]
+    status, payload = call(
+        live, f"/api/workspaces/wks_a/approvals/{approval.id}/decision",
+        method="POST", body={"choice": "seguir", "note": "confirmado"})
+
+    assert status == 200, payload
+    assert payload["accepted"] is True
+    assert payload["previous_state"] == "OPEN"
+    assert payload["new_state"] == "DECIDED"
+    assert payload["decided_by"] == "dev-token:walberth"
+
+    # Persistido, e nao apenas respondido.
+    stored = live.store.approval(approval.id, "wks_a")
+    assert stored.state.value == "DECIDED"
+    assert stored.choice == "seguir"
+    assert stored.decided_by == "dev-token:walberth"
+
+    # E legivel de volta pela leitura, que e o que a tela consulta.
+    status, payload = call(live, "/api/workspaces/wks_a/escalations")
+    assert status == 200
+    assert payload["escalations"] == [], "a escalada decidida continua na fila"
+
+
+@pytest.mark.slow
+def test_an_unauthenticated_post_is_refused_before_anything_is_written(live):
+    approval = live.made["wks_a"]["approval"]
+    status, payload = call(
+        live, f"/api/workspaces/wks_a/approvals/{approval.id}/decision",
+        method="POST", body={"choice": "seguir"}, token="")
+
+    assert status == 401
+    assert payload["error"] == "unauthenticated"
+    assert live.store.approval(approval.id, "wks_a").state.value == "OPEN"
+
+
+@pytest.mark.slow
+def test_a_decision_in_another_tenant_is_refused_and_reveals_nothing(live):
+    """O mesmo operador, a mesma chave de task, o outro cliente."""
+    theirs = live.made["wks_b"]["approval"]
+    status, payload = call(
+        live, f"/api/workspaces/wks_b/approvals/{theirs.id}/decision",
+        method="POST", body={"choice": "seguir"})
+
+    assert status == 404
+    assert "wks_b" not in json.dumps(payload)
+    assert "Beta" not in json.dumps(payload)
+    assert live.store.approval(theirs.id, "wks_b").state.value == "OPEN"
+
+
+@pytest.mark.slow
+def test_an_approval_id_from_another_tenant_does_not_work_in_my_workspace(live):
+    """Conhecer o id nao e autoridade, nem quando o workspace e o meu."""
+    theirs = live.made["wks_b"]["approval"]
+    status, _ = call(
+        live, f"/api/workspaces/wks_a/approvals/{theirs.id}/decision",
+        method="POST", body={"choice": "seguir"})
+    assert status == 404
+    assert live.store.approval(theirs.id, "wks_b").state.value == "OPEN"
+
+
+@pytest.mark.slow
+def test_the_body_cannot_declare_who_is_deciding(live):
+    approval = live.made["wks_a"]["approval"]
+    for forged in ({"choice": "seguir", "principal": "outra-pessoa"},
+                   {"choice": "seguir", "decided_by": "chefe"},
+                   {"choice": "seguir", "subject": "root"},
+                   {"choice": "seguir", "workspace_id": "wks_b"}):
+        status, payload = call(
+            live, f"/api/workspaces/wks_a/approvals/{approval.id}/decision",
+            method="POST", body=forged)
+        assert status == 400, forged
+        assert "nao vem do corpo" in payload["detail"]
+    assert live.store.approval(approval.id, "wks_a").state.value == "OPEN"
+
+
+@pytest.mark.slow
+def test_a_second_decision_conflicts_instead_of_overwriting(live):
+    approval = live.made["wks_a"]["approval"]
+    path = f"/api/workspaces/wks_a/approvals/{approval.id}/decision"
+
+    first = call(live, path, method="POST", body={"choice": "seguir"})
+    second = call(live, path, method="POST", body={"choice": "cancelar"})
+
+    assert first[0] == 200
+    assert second[0] == 409
+    assert second[1]["error"] == "conflict"
+    stored = live.store.approval(approval.id, "wks_a")
+    assert stored.choice == "seguir", "a segunda decisao sobrescreveu a primeira"
+
+
+@pytest.mark.slow
+def test_a_choice_outside_the_offered_options_is_refused(live):
+    approval = live.made["wks_a"]["approval"]
+    status, payload = call(
+        live, f"/api/workspaces/wks_a/approvals/{approval.id}/decision",
+        method="POST", body={"choice": "mergear-tudo"})
+    assert status == 422
+    assert payload["error"] == "invalid_state"
+    assert live.store.approval(approval.id, "wks_a").state.value == "OPEN"
+
+
+@pytest.mark.slow
+def test_no_other_post_route_exists(live):
+    approval = live.made["wks_a"]["approval"]
+    for path in ("/api/workspaces/wks_a/tasks",
+                 "/api/workspaces/wks_a/runs/run_a",
+                 f"/api/workspaces/wks_a/approvals/{approval.id}",
+                 "/api/workspaces/wks_a/approvals/x/decision/extra",
+                 "/api/health"):
+        status, payload = call(live, path, method="POST", body={"choice": "x"})
+        assert status == 405, path
+        assert payload["error"] == "read_only"
+
+
+@pytest.mark.slow
+def test_the_page_carries_the_session_token_and_the_disk_file_does_not(live):
+    """A pagina recebe o segredo; o arquivo no repositorio nunca o contem.
+
+    E de la que a tela o le. Um site aberto noutra aba pode disparar um POST
+    para o loopback, mas nao consegue LER esta pagina -- entao nao alcanca o
+    token, e o POST forjado chega sem credencial.
     """
-    import os
+    import urllib.request
 
-    outside = tmp_path / "segredo.js"
-    outside.write_text("TOKEN=x", encoding="utf-8")
-    link = bench.api.ui_root / "atalho.js"
-    try:
-        os.symlink(outside, link)
-    except (OSError, NotImplementedError) as e:
-        pytest.skip(f"este sistema nao permite criar symlink: {e}")
-    try:
-        r = get(bench, "/atalho.js")
-        assert r.status == 404, "um link para fora da raiz foi servido"
-    finally:
-        link.unlink()
+    from regente.app.api import UI_ROOT
+
+    with urllib.request.urlopen(f"http://127.0.0.1:{live.port}/",
+                                timeout=15) as r:
+        page = r.read().decode()
+    assert live.token in page
+    assert "{{SESSION_TOKEN}}" not in page
+    assert live.token not in (UI_ROOT / "index.html").read_text(encoding="utf-8")
+
+
+def test_the_session_token_never_touches_the_disk(tmp_path):
+    """Um segredo escrito e nunca lido e liability pura.
+
+    A primeira versao gravava o token num arquivo que nada consultava. Ele
+    sobreviveu a um `kill` -- o `finally` que o apagaria nao roda -- e ficou
+    para tras sem ter servido para nada.
+    """
+    from regente.adapters.identity.dev_token import DevTokenIdentity
+
+    antes = set(tmp_path.rglob("*"))
+    identity = DevTokenIdentity(operator="x")
+    assert identity.token
+    assert set(tmp_path.rglob("*")) == antes, "o token foi parar em disco"
+
+    achados = [f for f in tmp_path.rglob("*")
+               if f.is_file() and identity.token in f.read_text(
+                   encoding="utf-8", errors="ignore")]
+    assert not achados, f"o segredo apareceu em {achados}"
+
+
+@pytest.mark.slow
+def test_parallel_reads_never_answer_404_for_something_that_exists(live):
+    """O defeito que a Mission Control real encontrou.
+
+    `check_same_thread=False` estava ligado e nao havia trava nenhuma. Enquanto
+    a segunda thread era so o batimento de lease, passou despercebido. O
+    navegador dispara TRES leituras em paralelo a cada cinco segundos, cada uma
+    numa thread do servidor -- e a mesma URL passou a responder 200, depois
+    404, depois resposta vazia.
+
+    Um 404 intermitente e a pior forma disto: parece dado que sumiu, e quem
+    olha a tela conclui que perdeu trabalho.
+    """
+    import concurrent.futures
+
+    caminhos = ["/api/workspaces/wks_a/tasks",
+                "/api/workspaces/wks_a/escalations",
+                "/api/workspaces/wks_a/events?limit=60",
+                "/api/workspaces/wks_a/overview",
+                "/api/workspaces/wks_a/health"] * 12
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        resultados = list(pool.map(lambda p: (p, call(live, p)[0]), caminhos))
+
+    ruins = [(p, s) for p, s in resultados if s != 200]
+    assert not ruins, (
+        f"{len(ruins)} de {len(resultados)} leituras paralelas falharam "
+        f"para recursos que existem: {ruins[:5]}")
+
+
+@pytest.mark.slow
+def test_a_read_and_a_decision_at_the_same_time_do_not_corrupt_each_other(live):
+    """Leitura e escrita concorrentes: uma decisao, e nenhuma leitura torta."""
+    import concurrent.futures
+
+    approval = live.made["wks_a"]["approval"]
+    path = f"/api/workspaces/wks_a/approvals/{approval.id}/decision"
+
+    def trabalho(i):
+        if i % 4 == 0:
+            return ("post", call(live, path, method="POST",
+                                 body={"choice": "seguir"})[0])
+        return ("get", call(live, "/api/workspaces/wks_a/overview")[0])
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        saidas = list(pool.map(trabalho, range(24)))
+
+    leituras = [s for k, s in saidas if k == "get"]
+    escritas = [s for k, s in saidas if k == "post"]
+    assert set(leituras) == {200}, f"leitura quebrou sob escrita: {leituras}"
+    assert escritas.count(200) == 1, f"nem uma nem duas decisoes: {escritas}"
+    assert set(escritas) <= {200, 409}
+    assert live.store.approval(approval.id, "wks_a").choice == "seguir"

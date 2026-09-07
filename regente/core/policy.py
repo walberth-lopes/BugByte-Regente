@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import fnmatch
 from dataclasses import dataclass, field
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Any
 
 
@@ -51,10 +51,29 @@ class AutonomyLevel(IntEnum):
         return cls[t]
 
 
-class Effect(str):
+class Effect(str, Enum):
+    """Os tres vereditos possiveis.
+
+    Era `class Effect(str)` com atributos de classe -- parecia um enum, escrevia
+    como um enum, e nao era. A diferenca aparece num lugar so e em silencio:
+    `decision.effect is Effect.DENY` respondia SEMPRE False, porque nao havia
+    membro nenhum para ser identico. `==` funcionava, `is` nao, nada avisava, e
+    o tipo anotado dizia `str`. Custou uma verificacao de policy que
+    simplesmente nao acontecia -- descoberta porque um teste de DENY passou.
+    """
     ALLOW = "ALLOW"
     DENY = "DENY"
     HUMAN_APPROVAL = "HUMAN_APPROVAL"
+
+    def __str__(self) -> str:
+        """`DENY`, e nao `Effect.DENY`.
+
+        A partir do 3.11 um enum com mistura de `str` formata pelo NOME. Sem
+        isto, toda mensagem que ja existia -- "policy DENY: ..." -- viraria
+        "policy Effect.DENY: ...", e uma mudanca interna de tipo apareceria na
+        cara de quem le o relatorio.
+        """
+        return self.value
 
 
 #: Ordem de severidade. Usada para "vence o mais restritivo".
@@ -140,7 +159,14 @@ class PolicyContext:
 @dataclass(frozen=True, slots=True)
 class Rule:
     name: str
-    effect: str
+    #: O EFEITO, e nao o texto dele.
+    #:
+    #: Ja foi `str`. Como `Effect` e um enum de string, `decision.effect ==
+    #: Effect.DENY` respondia certo e `decision.effect is Effect.DENY`
+    #: respondia SEMPRE False -- sem erro, sem aviso, com o tipo anotado
+    #: dizendo que estava tudo bem. Custou uma verificacao de policy que
+    #: simplesmente nao acontecia. Convertido na leitura, os dois funcionam.
+    effect: Effect
     match: dict[str, Any] = field(default_factory=dict)
     reason: str = ""
 
@@ -165,7 +191,7 @@ def _matches_one(value: str, default_value: str) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Decision:
-    effect: str
+    effect: Effect
     reason: str
     rule: str | None = None
     #: Todas as regras que casaram, na ordem em que foram avaliadas. O dono
@@ -204,9 +230,12 @@ class PolicyEngine:
     def from_config(cls, brutas: list[dict[str, Any]] | None) -> PolicyEngine:
         regras = []
         for i, b in enumerate(brutas or []):
-            effect = str(b["effect"]).strip().upper()
-            if effect not in _SEVERIDADE:
-                raise ValueError(f"efeito desconhecido em policy: {effect!r}")
+            bruto = str(b["effect"]).strip().upper()
+            try:
+                effect = Effect(bruto)
+            except ValueError:
+                raise ValueError(
+                    f"efeito desconhecido em policy: {bruto!r}") from None
             regras.append(Rule(
                 name=b.get("name") or f"regra_{i}",
                 effect=effect,

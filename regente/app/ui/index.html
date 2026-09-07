@@ -11,6 +11,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Regente — Mission Control</title>
+  <!--
+    O segredo desta sessao, injetado pelo servidor ao servir esta pagina.
+
+    Nao esta no arquivo em disco e nao vem de rota: quem consegue GET nesta
+    origem ja e local. O que isto IMPEDE e outra coisa -- um site aberto noutra
+    aba pode disparar um POST para o loopback, mas nao consegue LER esta pagina
+    (nao ha CORS), entao nao alcanca o token e o POST forjado chega sem
+    credencial.
+  -->
+  <meta name="regente-session" content="{{SESSION_TOKEN}}">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -21,6 +31,7 @@
       <select id="workspace-picker"></select>
     </label>
     <nav id="nav"></nav>
+    <span id="whoami" class="whoami"></span>
     <div class="freshness">
       <span id="freshness-dot" class="dot"></span>
       <span id="freshness">lendo…</span>
@@ -32,7 +43,9 @@
   </main>
 
   <footer class="foot">
-    Somente leitura. Nenhuma acao desta tela altera o estado do motor.
+    Uma unica escrita: decidir uma escalada. Ela atravessa as mesmas barreiras
+    que o terminal — identidade, escopo, policy, Core, auditoria. Todo o resto
+    desta tela e leitura.
   </footer>
 
   <script src="/app.js"></script>

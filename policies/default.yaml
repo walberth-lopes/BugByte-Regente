@@ -40,6 +40,20 @@ rules:
     effect: ALLOW
     match: {action: "task.write*"}
 
+  # ---- decisao humana ----------------------------------------------------
+  # Permite que uma PESSOA autenticada responda a fila de escalada. Nao e
+  # permissao para um agente aprovar a si mesmo: `approval.decide` so e emitido
+  # pelo caminho de decisao humana, que antes disto ja exigiu identidade provada
+  # e autoridade concedida naquele workspace. Policy permite; ela nao concede.
+  #
+  # Sem esta regra o default DENY vale, e a fila de escalada nao pode ser
+  # respondida por ninguem -- que foi o estado em que este arquivo ficou ate o
+  # comando `regente decide` voltar a funcionar e mostrar a recusa.
+  - name: human_decides_escalations
+    effect: ALLOW
+    match: {action: "approval.decide"}
+    reason: "responder a fila e trabalho de gente; sem isto a fila e um beco"
+
   # ---- staging: autonomo -------------------------------------------------
   - name: merge_and_deploy_staging
     effect: ALLOW

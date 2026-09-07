@@ -17,6 +17,156 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 13 — a primeira escrita humana
+
+Uma acao, e uma so: **decidir uma escalada**. O objetivo nunca foi dar poderes ao
+navegador. Foi provar que ele pode participar sem alterar a arquitetura de
+autoridade que ja existia.
+
+```
+navegador                          terminal
+    |                                  |
+    +---------- as MESMAS -------------+
+                barreiras
+                    |
+    autenticacao  quem e voce?
+    autorizacao   voce manda NESTE workspace?
+    escopo        a aprovacao e deste workspace?
+    policy        esta acao e permitida aqui?
+    estado        esta aprovacao ainda esta aberta?
+    transicao     a escolha esta entre as oferecidas?
+    auditoria     quem, onde, o que, a partir de que estado
+```
+
+Nao existe `ui_decide_approval`. Existe `DecisionService`, e os dois passam por
+ele. A razao nao e estilo: duas funcoes de decisao divergem, e a que diverge e
+sempre a que tem menos verificacoes.
+
+### O que separa autenticado de afirmado
+
+`Principal.method`. Um principal sem ele nao foi provado por ninguem -- foi
+declarado. E a diferenca entre "o servidor verificou um segredo que ele proprio
+emitiu" e "o navegador digitou um nome".
+
+O corpo do POST tambem nao pode dizer quem esta decidindo: `principal`,
+`subject`, `decided_by`, `per`, `actor`, `method` e `workspace_id` sao recusados
+com `400`. Identidade e escopo nao vem do corpo da requisicao.
+
+Ler e decidir sao concessoes **separadas**, com defaults opostos: `workspaces`
+pode ser aberto, `decides` comeca vazio. Derivar escrita de leitura faria de
+todo observador um decisor -- que e precisamente o que a fila de escalada existe
+para nao ser.
+
+### Exercicio real
+
+A escalada **nao foi fabricada**. Um workspace de sandbox real rodou ticks
+reais; o agente falhou duas vezes de verdade; a escada de recuperacao do motor
+se esgotou e ELE escalou:
+
+```
+SB-1 · risco LOW
+2 tentativas falharam. Ultima: no outcome declared
+a escada de recuperacao acabou; sem decisao sua a task nao sai do lugar
+```
+
+A decisao foi tomada **no navegador**, clicando a opcao que o motor recomendou.
+A trilha que ficou:
+
+```
+decisao_humana_autenticada   dev-token:walberth   decidiu 'investigar' em SB-1
+decisao_humana               dev-token:walberth   escolheu 'investigar'
+```
+
+E o tick seguinte agiu sobre ela: `1 despachada(s), 1 liberada(s)`.
+
+Antes disso, um POST sem credencial na mesma URL -- o que um site aberto noutra
+aba conseguiria montar -- respondeu `401`.
+
+### Defeitos encontrados
+
+| # | Defeito | Por que estava invisivel |
+|---|---|---|
+| 1 | **`regente decide` estava quebrado.** O parser recebia `opcao` e `--por`; o handler lia `args.option` e `args.per`. `AttributeError` antes de tocar no store. O unico caminho humano do sistema, inutil desde a renomeacao para ingles. | Todo teste chamava `store.decide_approval` diretamente. A fiacao de argumentos do CLI nao tinha teste nenhum -- e e ali que uma renomeacao deixa restos. |
+| 2 | **A conexao SQLite era compartilhada entre threads sem trava.** `check_same_thread=False` desliga a checagem e nao poe nada no lugar. | Enquanto a segunda thread era so o batimento de lease, quase nao havia contencao. O navegador dispara tres leituras em paralelo a cada cinco segundos: a **mesma URL** passou a responder 200, depois 404, depois resposta vazia. Um 404 intermitente e a pior forma disto -- parece dado que sumiu. Encontrado olhando o log de rede do browser real. |
+| 3 | **`Effect` parecia um enum e nao era.** `class Effect(str)` com atributos de classe. `decision.effect == Effect.DENY` respondia certo; `decision.effect is Effect.DENY` respondia **sempre False**, sem erro e sem aviso. Custou uma verificacao de policy que simplesmente nao acontecia. | Todo o codigo existente usava `==`. O primeiro `is` do projeto foi o meu, e so apareceu porque um teste de DENY passou quando deveria falhar. |
+| 4 | **A policy do repositorio proibia decisao humana.** Sem regra para `approval.decide`, o default DENY valia: com o CLI consertado, a fila de escalada nao podia ser respondida por ninguem. | Enquanto o comando estava quebrado, ninguem chegava a policy. |
+| 5 | **O token de sessao era gravado num arquivo que nada lia.** Sobreviveu a um `kill` -- o `finally` que o apagaria nao roda -- e ficou para tras sem nunca ter servido. | So aparece quando o processo morre sem encerrar; e um segredo escrito, nunca consultado. |
+| 6 | **`--por` deixava quem decide escolher o proprio nome na auditoria.** | Ninguem nota que uma assinatura e digitada ate precisar confiar nela. |
+
+O defeito 2 e o mais grave e nao tem nada a ver com escrita humana: ele afetava
+toda leitura da Mission Control desde o marco anterior.
+
+### Contraprovas
+
+Cada barreira atacada sozinha, com as outras satisfeitas:
+
+- principal sem `method`, com todas as concessoes → `UNAUTHENTICATED`;
+- token errado → nao e identidade parcial: e anonimo;
+- quem le o workspace mas nao recebeu `decides` → recusado;
+- id de aprovacao de outro cliente, dentro do meu proprio workspace → recusado;
+- workspace inexistente e workspace alheio → **mesma resposta, mesmo texto**;
+- a recusa nao contem o id, o nome nem a chave do outro tenant;
+- policy `DENY` para um operador ja autorizado → recusado;
+- policy vazia → recusado (default DENY vale para humano tambem);
+- regra sobre `deploy.*` nao governa `approval.decide`;
+- `HUMAN_APPROVAL` nao pede aprovacao humana para uma aprovacao humana;
+- segunda decisao → `CONFLICT`, e a primeira permanece;
+- escolha fora das opcoes oferecidas → `INVALID_STATE`;
+- dois **processos** decidindo ao mesmo tempo → exatamente uma aceita, uma `CONFLICT`;
+- nota com texto tipo credencial → nunca persistida literal (so o comprimento);
+- decisao recusada → nenhuma auditoria de decisao;
+- `POST` em qualquer outra rota → `405 read_only`.
+
+Estruturalmente, verificado no proprio codigo-fonte: a API nao escreve no store,
+`decide_approval` so e chamado do Core, a tela nao contem logica de autorizacao,
+nao alcanca o store, e o modulo da API nao importa `sqlite3` nem adapter.
+
+### Sweep de mutacao
+
+26 mutacoes sobre as barreiras. Nenhuma quebra o caminho feliz -- remover a
+autenticacao deixa o operador local decidindo normalmente; aceitar a segunda
+decisao produz um 200 satisfatorio.
+
+### Estado das capacidades
+
+| Capacidade | Estado | Evidencia |
+|---|---|---|
+| Decisao humana pelo navegador, ponta a ponta | **EXERCISED_REAL** | escalada gerada pelo motor, clique real, trilha real, tick agiu |
+| Identidade autenticada antes da escrita | **EXERCISED_REAL** | `401` para POST sem credencial no servidor real |
+| Terminal e navegador pelo mesmo caminho | **EXERCISED_REAL** | `regente decide` e `POST` chamam `DecisionService` |
+| Auditoria atribuivel | **EXERCISED_REAL** | `dev-token:walberth`, com estado anterior e posterior |
+| Tenancy na escrita | CONTRACT_TESTED | id valido do tenant errado, por HTTP e pelo Core |
+| Policy como autoridade independente | CONTRACT_TESTED | `DENY`, vazia, acao vizinha, `HUMAN_APPROVAL` |
+| Exatamente uma decisao sob concorrencia | CONTRACT_TESTED | dois processos reais |
+| Leitura sob concorrencia | CONTRACT_TESTED | 60 leituras paralelas, 8 threads |
+| Erros distintos e sem vazamento | CONTRACT_TESTED | 401/403/404/409/422 |
+| Segredo de sessao fora do disco | CONTRACT_TESTED | varredura do diretorio |
+| **Identidade real (OIDC/SSO)** | **BLOCKED** | nao ha provedor; ver limitacoes |
+
+### Limitacoes
+
+**Nao ha autenticacao para valer.** O `dev-token` prova que quem chama e quem
+rodou `regente ui` nesta maquina, e nada mais: sem usuarios, sem expiracao, sem
+revogacao, sem segundo fator, e vale para quem o tiver. Ele se anuncia -- na
+tela, no `describe()` e em `/api/health` -- porque um mecanismo de
+desenvolvimento indistinguivel de um real cria a sensacao de que ha
+autenticacao.
+
+**O servidor recusa escutar fora do loopback** com esse mecanismo, e o provedor
+recusa autenticar mesmo se alguem forcar o bind. Nao e conselho no README; e uma
+recusa no codigo.
+
+**A concessao e por processo, nao por pessoa.** `regente ui` concede o workspace
+da configuracao que abriu. Nao ha papeis, grupos nem administracao de acesso, e
+`--read-only` e o unico controle: ele remove a autoridade de escrita sem remover
+a identidade.
+
+**Uma acao so.** Mergear, aprovar PR, disparar CI, publicar, alterar policy,
+orcamento ou segredo continuam sem porta -- e a ausencia nao e lacuna a preencher
+quando der.
+
+---
+
 ## Milestone 12 — Mission Control, Read Model e API
 
 O motor tinha estado operacional e nenhuma superficie de operacao humana. Este

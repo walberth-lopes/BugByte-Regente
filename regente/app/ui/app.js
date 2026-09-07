@@ -12,6 +12,12 @@
 
 const REFRESH_MS = 5000;
 
+// O segredo desta sessao, colocado pelo servidor nesta pagina. A tela nunca o
+// escolhe, nunca o guarda e nunca diz quem e -- ela apresenta um segredo, e
+// quem decide o que ele prova e o servidor.
+const SESSION = (document.querySelector('meta[name="regente-session"]') || {})
+  .content || "";
+
 const state = {
   workspaces: [],
   workspace: null,
@@ -39,14 +45,39 @@ const when = (iso) => {
   return Number.isNaN(d.getTime()) ? esc(iso) : d.toLocaleString();
 };
 
+function headers(extra) {
+  const h = { Accept: "application/json", ...(extra || {}) };
+  if (SESSION) h.Authorization = `Bearer ${SESSION}`;
+  return h;
+}
+
 async function get(path) {
-  const r = await fetch(path, { headers: { Accept: "application/json" } });
+  const r = await fetch(path, { headers: headers() });
   if (!r.ok) {
     let detail = r.statusText;
     try { detail = (await r.json()).detail || detail; } catch { /* corpo nao-JSON */ }
     throw new Error(`${r.status} — ${detail}`);
   }
   return r.json();
+}
+
+/**
+ * A unica escrita da tela.
+ *
+ * Devolve o corpo E o status, sempre -- inclusive na recusa. A tela precisa
+ * distinguir "nao autenticado" de "outro ja decidiu" de "a policy proibiu",
+ * porque cada um manda a pessoa fazer uma coisa diferente. Um "deu erro"
+ * generico manda ela para o terminal, que era o que a tela deveria evitar.
+ */
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  let payload = null;
+  try { payload = await r.json(); } catch { /* corpo nao-JSON */ }
+  return { ok: r.ok, status: r.status, payload: payload || {} };
 }
 
 const ws = () => state.workspace;
@@ -378,23 +409,86 @@ pages.run = async (id) => {
     <div class="panel">${timeline(d.timeline)}</div>`;
 };
 
+/**
+ * Um item da fila humana, com as opcoes REAIS que o motor ofereceu.
+ *
+ * As opcoes vem da API. Nao ha lista fixa aqui: um botao que a tela inventa e
+ * uma acao que o Core nunca prometeu aceitar, e a pessoa so descobre isso
+ * depois de clicar.
+ */
 function escalationCard(e) {
-  return `<div class="blocker" data-kind="HUMAN">
+  const buttons = e.options.map((o) => `
+    <button class="choice" data-approval="${esc(e.id)}" data-choice="${esc(o.id)}"
+      title="${esc(o.effect)}">${esc(o.label)}${
+        e.recommendation === o.id ? " ★" : ""}</button>`).join("");
+
+  return `<div class="blocker" data-kind="HUMAN" data-approval="${esc(e.id)}">
     <div class="kind">${esc(e.task_key)} · risco ${esc(e.risk)} · esperando ${esc(e.waiting)}</div>
     <div>${said(e.what_happened)}</div>
     <div class="detail">${said(e.why_it_matters, "sem justificativa registrada")}</div>
     ${e.what_was_tried.length ? `<div class="detail">tentado:<br>${
       e.what_was_tried.map((t) => esc(t)).join("<br>")}</div>` : ""}
-    <div class="act">opcoes: ${e.options.map((o) => esc(o.label)).join(" · ") || "—"}
-      ${e.recommendation ? ` · recomendada: ${esc(e.recommendation)}` : ""}</div>
-    <div class="detail">decidir e trabalho de terminal: <code class="mono">regente decide</code></div>
+    ${buttons ? `<div class="choices">${buttons}
+      ${e.recommendation ? `<span class="hint">★ recomendada pelo motor</span>` : ""}
+    </div>` : `<p class="empty">esta escalada nao ofereceu opcoes</p>`}
+    <div class="outcome" data-for="${esc(e.id)}"></div>
   </div>`;
 }
 
+/**
+ * Envia a decisao e RELE o estado.
+ *
+ * `200` significa que o servidor aceitou, e nao que a tela sabe o que ficou
+ * gravado. A resposta da escrita nao vira segunda fonte de verdade: o que a
+ * pessoa passa a ver vem da leitura seguinte.
+ */
+async function decide(approvalId, choice, slot) {
+  slot.className = "outcome working";
+  slot.textContent = "enviando…";
+
+  const r = await post(
+    `/api/workspaces/${encodeURIComponent(ws())}/approvals/${
+      encodeURIComponent(approvalId)}/decision`, { choice });
+
+  if (!r.ok) {
+    // Cada recusa manda a pessoa fazer uma coisa diferente.
+    const says = {
+      401: "esta sessao nao esta autenticada; reabra a Mission Control",
+      403: "esta sessao nao tem autoridade para decidir aqui",
+      404: "esta escalada nao existe neste escopo",
+      409: "alguem decidiu antes; nada do que voce escolheu foi perdido",
+      422: "esta escolha nao esta entre as opcoes oferecidas",
+    }[r.status] || r.payload.detail || "a decisao foi recusada";
+    slot.className = "outcome bad";
+    slot.textContent = `${r.status} · ${says}`;
+    await render();             // relemos mesmo na recusa: o mundo pode ter mudado
+    return;
+  }
+
+  slot.className = "outcome good";
+  slot.textContent = "registrada; relendo o estado…";
+  await render();
+}
+
+document.addEventListener("click", (ev) => {
+  const button = ev.target.closest("button.choice");
+  if (!button) return;
+  const slot = document.querySelector(
+    `.outcome[data-for="${CSS.escape(button.dataset.approval)}"]`);
+  // Desabilitar e apresentacao, nao seguranca: o servidor recusa a segunda
+  // decisao por conta propria, e e isso que impede duas abas de decidirem.
+  button.closest(".blocker").querySelectorAll("button.choice")
+    .forEach((b) => { b.disabled = true; });
+  decide(button.dataset.approval, button.dataset.choice, slot);
+});
+
 pages.needs = async () => {
-  const [{ escalations }, { tasks }] = await Promise.all([
-    get(api("/escalations")), get(api("/tasks")),
+  const [{ escalations }, { tasks }, { events }] = await Promise.all([
+    get(api("/escalations")), get(api("/tasks")), get(api("/events?limit=60")),
   ]);
+  // Quem decidiu e quando, lido da trilha do motor -- nao do que o navegador
+  // acabou de enviar. O que a tela mostra e sempre o que ficou gravado.
+  const decided = events.filter((e) => e.kind === "decisao_humana_autenticada");
   const stuck = tasks.filter((t) => t.state.owner === "nobody" && t.state.next_action);
   const waiting = tasks.filter((t) => t.state.owner === "external");
   const blocked = tasks.filter((t) => t.blocked);
@@ -408,6 +502,11 @@ pages.needs = async () => {
     <div class="panel">${escalations.length
       ? escalations.map(escalationCard).join("")
       : `<p class="empty">nenhuma decisao na fila</p>`}</div>
+    ${decided.length ? `<h2>decididas recentemente</h2>
+      <div class="panel">${decided.map((e) => `<div class="blocker" data-kind="DONE">
+        <div class="kind">${esc(e.summary)}</div>
+        <div class="detail">${when(e.at)} · por ${esc(e.actor)}</div>
+      </div>`).join("")}</div>` : ""}
 
     <h2>bloqueado — algo impede, e nao e voce</h2>
     <div class="panel">${taskTable(blocked, { empty: "nada bloqueado" })}</div>
@@ -539,14 +638,41 @@ function schedule() {
   }, REFRESH_MS);
 }
 
+/**
+ * Diz quem esta olhando e o que protege esta sessao.
+ *
+ * Fica sempre visivel, e nao so quando algo da errado: um mecanismo de
+ * desenvolvimento que ninguem consegue distinguir de um real cria a sensacao
+ * de que ha autenticacao. Aqui ele se anuncia.
+ */
+function renderIdentity(id) {
+  const el = document.getElementById("whoami");
+  if (!id) { el.textContent = ""; return; }
+  const pode = id.decides.length
+    ? `decide em ${id.decides.length} workspace(s)`
+    : "somente leitura";
+  el.className = id.development_only ? "whoami dev" : "whoami";
+  el.textContent = `${id.authenticated ? id.display || id.subject : "nao autenticado"}`
+    + ` · ${id.method} · ${pode}`
+    + (id.development_only ? " · IDENTIDADE DE DESENVOLVIMENTO" : "");
+  el.title = id.mechanism || "";
+}
+
 async function boot() {
   try {
+    const health = await get("/api/health");
+    renderIdentity(health.identity);
     const { workspaces } = await get("/api/workspaces");
     state.workspaces = workspaces;
     if (!workspaces.length) {
-      document.getElementById("view").innerHTML =
-        `<div class="err">nenhum workspace visivel para este operador.</div>`;
-      markFreshness(false, "sem workspace");
+      // Nao e "nao ha nada". E "voce nao ve nada" -- e a diferenca decide se a
+      // pessoa procura trabalho ou procura quem lhe da acesso.
+      const anon = health.identity && !health.identity.authenticated;
+      document.getElementById("view").innerHTML = `<div class="err">${
+        anon ? "esta sessao nao esta autenticada; reabra a Mission Control pelo "
+             + "endereco que o <code class='mono'>regente ui</code> imprimiu"
+             : "nenhum workspace visivel para este operador"}.</div>`;
+      markFreshness(false, anon ? "nao autenticado" : "sem workspace");
       return;
     }
     const saved = localStorage.getItem("regente.workspace");

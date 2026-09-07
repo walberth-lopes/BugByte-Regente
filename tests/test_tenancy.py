@@ -565,6 +565,10 @@ GLOBAL_BY_DESIGN = {
     # guarda nada de tenant -- mas passam pela declaracao como todo o resto,
     # porque a guarda so vale enquanto ninguem acrescenta silenciosamente.
     ("states.py", "MEANING"), ("api.py", "UI_TYPES"),
+    # Como cada recusa do Core vira HTTP. Tabela de traducao, nao estado: sem
+    # escrita depois da importacao e sem nada de tenant. Declarada como todo o
+    # resto, porque a guarda so vale enquanto ninguem acrescenta em silencio.
+    ("api.py", "DENIAL_STATUS"),
 }
 
 

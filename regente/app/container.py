@@ -19,7 +19,9 @@ from ..engine.gate import Gate
 from ..engine.target import TargetResolver
 from ..engine.orchestrator import Orchestrator
 from ..engine.readiness import diagnose as _diagnose_agent
+from ..adapters.identity.local_terminal import LocalTerminalIdentity
 from ..engine import readiness
+from ..engine.decision import DecisionService
 from ..engine.remote import RemoteDelivery
 from ..engine.store_sqlite import SqliteStore
 from ..ports import Capability
@@ -64,6 +66,31 @@ class Engine:
 
     def close(self) -> None:
         self.store.close()
+
+    # ---- a unica escrita humana --------------------------------------
+    def decisions(self) -> DecisionService:
+        """O caminho de decisao. UM so, para terminal e navegador.
+
+        Montado aqui e nao em cada superficie: duas construcoes divergem, e a
+        que diverge e sempre a que esquece de passar a policy.
+        """
+        return DecisionService(
+            store=self.store, policy=self.policy or PolicyEngine.from_config([]),
+            organization=self.config.organization, client=self.config.client,
+            workspace_name=self.workspace.name,
+            environment=(self.config.projects[0].default_environment
+                         if self.config.projects else "staging"))
+
+    def terminal_principal(self):
+        """Quem esta no terminal, com autoridade neste workspace.
+
+        A concessao e do workspace configurado, e so dele: quem abriu esta
+        configuracao nao ganha autoridade sobre o que mais estiver no banco.
+        """
+        provider = LocalTerminalIdentity(
+            reads=frozenset({self.workspace.id}),
+            decides=frozenset({self.workspace.id}))
+        return provider.principal(provider.authenticate(None))
 
     def run_mission(self, execute: bool = False, only: str | None = None):
         """Select one task and, when asked, execute it in isolation.

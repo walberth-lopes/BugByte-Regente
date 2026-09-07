@@ -36,10 +36,15 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from ..core.principal import ANONYMOUS, Principal
+from ..engine.decision import Decision, DecisionService, Denial
 from ..engine.readmodel import ReadModel
+
+if TYPE_CHECKING:                      # a API conhece a PORTA, nunca o adapter
+    from ..ports.identity import IdentityProvider
 
 #: Onde moram os arquivos da Mission Control. Servidos por este mesmo processo:
 #: uma segunda porta para servir HTML seria infraestrutura sem beneficio.
@@ -52,26 +57,6 @@ UI_TYPES = {".html": "text/html; charset=utf-8",
             ".js": "text/javascript; charset=utf-8",
             ".svg": "image/svg+xml",
             ".ico": "image/x-icon"}
-
-
-@dataclass(frozen=True, slots=True)
-class Principal:
-    """Quem esta perguntando, e o que pode ver.
-
-    Existe agora, com uma implementacao mínima, porque a fronteira e o que fica
-    dificil de acrescentar depois. Uma API que nasce sem nocao de identidade
-    espalha `workspace_id` vindo do cliente por toda parte, e o dia em que
-    alguem precisa restringir descobre que nao ha onde.
-
-    `workspaces=None` significa "todos os que o store guarda" -- o operador
-    local, que e o unico caso desta versao. Restringir depois e trocar esse
-    campo, nao reescrever as rotas.
-    """
-    name: str = "local"
-    workspaces: frozenset[str] | None = None
-
-    def may_read(self, workspace_id: str) -> bool:
-        return self.workspaces is None or workspace_id in self.workspaces
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +85,22 @@ def _error(status: int, code: str, detail: str) -> Response:
     return Response(status, {"error": code, "detail": detail})
 
 
+#: Como cada recusa do Core vira HTTP.
+#:
+#: `FORBIDDEN` nao aparece para recurso de outro tenant: la a resposta e 404,
+#: porque um 403 confirmaria que o recurso existe. Ele fica para o caso em que o
+#: principal E deste workspace e ainda assim nao pode -- onde nao ha o que
+#: esconder e ha o que explicar.
+DENIAL_STATUS = {
+    Denial.UNAUTHENTICATED: 401,
+    Denial.FORBIDDEN: 403,
+    Denial.NOT_FOUND: 404,
+    Denial.INVALID_STATE: 422,
+    Denial.POLICY_DENIED: 403,
+    Denial.CONFLICT: 409,
+}
+
+
 #: Resposta unica para "nao existe" e para "existe e nao e seu".
 #:
 #: Distinguir as duas seria confirmar a existencia de um workspace de outro
@@ -117,21 +118,48 @@ class Api:
     """
     read: ReadModel
     ui_root: Path = field(default=UI_ROOT)
+    #: Como este servidor autentica, em uma frase.
+    #:
+    #: Aparece na saude porque um mecanismo de desenvolvimento que ninguem
+    #: consegue distinguir de um real e pior que nenhum: cria a sensacao de que
+    #: ha autenticacao. Quem olha a tela precisa poder ver o que a protege.
+    identity_note: str = ""
+    identity_is_development: bool = False
+    #: De onde a pagina recebe o segredo desta sessao.
+    #:
+    #: Injetado no HTML servido, e nao numa rota: quem consegue GET na origem ja
+    #: e local. O que isso IMPEDE e outra coisa -- um site qualquer aberto no
+    #: navegador do operador pode disparar um POST para o loopback, mas nao pode
+    #: LER esta pagina (nao ha CORS), entao nao alcanca o token e o POST forjado
+    #: chega sem credencial. E a defesa contra pedido forjado de outra origem.
+    session_token: str = ""
+    #: A unica escrita. `None` quando esta composicao nao concede nenhuma --
+    #: e uma API sem servico de decisao recusa a rota, em vez de fingir que
+    #: ela nao existe.
+    decisions: DecisionService | None = None
 
     # ------------------------------------------------------------------
     def resolve(self, method: str, path: str,
                 query: dict[str, list[str]] | None = None,
-                principal: Principal | None = None) -> Response:
-        who = principal or Principal()
+                principal: Principal | None = None,
+                body: dict | None = None) -> Response:
+        # ANONIMO por default, nunca "operador local". Um default permissivo
+        # aqui faria toda requisicao sem credencial passar como o dono.
+        who = principal if principal is not None else ANONYMOUS
         query = query or {}
 
+        parts = [unquote(p) for p in path.strip("/").split("/") if p]
+
+        if method == "POST":
+            # UMA escrita, nomeada. Tudo o que nao for ela continua recusado
+            # com a mesma frase de antes: a ausencia de escrita nao e uma
+            # lacuna a preencher quando der.
+            return self._decide(parts, body, who)
+
         if method not in ("GET", "HEAD"):
-            # Nao e "ainda nao implementado". Nao existe escrita nesta API.
             return _error(405, "read_only",
                           "esta API e somente leitura; autoridade de escrita "
                           "pertence ao motor e ao humano, nao a uma tela")
-
-        parts = [unquote(p) for p in path.strip("/").split("/") if p]
 
         if not parts or parts[0] != "api":
             return self._static(parts)
@@ -222,6 +250,67 @@ class Api:
         return _not_found("recurso")
 
     # ------------------------------------------------------------------
+    def _decide(self, parts: list[str], body: dict | None,
+                who: Principal) -> Response:
+        """`POST /api/workspaces/{id}/approvals/{id}/decision`.
+
+        O que este metodo NAO faz e o ponto: nao verifica identidade, nao
+        verifica escopo, nao consulta policy e nao olha estado. Tudo isso e do
+        Core, e repetir qualquer uma dessas verificacoes aqui criaria uma
+        segunda regra que um dia discorda da primeira -- sendo a daqui a que
+        ninguem lembra de atualizar.
+
+        A API valida a FORMA da requisicao e traduz a recusa para HTTP.
+        """
+        if (len(parts) != 6 or parts[:2] != ["api", "workspaces"]
+                or parts[3] != "approvals" or parts[5] != "decision"):
+            return _error(405, "read_only",
+                          "esta API e somente leitura; autoridade de escrita "
+                          "pertence ao motor e ao humano, nao a uma tela")
+
+        if self.decisions is None:
+            return _error(403, "no_authority",
+                          "esta composicao nao concede autoridade de decisao")
+
+        workspace_id, approval_id = parts[2], parts[4]
+        if not isinstance(body, dict):
+            return _error(400, "invalid_body", "corpo precisa ser um objeto JSON")
+        choice = body.get("choice")
+        note = body.get("note") or ""
+        if not isinstance(choice, str) or not choice.strip():
+            return _error(400, "invalid_body", "'choice' e obrigatorio")
+        if not isinstance(note, str) or len(note) > 2000:
+            return _error(400, "invalid_body",
+                          "'note' precisa ser texto de ate 2000 caracteres")
+
+        # O corpo NAO pode dizer quem esta decidindo. Aceitar isso seria
+        # trocar autenticacao por digitacao.
+        for forbidden in ("principal", "subject", "decided_by", "per", "actor",
+                          "workspace_id", "method"):
+            if forbidden in body:
+                return _error(400, "invalid_body",
+                              f"'{forbidden}' nao e aceito: identidade e escopo "
+                              f"nao vem do corpo da requisicao")
+
+        outcome = self.decisions.decide(who, workspace_id, approval_id,
+                                        choice.strip(), note)
+        if outcome.accepted:
+            # A resposta descreve o que foi persistido e NAO substitui a
+            # leitura: a tela le de novo antes de mostrar.
+            return Response(200, {
+                "accepted": True, "reason": outcome.reason,
+                "approval_id": outcome.approval_id,
+                "task_key": outcome.task_key, "choice": outcome.choice,
+                "decided_by": outcome.decided_by,
+                "decided_at": outcome.decided_at,
+                "previous_state": outcome.previous_state,
+                "new_state": outcome.new_state,
+                "task_state": outcome.task_state,
+                "next": "o proximo tick retoma a task a partir daqui"})
+        return _error(DENIAL_STATUS.get(outcome.denial, 403),
+                      (outcome.denial.value.lower() if outcome.denial
+                       else "denied"), outcome.reason)
+
     def _global_health(self, who: Principal) -> Response:
         """Saude de cada workspace visivel, sem agregado que esconda.
 
@@ -235,8 +324,23 @@ class Api:
         for w in rows:
             if rank.get(w.health, 0) > rank.get(worst, 0):
                 worst = w.health
-        return Response(200, {"level": worst,
-                              "workspaces": [w.as_dict() for w in rows]})
+        return Response(200, {
+            "level": worst,
+            "workspaces": [w.as_dict() for w in rows],
+            # Quem sou eu, como fui provado, e o que me foi concedido. E a
+            # unica resposta que descreve o LEITOR e nao o motor -- e a que
+            # torna impossivel confundir "nao ha nada" com "nao posso ver".
+            "identity": {
+                "subject": who.subject,
+                "display": who.display,
+                "method": who.method or "nao autenticado",
+                "authenticated": who.authenticated,
+                "mechanism": self.identity_note,
+                "development_only": self.identity_is_development,
+                "reads": (None if who.workspaces is None
+                          else sorted(who.workspaces)),
+                "decides": sorted(who.decides),
+            }})
 
     def _visible(self, client, who: Principal) -> bool:
         return any(who.may_read(w.id) for w in client.workspaces)
@@ -265,7 +369,12 @@ class Api:
         kind = UI_TYPES.get(resolved.suffix.lower())
         if kind is None or not resolved.is_file():
             return _not_found("arquivo")
-        return Response(200, content_type=kind, body=resolved.read_bytes())
+
+        data = resolved.read_bytes()
+        if resolved.name == "index.html" and self.session_token:
+            data = data.replace(b"{{SESSION_TOKEN}}",
+                                self.session_token.encode("utf-8"))
+        return Response(200, content_type=kind, body=data)
 
 
 def _one(query: dict[str, list[str]], name: str) -> str | None:
@@ -285,7 +394,21 @@ def _int(query: dict[str, list[str]], name: str, default: int) -> int:
 # HTTP
 # ---------------------------------------------------------------------------
 
-def handler_for(api: Api, principal: Principal) -> type[BaseHTTPRequestHandler]:
+#: Tamanho maximo de um corpo aceito. Uma decisao e um objeto minusculo; ler
+#: mais que isto so serviria para alguem encher a memoria do processo.
+MAX_BODY = 64 * 1024
+
+
+def handler_for(api: Api, identity: "IdentityProvider | None" = None,
+                fallback: Principal | None = None
+                ) -> type[BaseHTTPRequestHandler]:
+    """O handler autentica a requisicao ANTES de entregar ao roteador.
+
+    `fallback` e o principal usado quando nao ha provedor de identidade
+    configurado -- o caso das leituras locais antes de M13 existir. Ele nunca
+    decide: `Principal.decides` so e preenchido por um provedor.
+    """
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "Regente"
         sys_version = ""
@@ -307,10 +430,38 @@ def handler_for(api: Api, principal: Principal) -> type[BaseHTTPRequestHandler]:
         do_PATCH = do_POST
         do_DELETE = do_POST
 
+        # ---- identidade ------------------------------------------------
+        def _principal(self) -> Principal:
+            """Do cabecalho para um principal, ou anonimo.
+
+            O cliente apresenta um SEGREDO; ele nao declara um nome. Nenhum
+            campo desta requisicao escolhe quem e o portador -- quem escolhe e o
+            provedor, a partir do que o segredo prova.
+            """
+            if identity is None:
+                return fallback if fallback is not None else ANONYMOUS
+            raw = self.headers.get("Authorization") or ""
+            token = raw[7:].strip() if raw[:7].lower() == "bearer " else ""
+            found = identity.authenticate(token or None)
+            return identity.principal(found) if found else ANONYMOUS
+
+        def _body(self) -> dict | None:
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return None
+            if length <= 0 or length > MAX_BODY:
+                return None
+            try:
+                return json.loads(self.rfile.read(length) or b"{}")
+            except (ValueError, OSError):
+                return None
+
         def _resolve(self) -> Response:
             url = urlsplit(self.path)
+            body = self._body() if self.command == "POST" else None
             return api.resolve(self.command, url.path,
-                               parse_qs(url.query), principal)
+                               parse_qs(url.query), self._principal(), body)
 
         def _answer(self, response: Response, body: bool = True) -> None:
             data = response.rendered()
@@ -335,16 +486,22 @@ def handler_for(api: Api, principal: Principal) -> type[BaseHTTPRequestHandler]:
 
 
 def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
-          principal: Principal | None = None) -> ThreadingHTTPServer:
-    """Sobe o servidor. Loopback por padrao, e isso e uma decisao.
+          principal: Principal | None = None,
+          identity: "IdentityProvider | None" = None,
+          decisions: DecisionService | None = None,
+          session_token: str = "") -> ThreadingHTTPServer:
+    """Sobe o servidor. Loopback por padrao, e isso continua sendo uma decisao.
 
-    Esta versao nao tem autenticacao: o principal e o operador local. Abrir para
-    a rede sem autenticar exporia o estado de todos os clientes a quem alcancar
-    a porta, entao o default nao abre. Quem precisar expor precisa antes trocar
-    o `Principal` por um que venha de uma identidade real -- e a fronteira ja
-    existe para isso.
+    Com `identity`, toda requisicao e autenticada e a escrita passa a existir.
+    Sem ele, o servidor volta ao comportamento de leitura do marco anterior: um
+    principal fixo, que nao decide nada -- `decides` so e preenchido por um
+    provedor de identidade.
     """
     mimetypes.init()
-    api = Api(read=read)
-    return ThreadingHTTPServer((host, port),
-                               handler_for(api, principal or Principal()))
+    api = Api(read=read, decisions=decisions, session_token=session_token,
+              identity_note=(identity.describe() if identity is not None
+                             else "sem provedor de identidade"),
+              identity_is_development=bool(
+                  identity is not None and identity.development_only))
+    return ThreadingHTTPServer(
+        (host, port), handler_for(api, identity, principal))

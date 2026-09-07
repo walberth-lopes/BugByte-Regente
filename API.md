@@ -24,21 +24,82 @@ move um estado nem o que conta como CI verde, porque a resposta certa depende de
 `ENGINE_ADVANCES`, `AWAITING_EXTERNAL`, `PREEXISTING_FAILURE` e `NO_CHECKS` --
 conhecimento do Core que uma segunda implementacao erraria em silencio.
 
-## Autenticacao: o que existe e o que nao existe
+## Identidade, autorizacao, policy: tres perguntas diferentes
 
-Existe um `Principal` com escopo de workspaces. Nao existe autenticacao.
+```
+Autenticacao  quem e voce?            -> IdentityProvider, prova um segredo
+Autorizacao   voce manda aqui?        -> Principal.may_read / may_decide
+Policy        esta acao e permitida?  -> o arquivo de regras, independente
+Transicao     este estado permite?    -> a maquina de estados
+```
 
-Esta versao serve um unico operador local e, por isso, **so escuta em
-loopback**. `regente ui` restringe o principal aos workspaces do proprio arquivo
-de configuracao; `--all-workspaces` amplia para todos os do banco.
+Nenhuma responde pela outra. Um principal autenticado nao esta autorizado; um
+autorizado nao venceu a policy; e uma policy que permite nao reabre uma
+aprovacao ja decidida.
 
-A fronteira existe agora, vazia, porque e o que fica dificil de acrescentar
-depois: uma API que nasce sem nocao de identidade espalha `workspace_id` vindo
-do cliente por toda parte, e quem precisar restringir nao acha onde. Endurecer e
-trocar de onde vem o `Principal`; nao e reescrever rotas.
+### O cliente apresenta um segredo; ele nao declara um nome
 
-**Limitacao declarada:** expor esta API na rede sem antes ligar uma identidade
-real entrega o estado de todos os clientes visiveis a quem alcancar a porta.
+`Principal.method` e o campo que separa **autenticado** de **afirmado**. Vazio
+significa que ninguem provou nada -- e a diferenca entre "o servidor verificou
+um segredo que ele proprio emitiu" e "o navegador digitou um nome".
+
+O corpo de um POST nao pode carregar identidade nem escopo. `principal`,
+`subject`, `decided_by`, `per`, `actor`, `method` e `workspace_id` sao recusados
+com `400`.
+
+### Ler e decidir sao concessoes separadas
+
+`workspaces` (leitura) pode ser aberto; `decides` (escrita) comeca **vazio**.
+Derivar escrita de leitura faria de todo observador um decisor.
+
+### O mecanismo de desenvolvimento
+
+`dev-token`: um segredo por processo, gerado ao subir, **so em memoria**,
+injetado na pagina que o proprio servidor serve. Um site aberto noutra aba pode
+disparar um POST para o loopback, mas nao consegue LER essa pagina -- entao nao
+alcanca o token, e o POST forjado chega sem credencial.
+
+Ele se anuncia: `development_only = True`, aparece na tela, no `describe()` e em
+`/api/health`. Um mecanismo de desenvolvimento indistinguivel de um real e pior
+que nenhum, porque cria a sensacao de que ha autenticacao.
+
+E recusa autenticar fora do loopback -- no codigo, nao no README.
+
+**Limitacao declarada:** nao ha usuarios, expiracao, revogacao nem segundo
+fator, e o token vale para quem o tiver. Ele prova que quem chama e quem rodou
+`regente ui` nesta maquina. Substituir por OIDC/SSO e implementar
+`IdentityProvider`; nao toca em API, motor nem tela.
+
+## A unica escrita
+
+```
+POST /api/workspaces/{id}/approvals/{approval_id}/decision
+     {"choice": "<id de uma opcao oferecida>", "note": "opcional"}
+```
+
+Qualquer outro caminho ou metodo responde `405 read_only`.
+
+O endpoint **nao** verifica identidade, escopo, policy nem estado. Ele valida a
+FORMA da requisicao e traduz a recusa para HTTP; tudo o mais e do Core. Repetir
+uma verificacao aqui criaria uma segunda regra que um dia discorda da primeira
+-- sendo a daqui a que ninguem lembra de atualizar.
+
+| recusa do Core | HTTP | o que a pessoa faz |
+|---|---|---|
+| `UNAUTHENTICATED` | 401 | reabrir a Mission Control |
+| `POLICY_DENIED` | 403 | ler o arquivo de regras |
+| `NOT_FOUND` | 404 | nada: o recurso nao existe neste escopo |
+| `CONFLICT` | 409 | nada se perdeu; alguem chegou primeiro |
+| `INVALID_STATE` | 422 | escolher entre as opcoes oferecidas |
+
+`FORBIDDEN` nao aparece para recurso de outro tenant -- la a resposta e `404`,
+porque um `403` confirmaria que o recurso existe.
+
+### Leitura depois da escrita
+
+`200` significa que o servidor aceitou, nao que a tela sabe o que ficou gravado.
+A resposta da escrita nao vira segunda fonte de verdade: a tela **rele** -- e
+rele tambem quando a decisao e recusada, porque o mundo pode ter mudado.
 
 ## Rotas
 

@@ -40,6 +40,7 @@ class Capability(str, Enum):
     WORKSPACE = "workspace"
     RUNNER = "runner"
     STORE = "store"
+    IDENTITY = "identity"
 
 
 class Port:

@@ -77,6 +77,13 @@ a:hover { text-decoration: underline; }
   margin-left: 6px; font-size: 10px; color: var(--ink-faint);
 }
 
+.whoami {
+  font-size: 11px; color: var(--ink-faint);
+  border: 1px solid var(--line); border-radius: 4px; padding: 3px 9px;
+}
+.whoami.dev { color: var(--human); border-color: var(--human); }
+.whoami:empty { display: none; }
+
 .freshness { display: flex; align-items: center; gap: 7px;
              font-size: 11px; color: var(--ink-faint); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-faint); }
@@ -255,6 +262,29 @@ td.dim { color: var(--ink-faint); }
 .banner[data-l="UNKNOWN"] { border-left-color: var(--unknown); }
 .banner[data-l="STUCK"] { border-left-color: var(--stuck); }
 .banner .word { font-weight: 700; letter-spacing: .12em; }
+
+/* ---- a unica escrita ---------------------------------------------------- */
+
+.choices { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+           margin-top: 11px; }
+button.choice {
+  font: inherit; font-size: 12px; cursor: pointer;
+  background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 4px; padding: 6px 13px;
+}
+button.choice:hover:not(:disabled) { border-color: var(--human); }
+button.choice:disabled { opacity: .45; cursor: default; }
+.choices .hint { font-size: 11px; color: var(--ink-faint); }
+
+.outcome:empty { display: none; }
+.outcome {
+  margin-top: 9px; font-size: 12px; padding: 7px 11px; border-radius: 4px;
+  border: 1px solid var(--line);
+}
+.outcome.working { color: var(--ink-faint); }
+.outcome.good { color: var(--ok); border-color: var(--ok); }
+.outcome.bad { color: var(--stuck); border-color: var(--stuck); }
+.blocker[data-kind="DONE"] { border-left-color: var(--ok); }
 
 .crumb { font-size: 11px; color: var(--ink-faint); margin-bottom: 8px; }
 .foot {

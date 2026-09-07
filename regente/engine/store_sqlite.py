@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import random
 import sqlite3
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -390,6 +391,78 @@ MIGRATIONS: dict[str, tuple[str, Any]] = {
 }
 
 
+class _Rows:
+    """O resultado ja materializado, para a trava poder ser devolvida.
+
+    Um resultado aberto do sqlite3 continua vivo depois do `execute` e busca
+    linhas sob demanda. Devolve-lo cru soltaria a trava com a leitura pela
+    metade -- que e exatamente a corrida que este envelope existe para fechar.
+    """
+
+    __slots__ = ("_rows", "_i", "lastrowid", "rowcount")
+
+    # O parametro nao se chama `cursor` de proposito: esse e o nome de um
+    # fornecedor na lista que a guarda de fronteira varre, e um guard que acusa
+    # o inocente ensina a ignorar o guard. Aqui o termo tecnico cede.
+    def __init__(self, aberto) -> None:
+        self.lastrowid = aberto.lastrowid
+        self.rowcount = aberto.rowcount
+        try:
+            self._rows = aberto.fetchall()
+        except sqlite3.ProgrammingError:
+            self._rows = []          # statement sem resultado (DDL, PRAGMA)
+        self._i = 0
+
+    def fetchone(self):
+        if self._i >= len(self._rows):
+            return None
+        self._i += 1
+        return self._rows[self._i - 1]
+
+    def fetchall(self):
+        rest = self._rows[self._i:]
+        self._i = len(self._rows)
+        return rest
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+
+class _Serialized:
+    """A conexao, com uma trava em volta de cada uso.
+
+    `check_same_thread=False` desliga a checagem do sqlite3 e nao poe nada no
+    lugar. Enquanto a segunda thread era so o batimento de lease, isso passou
+    despercebido; com o navegador disparando tres leituras em paralelo a cada
+    cinco segundos, a mesma URL passou a responder 200, depois 404, depois
+    resposta vazia. Um 404 intermitente e a pior forma disto: parece dado que
+    sumiu.
+    """
+
+    __slots__ = ("_con", "_guard")
+
+    def __init__(self, con: sqlite3.Connection, guard) -> None:
+        self._con = con
+        self._guard = guard
+
+    def execute(self, *args, **kw) -> _Rows:
+        with self._guard:
+            return _Rows(self._con.execute(*args, **kw))
+
+    def executescript(self, *args, **kw) -> _Rows:
+        with self._guard:
+            return _Rows(self._con.executescript(*args, **kw))
+
+    def __getattr__(self, name):
+        return getattr(self._con, name)
+
+    def __setattr__(self, name, value):
+        if name in _Serialized.__slots__:
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._con, name, value)
+
+
 def _iso(d: datetime | None) -> str | None:
     return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ") if d else None
 
@@ -423,8 +496,13 @@ class SqliteStore(Store):
         self._now = clock
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._con = sqlite3.connect(str(self.path), isolation_level=None,
-                                    check_same_thread=False)
+        # Reentrante porque uma transacao segura a trava enquanto os
+        # `execute` de dentro dela a pegam de novo.
+        self._guard = threading.RLock()
+        self._con = _Serialized(
+            sqlite3.connect(str(self.path), isolation_level=None,
+                            check_same_thread=False),
+            self._guard)
         self._con.row_factory = sqlite3.Row
 
         #: How many times to wait for the write lock before giving up. Counted
@@ -476,6 +554,10 @@ class SqliteStore(Store):
     def _tx(self) -> Iterator[sqlite3.Connection]:
         """A write transaction, retrying ONLY the acquisition of the write lock.
 
+        A trava de thread e tomada ANTES do `BEGIN IMMEDIATE` e so devolvida no
+        fim: uma transacao e uma sequencia, e proteger cada statement dela
+        separadamente deixaria outra thread se meter no meio.
+
         `BEGIN IMMEDIATE` takes the write lock up front, so two processes queue
         instead of discovering the conflict half way through and rolling back
         work they already did. Under real contention it can still exhaust
@@ -490,26 +572,31 @@ class SqliteStore(Store):
         Raising the timeout instead would have made the tests pass and left the
         engine one busy moment away from the same crash.
         """
-        for attempt in range(self.lock_attempts):
-            try:
-                self._con.execute("BEGIN IMMEDIATE")
-                break
-            except sqlite3.OperationalError as e:
-                if "locked" not in str(e).lower() and "busy" not in str(e).lower():
-                    raise
-                self.lock_retries += 1
-                if attempt == self.lock_attempts - 1:
-                    raise
-                # Back off with a little jitter, so two workers that collided do
-                # not collide again in lockstep for ever.
-                time.sleep(self.lock_backoff * (2 ** attempt)
-                           * (0.5 + random.random()))
+        self._guard.acquire()
         try:
-            yield self._con
-        except Exception:
-            self._con.execute("ROLLBACK")
-            raise
-        self._con.execute("COMMIT")
+            for attempt in range(self.lock_attempts):
+                try:
+                    self._con.execute("BEGIN IMMEDIATE")
+                    break
+                except sqlite3.OperationalError as e:
+                    if ("locked" not in str(e).lower()
+                            and "busy" not in str(e).lower()):
+                        raise
+                    self.lock_retries += 1
+                    if attempt == self.lock_attempts - 1:
+                        raise
+                    # Back off with a little jitter, so two workers that collided
+                    # do not collide again in lockstep for ever.
+                    time.sleep(self.lock_backoff * (2 ** attempt)
+                               * (0.5 + random.random()))
+            try:
+                yield self._con
+            except Exception:
+                self._con.execute("ROLLBACK")
+                raise
+            self._con.execute("COMMIT")
+        finally:
+            self._guard.release()
 
     # ---- esquema ---------------------------------------------------------
 

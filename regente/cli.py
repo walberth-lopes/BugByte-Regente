@@ -158,15 +158,30 @@ def cmd_needs_me(args) -> int:
 
 
 def cmd_decide(args) -> int:
+    """Decide uma escalada -- pelo mesmo caminho que a Mission Control usa.
+
+    Este comando estava QUEBRADO: o parser recebia `opcao` e `--por`, o handler
+    lia `args.option` e `args.per`, e a chamada morria com `AttributeError`
+    antes de tocar no store. Ninguem viu porque todo teste chamava
+    `store.decide_approval` diretamente -- a fiacao de argumentos do CLI nao
+    tinha teste nenhum, e e justamente onde uma renomeacao deixa restos.
+
+    `--por` tambem foi embora, e essa parte e de propósito. Identidade digitada
+    nao e identidade: gravava na auditoria o texto que a pessoa quisesse. Quem
+    assina agora e a conta que roda o processo.
+    """
     cfg = _load_config(args)
     motor = container.build(cfg)
     try:
-        # The id came from a keyboard. The workspace comes from the engine.
-        a = motor.store.decide_approval(args.approval_id, args.option,
-                                        per=args.per, note=args.note or "",
-                                        workspace_id=motor.workspace.id)
-        t = motor.store.task(a.task_id)
-        print(f"{t.key}: registrado '{args.option}'.")
+        who = motor.terminal_principal()
+        outcome = motor.decisions().decide(
+            who, motor.workspace.id, args.approval_id, args.opcao,
+            note=args.nota or "")
+        if not outcome.accepted:
+            print(f"{outcome.denial.value}: {outcome.reason}", file=sys.stderr)
+            return 1
+        print(f"{outcome.task_key or outcome.task_id}: "
+              f"registrado '{outcome.choice}' por {outcome.decided_by}.")
         print("O proximo tick retoma a task a partir daqui.")
         return 0
     finally:
@@ -214,10 +229,26 @@ def cmd_ui(args) -> int:
     Quem precisar expor tem de trocar o `Principal` por um vindo de identidade
     real; a fronteira ja existe, vazia de proposito.
     """
-    from .app.api import Principal, serve
+    from .adapters.identity.dev_token import DevTokenIdentity
+    from .app.api import serve
+    from .app.config import load_policies
+    from .core.policy import PolicyEngine
+    from .engine.decision import DecisionService
     from .engine.readmodel import ReadModel
 
     cfg = _load_config(args)
+    local = args.host in ("127.0.0.1", "::1", "localhost")
+    if not local and not args.i_know_this_is_not_authenticated:
+        # Recusa no codigo, e nao conselho no README. O unico mecanismo de
+        # identidade desta versao e de desenvolvimento; servi-lo na rede
+        # entregaria o estado de todos os clientes visiveis a quem alcancar a
+        # porta -- e a escrita junto.
+        print(f"recusando escutar em {args.host}: o mecanismo de identidade "
+              f"desta versao e SOMENTE DESENVOLVIMENTO e nao serve para "
+              f"exposicao em rede.\nUse --host 127.0.0.1, ou ligue um provedor "
+              f"de identidade real antes de expor.", file=sys.stderr)
+        return 2
+
     store = SqliteStore(cfg.banco)
     store.migrate()
     # Os nomes de organizacao e cliente so existem no arquivo de configuracao, e
@@ -234,16 +265,36 @@ def cmd_ui(args) -> int:
     # Escopo do operador local. `None` seria "todos os workspaces do banco";
     # nomear os do proprio arquivo de configuracao e mais estreito e continua
     # sendo verdade -- e o dia em que houver identidade real, so este ponto muda.
-    visible = frozenset({_stable_id(ids.WORKSPACE, cfg.organization, cfg.client,
-                                    cfg.workspace)})
+    configured = _stable_id(ids.WORKSPACE, cfg.organization, cfg.client,
+                            cfg.workspace)
+    visible = frozenset({configured})
     if args.all_workspaces:
         visible = None
 
-    httpd = serve(read, host=args.host, port=args.port,
-                  principal=Principal(name="local", workspaces=visible))
+    # Ler e decidir sao concessoes separadas, e a de escrita e sempre estreita:
+    # o workspace desta configuracao, mesmo quando a leitura foi ampliada.
+    # `--read-only` remove a concessao de escrita sem remover a identidade.
+    decides = frozenset() if args.read_only else frozenset({configured})
+
+    identity = DevTokenIdentity(
+        operator=args.as_operator or cfg.client,
+        reads=visible, decides=decides, bind_is_local=local)
+
+    decisions = DecisionService(
+        store=store, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
+        organization=cfg.organization, client=cfg.client,
+        workspace_name=cfg.workspace,
+        environment=(cfg.projects[0].default_environment
+                     if cfg.projects else "staging"))
+
+    httpd = serve(read, host=args.host, port=args.port, identity=identity,
+                  decisions=decisions, session_token=identity.token)
     where = f"http://{args.host}:{args.port}/"
     print(f"Mission Control em {where}")
-    print("somente leitura -- nenhuma acao desta tela altera o motor")
+    print(f"identidade: {identity.describe()}")
+    if identity.development_only:
+        print("ATENCAO: mecanismo de identidade SOMENTE DESENVOLVIMENTO")
+    print(f"escrita permitida: {'nenhuma' if not decides else 'decidir escaladas'}")
     print("ctrl-c para parar")
     try:
         httpd.serve_forever()
@@ -251,6 +302,7 @@ def cmd_ui(args) -> int:
         print()
     finally:
         httpd.server_close()
+        identity.close()
         store.close()
     return 0
 
@@ -475,7 +527,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("decide", help="decide um item da fila")
     p.add_argument("approval_id")
     p.add_argument("opcao")
-    p.add_argument("--por", default="humano")
+    # Sem `--por`: quem assina e a conta que roda o processo, e nao um texto
+    # que quem decide escolhe. Identidade digitada nao e identidade.
     p.add_argument("--nota", default="")
     p.set_defaults(fn=cmd_decide)
 
@@ -517,6 +570,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--port", type=int, default=8787)
     p.add_argument("--all-workspaces", action="store_true",
                    help="mostra todo workspace do banco, nao so o configurado")
+    p.add_argument("--read-only", action="store_true",
+                   help="nao concede autoridade de decisao a esta sessao")
+    p.add_argument("--as-operator", default="",
+                   help="como esta sessao assina na auditoria; o default vem "
+                        "da configuracao, nunca do navegador")
+    p.add_argument("--i-know-this-is-not-authenticated", action="store_true",
+                   help="permite escutar fora do loopback; o provedor de "
+                        "identidade de desenvolvimento ainda recusa autenticar")
     p.set_defaults(fn=cmd_ui)
 
     args = ap.parse_args(argv)

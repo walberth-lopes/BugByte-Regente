@@ -628,15 +628,44 @@ o log, nao o dado.
 "Nao existe" e "existe e nao e seu" respondem identico. Distinguir os dois
 confirmaria a existencia de um workspace alheio a quem tentou adivinhar.
 
-### Nenhuma autoridade nova
+### Uma escrita, e as mesmas barreiras
 
-Nao ha rota de escrita. Mergear, aprovar, empurrar, publicar, disparar CI,
-alterar policy, orcamento ou segredo: nada tem porta aqui, e a ausencia nao e
-lacuna a preencher quando der. Quando uma acao humana entrar na tela, passa
-pelos mesmos ports, policy e gates que ja existem -- nunca por um caminho novo
-aberto porque um botao precisava funcionar.
+A tela ganhou exatamente uma acao: **decidir uma escalada**. Ela nao ganhou
+autoridade -- passou a percorrer o caminho que o terminal ja percorria.
 
-Detalhes dos modelos e das rotas em [API.md](API.md).
+```
+navegador                       terminal
+    |                               |
+    +--------- DecisionService -----+
+                    |
+    autenticacao  quem e voce?           `Principal.method` vazio = ninguem provou
+    autorizacao   voce manda AQUI?       `decides` comeca vazio, sempre explicito
+    escopo        a aprovacao e daqui?   lida JA escopada, nunca globalmente
+    policy        e permitido?           autoridade independente; pode proibir
+    estado        ainda esta aberta?     decisao e transicao, nao update de coluna
+    transicao     a escolha foi ofertada?
+    auditoria     quem, onde, o que, de que estado
+```
+
+Nao existe `ui_decide_approval`, e a razao nao e estilo: duas funcoes de decisao
+divergem, e a que diverge e sempre a que tem menos verificacoes.
+
+**A ordem importa.** O escopo e verificado ANTES de a aprovacao ser lida. Buscar
+globalmente e conferir depois ja teria lido o dado de outro cliente -- e o codigo
+continuaria parecendo certo, porque a resposta ao cliente seria a mesma.
+
+**O cliente apresenta um segredo; nao declara um nome.** `principal`, `subject`,
+`decided_by`, `actor`, `method` e `workspace_id` no corpo de um POST sao
+recusados: identidade e escopo nao vem da requisicao.
+
+**Ler nao concede decidir.** Derivar escrita de leitura faria de todo observador
+um decisor -- que e precisamente o que a fila de escalada existe para nao ser.
+
+Todo o resto continua sem porta: mergear, aprovar PR, empurrar, publicar,
+disparar CI, alterar policy, orcamento ou segredo. A ausencia nao e lacuna a
+preencher quando der.
+
+Detalhes dos modelos, das rotas e do mecanismo de identidade em [API.md](API.md).
 
 ## Decisões tomadas, e por quê
 
@@ -650,7 +679,8 @@ Detalhes dos modelos e das rotas em [API.md](API.md).
 | config | YAML + policies em arquivo separado | policy precisa ser revisável e diferente sem mexer no resto |
 | sombra | `true` por padrão | modo vivo é decisão explícita do dono, nunca default |
 | API da UI | `http.server` da biblioteca padrão | a superfície é um punhado de GETs sem escrita; o que um framework traria não tem uso aqui, e `resolve()` puro deixa o teste de tenancy exercitar o código exato que o servidor roda |
-| identidade da UI | `Principal` com escopo, sem autenticação; loopback por padrão | a fronteira é o que fica difícil de acrescentar depois; abrir na rede exige trocar de onde vem o principal, não reescrever rotas |
+| identidade da UI | porta `IdentityProvider`; `dev-token` em memória, loopback obrigatório | a fronteira é o que fica difícil de acrescentar depois; trocar por OIDC/SSO é implementar a porta, não reescrever rotas. O mecanismo se anuncia como de desenvolvimento porque um que não se anuncia cria a sensação de que há autenticação |
+| escrita pela UI | uma só ação, pelo mesmo `DecisionService` do terminal | duas funções de decisão divergem, e a que diverge é sempre a que tem menos verificações |
 | atualização da UI | polling de 5s | o motor não tem barramento de eventos ao vivo; tempo real sobre fonte que muda a cada tick é infraestrutura sem informação nova |
 
 ## O que ainda não existe
