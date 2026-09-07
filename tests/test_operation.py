@@ -751,3 +751,93 @@ def test_a_missing_credential_is_reported_as_a_missing_credential(tmp_path):
         tmp_path, "  tasks:\n    name: jira\n    site: https://example.invalid\n"))
     tasks = next(d for name, _, d in results if name == "provider tasks")
     assert "SecretMissing" in tasks and "JIRA_EMAIL" in tasks
+
+
+# ---------------------------------------------------------------------------
+# One column, one meaning
+# ---------------------------------------------------------------------------
+#
+# `runs.task_id` carried two: the orchestrator wrote the row id, the standalone
+# mission path wrote the provider's key. `task_runs` matches on id, so half the
+# runs were invisible from their own task -- no error, no log, just a screen
+# saying "no executions". Found while building the read model, which is the
+# first thing that had to join the two.
+
+def test_a_run_is_reachable_from_its_own_task_whichever_path_made_it(tmp_path):
+    from regente.core import ids
+    from regente.core.model import ExternalRef, Run, RunState, Task, Workspace
+    from regente.core.policy import AutonomyLevel
+    from regente.engine.store_sqlite import SqliteStore
+
+    store = SqliteStore(tmp_path / "r.db")
+    store.migrate()
+    store.save_workspace(Workspace(id="wks_r", client_id="c", name="ws",
+                                   max_autonomy=AutonomyLevel.L3))
+    try:
+        task = Task(id=ids.new_id(ids.TASK), workspace_id="wks_r",
+                    project_id="p", title="t",
+                    externo=ExternalRef(provider="filesystem", key="R-1"))
+        store.save_task(task)
+        store.save_run(Run(id="run_a", task_id=task.id, task_key="R-1",
+                           workspace_id="wks_r", agent="coder",
+                           state=RunState.SUCCEEDED))
+
+        found = store.task_runs(task.id, "wks_r")
+        assert [r.id for r in found] == ["run_a"]
+        assert found[0].task_key == "R-1"
+    finally:
+        store.close()
+
+
+def test_the_migration_separates_a_key_that_was_stored_as_an_id(tmp_path):
+    """The repair does not guess.
+
+    A `task_id` that matches no task row can only be the one that held a key.
+    Everything else gets its key by joining. A row that cannot be resolved
+    either way keeps an empty id -- which is the truth, not a placeholder.
+    """
+    import sqlite3
+
+    from regente.core import ids
+    from regente.core.model import ExternalRef, Task, Workspace
+    from regente.core.policy import AutonomyLevel
+    from regente.engine.store_sqlite import SqliteStore
+
+    path = tmp_path / "old.db"
+    store = SqliteStore(path)
+    store.migrate()
+    store.save_workspace(Workspace(id="wks_r", client_id="c", name="ws",
+                                   max_autonomy=AutonomyLevel.L3))
+    task = Task(id=ids.new_id(ids.TASK), workspace_id="wks_r", project_id="p",
+                title="t", externo=ExternalRef(provider="filesystem", key="R-9"))
+    store.save_task(task)
+    store.close()
+
+    # Rewind to the shape that carried the ambiguity: no task_key column, and
+    # one run per writer -- one holding an id, the other holding a key.
+    raw = sqlite3.connect(path)
+    raw.execute("ALTER TABLE runs DROP COLUMN task_key")
+    for run_id, stored in (("run_id_writer", task.id), ("run_key_writer", "R-9")):
+        raw.execute(
+            "INSERT INTO runs(id, task_id, workspace_id, agent, state, started_at)"
+            " VALUES(?,?,?,?,?,?)",
+            (run_id, stored, "wks_r", "coder", "SUCCEEDED",
+             "2026-01-01T00:00:00.000000Z"))
+    raw.execute("UPDATE meta SET value='7' WHERE key='schema'")
+    raw.commit()
+    raw.close()
+
+    store = SqliteStore(path)
+    store.migrate()
+    try:
+        by_id = {r.id: r for r in store.task_runs(task.id, "wks_r")}
+        assert set(by_id) == {"run_id_writer"}, (
+            "the run that stored a key should not claim to belong to a task id")
+        assert by_id["run_id_writer"].task_key == "R-9"
+
+        moved = store.run("run_key_writer", "wks_r")
+        assert moved.task_key == "R-9"
+        assert moved.task_id == "", (
+            "a key left sitting in task_id keeps the ambiguity alive")
+    finally:
+        store.close()

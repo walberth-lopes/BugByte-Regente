@@ -38,6 +38,13 @@ class Store(Port):
     def workspaces(self) -> list[Workspace]: ...
 
     @abstractmethod
+    def save_client(self, client_id: str, organization: str,
+                    name: str) -> None: ...
+
+    @abstractmethod
+    def clients(self) -> list[dict]: ...
+
+    @abstractmethod
     def save_project(self, p: Project) -> None: ...
 
     @abstractmethod

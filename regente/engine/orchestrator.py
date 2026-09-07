@@ -711,7 +711,8 @@ class Orchestrator:
 
     def _run_one(self, task_id: str, rel: TickReport) -> None:
         task = self.store.task(task_id, self.workspace.id)
-        run = Run(id=ids.new_id(ids.RUN), task_id=task.id, workspace_id=self.workspace.id,
+        run = Run(id=ids.new_id(ids.RUN), task_id=task.id, task_key=task.key,
+                  workspace_id=self.workspace.id,
                   agent="coder", state=RunState.RUNNING, started_at=self.clock())
 
         # The run row and every lease it needs are written in ONE transaction.

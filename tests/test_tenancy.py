@@ -559,6 +559,12 @@ GLOBAL_BY_DESIGN = {
     ("context.py", "NOISE"), ("observation.py", "NOISE"),
     ("observation.py", "_STATUS"),
     ("store_sqlite.py", "MIGRATIONS"),
+    # Vocabulario, nao estado. `MEANING` e uma frase por estado da maquina;
+    # `UI_TYPES` e a lista fechada de extensoes que a Mission Control pode
+    # servir. Nenhum dos dois recebe escrita depois da importacao, e nenhum
+    # guarda nada de tenant -- mas passam pela declaracao como todo o resto,
+    # porque a guarda so vale enquanto ninguem acrescenta silenciosamente.
+    ("states.py", "MEANING"), ("api.py", "UI_TYPES"),
 }
 
 

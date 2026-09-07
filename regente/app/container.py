@@ -186,6 +186,10 @@ def build(cfg: Config) -> Engine:
         id=_stable_id(ids.WORKSPACE, cfg.organization, cfg.client, cfg.workspace),
         client_id=client_id, name=cfg.workspace,
         max_autonomy=cfg.autonomy, root=str(cfg.root))
+    # Os nomes so existem no arquivo de configuracao. Gravados aqui porque esta
+    # e a unica camada que os ve -- sem isto, toda leitura fora do terminal
+    # mostra um id opaco a quem precisa saber de quem e o trabalho.
+    store.save_client(client_id, cfg.organization, cfg.client)
     store.save_workspace(ws)
 
     projects = cfg.projects or ()

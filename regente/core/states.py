@@ -44,6 +44,41 @@ class TaskState(str, Enum):
 
 S = TaskState
 
+#: O que cada estado SIGNIFICA, em uma frase. Mora aqui porque e vocabulario da
+#: maquina de estados, nao da tela: uma segunda copia numa UI vira, na primeira
+#: divergencia, duas verdades sobre o mesmo estado -- e a que o operador le e a
+#: errada.
+MEANING: dict[TaskState, str] = {
+    S.DISCOVERED: "vista na origem; ainda nao analisada",
+    S.ANALYZING: "o motor esta decidindo se e alvo, e qual",
+    S.READY: "elegivel para despacho; esperando um slot",
+    S.ASSIGNED: "reservada por um worker; area ainda nao aberta",
+    S.IMPLEMENTING: "um agente esta trabalhando dentro de uma area isolada",
+    S.TESTING: "a mudanca existe e esta sendo verificada pelo motor",
+    S.PR_CREATED: "a mudanca esta num pull request, aguardando",
+    S.CI_RUNNING: "os checks do commit estao sendo observados",
+    S.AI_REVIEW: "aguardando parecer de revisao",
+    S.WAITING_HUMAN: "parada por decisao de uma pessoa",
+    S.APPROVED: "decidida por uma pessoa; liberada para seguir",
+    S.MERGING: "sendo integrada",
+    S.DEPLOYING: "sendo publicada",
+    S.QA_STAGING: "em verificacao apos publicacao",
+    S.DONE: "encerrada com trabalho entregue",
+    S.BLOCKED: "impedida por algo fora do trabalho em si",
+    S.FAILED: "a tentativa falhou; pode ser retomada",
+    S.CANCELLED: "encerrada sem entrega, por decisao",
+}
+
+
+def describe(state: TaskState) -> str:
+    """Uma frase sobre o estado, ou o silencio admitido.
+
+    Devolver o proprio nome seria pior que devolver vazio: a tela mostraria
+    "TESTING: TESTING" e ninguem notaria que a descricao nunca foi escrita.
+    """
+    return MEANING.get(state, "")
+
+
 #: Estados dos quais nada mais sai. Trabalho aqui nao volta a ser agendado.
 TERMINAL: frozenset[TaskState] = frozenset({S.DONE, S.CANCELLED})
 

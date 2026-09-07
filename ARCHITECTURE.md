@@ -561,6 +561,83 @@ agente e registra o que ele alega; entregar dali seria entregar com base no
 relato do agente sobre o próprio trabalho, que é a única coisa que este motor
 existe para recusar.
 
+## A janela: read model, API e Mission Control
+
+```
+             ┌───────────────┐
+             │ Mission       │  nao decide nada
+             │ Control       │
+             └───────┬───────┘
+                     │  HTTP, somente GET
+             ┌───────▼───────┐
+             │ API           │  aplica escopo, traduz para HTTP
+             └───────┬───────┘
+                     │
+             ┌───────▼───────┐
+             │ Read Model    │  le e traduz; nunca escreve
+             └───────┬───────┘
+                     │
+             ┌───────▼───────┐
+             │ Regente Core  │  decide
+             └───────────────┘
+```
+
+Cada camada so consome a anterior. A tela nunca fala com SQLite, adapter,
+provedor ou Core.
+
+### A UI nao duplica decisao
+
+Nao existe, em nenhum arquivo da tela ou da API, codigo que conclua que uma task
+esta bloqueada, que um CI passou, que um lease venceu ou que um estado esta
+preso. Se o motor sabe por que algo parou, a API expoe esse motivo e a tela
+apresenta o fato.
+
+Dois campos carregam a decisao pronta, e sao os que mais tentariam a duplicacao:
+
+- **`state.owner`** — `engine`, `human`, `external` ou `nobody` — sai de
+  `ENGINE_ADVANCES`, `AWAITING_EXTERNAL`, `TERMINAL` e `is_terminus`. E a
+  pergunta que o operador faz antes de qualquer outra: *isto anda sozinho, ou
+  esta esperando por mim?*
+- **`ci_green`** exige `CONCLUDED` **e** resultado bom. `NO_CHECKS` e o caso
+  perigoso: nada rodou, e a ausencia de vermelho parece verde para um `if not
+  red`.
+
+### Ausencia e escrita, nunca deixada em branco
+
+Um campo vazio numa tela le-se como "nada de errado". Entao: sem PR, o campo diz
+que nao houve PR; sem CI observado, diz `NOT_OBSERVED`; sem motivo gravado, diz
+que nao foi gravado; sem evento, a linha do tempo diz que nao ha evento.
+
+A linha do tempo mostra **somente eventos persistidos**. Se o fluxo parou depois
+de "agente iniciado", e isso que aparece -- nao uma cadeia completa com etapas
+que nunca aconteceram.
+
+### Modelo externo separado do interno
+
+A linha do banco e o payload sao coisas diferentes. Se a linha vazasse inteira,
+renomear uma coluna quebraria quem consome, e um campo interno novo viraria
+publico so por existir -- alem de convidar a tela a interpretar significado que
+so faz sentido dentro do motor.
+
+### Escopo antes de leitura
+
+Toda rota escopada verifica o principal e existe o workspace **antes** de
+qualquer chamada ao read model. Um `may_read` avaliado depois da leitura protege
+o log, nao o dado.
+
+"Nao existe" e "existe e nao e seu" respondem identico. Distinguir os dois
+confirmaria a existencia de um workspace alheio a quem tentou adivinhar.
+
+### Nenhuma autoridade nova
+
+Nao ha rota de escrita. Mergear, aprovar, empurrar, publicar, disparar CI,
+alterar policy, orcamento ou segredo: nada tem porta aqui, e a ausencia nao e
+lacuna a preencher quando der. Quando uma acao humana entrar na tela, passa
+pelos mesmos ports, policy e gates que ja existem -- nunca por um caminho novo
+aberto porque um botao precisava funcionar.
+
+Detalhes dos modelos e das rotas em [API.md](API.md).
+
 ## Decisões tomadas, e por quê
 
 | decisão | escolha | motivo |
@@ -572,6 +649,9 @@ existe para recusar.
 | execução do agente | porta `AgentRunner` | mantém o Core agnóstico a harness; runner é trocável sem tocar no motor |
 | config | YAML + policies em arquivo separado | policy precisa ser revisável e diferente sem mexer no resto |
 | sombra | `true` por padrão | modo vivo é decisão explícita do dono, nunca default |
+| API da UI | `http.server` da biblioteca padrão | a superfície é um punhado de GETs sem escrita; o que um framework traria não tem uso aqui, e `resolve()` puro deixa o teste de tenancy exercitar o código exato que o servidor roda |
+| identidade da UI | `Principal` com escopo, sem autenticação; loopback por padrão | a fronteira é o que fica difícil de acrescentar depois; abrir na rede exige trocar de onde vem o principal, não reescrever rotas |
+| atualização da UI | polling de 5s | o motor não tem barramento de eventos ao vivo; tempo real sobre fonte que muda a cada tick é infraestrutura sem informação nova |
 
 ## O que ainda não existe
 

@@ -73,6 +73,9 @@ CREATE TABLE IF NOT EXISTS deps (
 
 CREATE TABLE IF NOT EXISTS runs (
   id TEXT PRIMARY KEY, task_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
+  -- Como a task aparece para uma pessoa. Coluna propria porque `task_id` ja
+  -- carregou os dois significados e nada acusou.
+  task_key TEXT NOT NULL DEFAULT '',
   agent TEXT NOT NULL, state TEXT NOT NULL, worker TEXT, workspace_path TEXT,
   branch TEXT, started_at TEXT NOT NULL, ended_at TEXT,
   reason TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0,
@@ -118,6 +121,14 @@ CREATE TABLE IF NOT EXISTS leases (
   expires_at TEXT NOT NULL, renewed_at TEXT NOT NULL,
   PRIMARY KEY (workspace_id, resource));
 
+-- Organizacao e cliente, com os nomes que uma pessoa reconhece. O id continua
+-- derivado de (organizacao, cliente) e continua sendo a identidade; esta tabela
+-- so guarda como chama-los. Sem ela, toda leitura fora do terminal mostra um id
+-- opaco a quem precisa saber de quem e o trabalho.
+CREATE TABLE IF NOT EXISTS clients (
+  id TEXT PRIMARY KEY, organization TEXT NOT NULL, name TEXT NOT NULL,
+  seen_at TEXT NOT NULL);
+
 CREATE TABLE IF NOT EXISTS targets (
   workspace_id TEXT NOT NULL, task_key TEXT NOT NULL,
   repo_provider TEXT NOT NULL, repo_key TEXT NOT NULL,
@@ -157,7 +168,7 @@ CREATE TABLE IF NOT EXISTS counters (
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "7"
+SCHEMA_VERSION = "9"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -327,6 +338,46 @@ def _v6_to_v7(c: sqlite3.Connection) -> None:
                   "ADD COLUMN ci_observations INTEGER NOT NULL DEFAULT 0")
 
 
+def _v8_to_v9(c: sqlite3.Connection) -> None:
+    """Cria a tabela de clientes. Vazia -- e essa e a resposta honesta.
+
+    Nao ha de onde deduzir o nome de um cliente ja gravado: o id e um hash e o
+    nome so existiu em arquivo de configuracao. Preencher com o proprio id
+    faria um id opaco parecer um nome escolhido por alguem. A composicao grava
+    o nome na proxima vez que subir, e ate la a leitura diz que nao sabe.
+    """
+    c.execute("""CREATE TABLE IF NOT EXISTS clients (
+                   id TEXT PRIMARY KEY, organization TEXT NOT NULL,
+                   name TEXT NOT NULL, seen_at TEXT NOT NULL)""")
+
+
+def _v7_to_v8(c: sqlite3.Connection) -> None:
+    """Separa o id interno da chave externa dentro de `runs`.
+
+    A coluna `task_id` recebeu os dois: o orquestrador gravava o id da linha, o
+    caminho de missao avulsa gravava a chave do fornecedor. `task_runs` casa por
+    id, entao metade dos runs ficava invisivel a partir da propria task -- sem
+    erro, sem log, com a tela dizendo "nenhuma execucao".
+
+    O reparo nao adivinha: uma linha cujo `task_id` NAO existe em `tasks` so
+    pode ser a que guardava uma chave. Ela e movida para `task_key` e o id fica
+    vazio, que e a verdade -- nao existe linha de task a que apontar. As demais
+    ganham a chave por juncao.
+    """
+    columns = {r[1] for r in c.execute("PRAGMA table_info(runs)")}
+    if "task_key" not in columns:
+        c.execute("ALTER TABLE runs ADD COLUMN task_key TEXT NOT NULL DEFAULT ''")
+
+    c.execute("""UPDATE runs SET task_key = COALESCE(
+                     (SELECT t.external_key FROM tasks t WHERE t.id = runs.task_id),
+                     '')
+                  WHERE task_key = ''""")
+    c.execute("""UPDATE runs SET task_key = task_id, task_id = ''
+                  WHERE task_key = ''
+                    AND task_id NOT IN (SELECT id FROM tasks)
+                    AND task_id <> ''""")
+
+
 MIGRATIONS: dict[str, tuple[str, Any]] = {
     "1": ("2", _v1_to_v2),
     "2": ("3", _v2_to_v3),
@@ -334,6 +385,8 @@ MIGRATIONS: dict[str, tuple[str, Any]] = {
     "4": ("5", _v4_to_v5),
     "5": ("6", _v5_to_v6),
     "6": ("7", _v6_to_v7),
+    "7": ("8", _v7_to_v8),
+    "8": ("9", _v8_to_v9),
 }
 
 
@@ -538,6 +591,26 @@ class SqliteStore(Store):
     def workspaces(self) -> list[Workspace]:
         return [self._workspace_row(r) for r in
                 self._con.execute("SELECT * FROM workspaces ORDER BY name")]
+
+    def save_client(self, client_id: str, organization: str, name: str) -> None:
+        """Registra como este cliente se chama. Idempotente.
+
+        Escrito pela composicao a cada subida, porque e la que os nomes existem.
+        `seen_at` atualiza: uma configuracao renomeada passa a valer, e a leitura
+        continua sendo "o ultimo nome com que alguem rodou este cliente".
+        """
+        with self._tx() as c:
+            c.execute("""INSERT INTO clients(id, organization, name, seen_at)
+                         VALUES(?,?,?,?)
+                         ON CONFLICT(id) DO UPDATE SET organization=excluded.organization,
+                           name=excluded.name, seen_at=excluded.seen_at""",
+                      (client_id, organization, name, _iso(self._now())))
+
+    def clients(self) -> list[dict]:
+        return [{"id": r["id"], "organization": r["organization"],
+                 "name": r["name"], "seen_at": r["seen_at"]}
+                for r in self._con.execute(
+                    "SELECT * FROM clients ORDER BY organization, name")]
 
     def save_project(self, p: Project) -> None:
         with self._tx() as c:
@@ -752,7 +825,8 @@ class SqliteStore(Store):
 
     def _run_row(self, r: sqlite3.Row) -> Run:
         return Run(id=r["id"], task_id=r["task_id"], workspace_id=r["workspace_id"],
-                   agent=r["agent"], state=RunState(r["state"]), worker=r["worker"],
+                   agent=r["agent"], task_key=r["task_key"],
+                   state=RunState(r["state"]), worker=r["worker"],
                    workspace_path=r["workspace_path"], branch=r["branch"],
                    started_at=_dt(r["started_at"]), ended_at=_dt(r["ended_at"]),
                    reason=r["reason"], cost_usd=r["cost_usd"], tokens=r["tokens"],
@@ -769,17 +843,19 @@ class SqliteStore(Store):
         Two copies of an upsert drift, and the copy that drifts is the one
         nobody is reading.
         """
-        c.execute("""INSERT INTO runs(id, task_id, workspace_id, agent, state, worker,
+        c.execute("""INSERT INTO runs(id, task_id, workspace_id, task_key, agent,
+                       state, worker,
                        workspace_path, branch, started_at, ended_at, reason,
                        cost_usd, tokens, tool_calls, iterations, data)
-                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                      ON CONFLICT(id) DO UPDATE SET state=excluded.state,
                        worker=excluded.worker, workspace_path=excluded.workspace_path,
                        branch=excluded.branch, ended_at=excluded.ended_at,
                        reason=excluded.reason, cost_usd=excluded.cost_usd,
                        tokens=excluded.tokens, tool_calls=excluded.tool_calls,
                        iterations=excluded.iterations, data=excluded.data""",
-                  (r.id, r.task_id, r.workspace_id, r.agent, r.state.value, r.worker,
+                  (r.id, r.task_id, r.workspace_id, r.task_key, r.agent,
+                   r.state.value, r.worker,
                    r.workspace_path, r.branch, _iso(r.started_at), _iso(r.ended_at),
                    r.reason, r.cost_usd, r.tokens, r.tool_calls, r.iterations,
                    _j(r.data)))

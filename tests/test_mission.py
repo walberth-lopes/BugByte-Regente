@@ -454,3 +454,33 @@ def _a_result():
     return coder.LoopResult(
         verdict=Verdict.READY_FOR_REVIEW, reason="green",
         attempts=(), changed_files=("a.py",), test_verdict=None)
+
+
+def test_a_run_records_the_internal_task_id_not_the_providers_key(tmp_path, store):
+    """A coluna `task_id` guarda um id. Sempre.
+
+    Este caminho gravava a chave do fornecedor ali, e `task_runs` casa por id --
+    entao o run ficava invisivel a partir da propria task. Nada acusava: a tela
+    dizia "nenhuma execucao" e estava bem formada.
+    """
+    task_row = _a_task_row(store)
+    r = _runner(tmp_path, store)
+    r.task_provider = "filesystem"
+
+    run = r._new_run(_mission())
+    assert run.task_id == task_row.id
+    assert run.task_key == "K-1"
+
+    store.save_run(run)
+    assert [x.id for x in store.task_runs(task_row.id, "wks_1")] == [run.id]
+
+
+def test_a_run_without_a_stored_task_leaves_the_id_empty_rather_than_guessing(
+        tmp_path, store):
+    """Sem linha de task, nao ha id -- e vazio e a verdade, nao um defeito."""
+    r = _runner(tmp_path, store)
+    r.task_provider = "filesystem"
+
+    run = r._new_run(_mission())
+    assert run.task_id == ""
+    assert run.task_key == "K-1"

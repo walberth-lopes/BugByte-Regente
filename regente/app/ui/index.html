@@ -1,0 +1,40 @@
+<!doctype html>
+<!--
+  Mission Control — a janela pela qual uma pessoa enxerga o motor.
+
+  Ela nao decide nada. Todo estado, motivo, bloqueio e veredito exibido aqui
+  chega pronto da API. Se uma informacao nao existe no motor, ela nao aparece
+  aqui inventada: aparece como ausente, com o nome da ausencia.
+-->
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Regente — Mission Control</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/">REGENTE<span>mission control</span></a>
+    <label class="picker">
+      <span>workspace</span>
+      <select id="workspace-picker"></select>
+    </label>
+    <nav id="nav"></nav>
+    <div class="freshness">
+      <span id="freshness-dot" class="dot"></span>
+      <span id="freshness">lendo…</span>
+    </div>
+  </header>
+
+  <main id="view" aria-live="polite">
+    <p class="loading">carregando…</p>
+  </main>
+
+  <footer class="foot">
+    Somente leitura. Nenhuma acao desta tela altera o estado do motor.
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -136,9 +136,7 @@ class MissionRunner:
 
         resolution_s = time.monotonic() - clock
 
-        run = Run(id=ids.new_id(ids.RUN), task_id=m.task.key,
-                  workspace_id=self.workspace_id, agent=self.agent_name,
-                  state=RunState.RUNNING)
+        run = self._new_run(m)
 
         # The lease is taken BEFORE the clone: if another worker holds the
         # repository, the expensive part must never happen.
@@ -343,6 +341,22 @@ class MissionRunner:
         except AdapterError as e:
             return "", f"commit refused by the workspace: {e}"
         return sha, judgement.reason
+
+    def _new_run(self, m: mission.Mission) -> Run:
+        """A identidade do run, decidida num lugar so.
+
+        `task_id` guarda um ID INTERNO ou nada. Este caminho gravava ali a chave
+        do fornecedor, e `task_runs` casa por id -- entao o run ficava invisivel
+        a partir da sua propria task, sem erro e sem log. Vazio quando nao ha
+        linha de task e a verdade: a missao avulsa monta o trabalho a partir do
+        provedor, e nem sempre existe linha a que apontar.
+        """
+        stored = (self.store.task_by_key(self.workspace_id, self.task_provider,
+                                         m.task.key)
+                  if self.task_provider else None)
+        return Run(id=ids.new_id(ids.RUN), task_id=stored.id if stored else "",
+                   task_key=m.task.key, workspace_id=self.workspace_id,
+                   agent=self.agent_name, state=RunState.RUNNING)
 
     def _maybe_deliver(self, m: mission.Mission, area, run: Run,
                        result: coder.LoopResult, commit_sha: str

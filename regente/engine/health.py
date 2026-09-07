@@ -212,7 +212,7 @@ def _running(runs, live_leases, at) -> Signal:
                if ceiling is not None and r.started_at
                and (at - r.started_at).total_seconds() > ceiling]
 
-    evidence = [f"{r.id} on {r.task_id} since {_age(r.started_at, at)} ago"
+    evidence = [f"{r.id} on {r.task_key or r.task_id} since {_age(r.started_at, at)} ago"
                 for r in held]
 
     if unheld:
@@ -220,7 +220,7 @@ def _running(runs, live_leases, at) -> Signal:
             "running", Level.UNKNOWN,
             f"{len(held)} run(s) executing and {len(unheld)} marked RUNNING "
             f"with no live lease; whether that work finished is not known",
-            tuple(evidence + [f"{r.id} on {r.task_id}: RUNNING, no live lease, "
+            tuple(evidence + [f"{r.id} on {r.task_key or r.task_id}: RUNNING, no live lease, "
                               f"started {_age(r.started_at, at)} ago"
                               for r in unheld]))
 
@@ -230,7 +230,7 @@ def _running(runs, live_leases, at) -> Signal:
             f"{len(overdue)} run(s) have been executing far longer than a lease "
             f"window allows; a live lease on work this old means the lease is "
             f"being kept alive for a worker that is not there",
-            tuple(f"{r.id} on {r.task_id}: RUNNING for {_age(r.started_at, at)}, "
+            tuple(f"{r.id} on {r.task_key or r.task_id}: RUNNING for {_age(r.started_at, at)}, "
                   f"over {int(ceiling)}s of lease window" for r in overdue))
 
     return Signal("running", Level.OK, f"{len(held)} run(s) executing",
@@ -296,7 +296,7 @@ def _interrupted(store, workspace_id) -> Signal:
     return Signal(
         "interrupted_runs", Level.ATTENTION,
         f"{len(interrupted)} run(s) were interrupted and recorded as such",
-        tuple(f"{r.id} on {r.task_id}: {r.reason[:80]}" for r in interrupted[:8]))
+        tuple(f"{r.id} on {r.task_key or r.task_id}: {r.reason[:80]}" for r in interrupted[:8]))
 
 
 def _orphan_areas(areas_root, runs, tasks) -> Signal:

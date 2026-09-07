@@ -6,7 +6,7 @@ Marco não fecha sem prova em disco.
 | # | Marco | Fecha quando |
 |---|---|---|
 | **1** | **Core, estado, policy, scheduler** ✅ | tick descobre, monta grafo, despacha em paralelo, sobrevive a `kill -9` e escala ao humano |
-| 2 | Mission Control (UI local) | as 4 perguntas na tela; decidir um item da fila pelo navegador |
+| **2** | **Mission Control (UI local)** ⚠ | read model, API somente leitura e tela: o que roda, o que parou, por que parou, o que precisa de voce, e a historia de cada task -- tudo sem terminal. **Decidir pelo navegador nao entrou**: escrita exige autoridade, e a API nao autentica ninguem |
 | **3** | **TaskProvider real** ✅ | adapter real lendo o board de verdade em sombra; contrato passa em dois provedores; zero mutacao |
 | **4** | **RepositoryProvider** ✅ | dois provedores reais em sombra; identidade dentro da tenancy; contrato de escrita declarado, nada implementado |
 | **5** | **AgentRunner + validation loop** ✅ | missão selecionada, alvo resolvido, clone isolado, agente executado, teste com linha de base, veredito e commit — DECLARED e DISCOVERED provados ponta a ponta |
@@ -20,6 +20,10 @@ Marco não fecha sem prova em disco.
 | 13 | CloudProvider | leitura de recursos, logs e métricas |
 | 14 | Deploy em staging | deploy governado + smoke, com rollback |
 | 15 | Escalonamento maduro | notificação fora do terminal; decisão de um clique |
+
+O marco 12 abriu a janela, e nada alem dela: a Mission Control le e nao decide.
+Um botao que decide precisa de identidade real, e a API tem fronteira de
+identidade sem autenticacao -- por isso escuta so em loopback. Ver `API.md`.
 
 O marco 11 fechou o caminho ate onde a autoridade do motor termina. Ele para
 num humano de proposito: sem ReviewerAgent nao ha quem aprove, e um estado de

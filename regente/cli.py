@@ -203,6 +203,58 @@ def cmd_health(args) -> int:
             health_module.Level.STUCK: 2}[report.level]
 
 
+def cmd_ui(args) -> int:
+    """Sobe a Mission Control sobre o estado deste workspace.
+
+    Um processo, uma porta, loopback. A tela e servida pelo mesmo servidor que
+    responde a API para nao existir configuracao de origem cruzada -- e para nao
+    existir a tentacao de abrir CORS "so para desenvolver".
+
+    Nao ha autenticacao nesta versao, e por isso o default nao escuta na rede.
+    Quem precisar expor tem de trocar o `Principal` por um vindo de identidade
+    real; a fronteira ja existe, vazia de proposito.
+    """
+    from .app.api import Principal, serve
+    from .engine.readmodel import ReadModel
+
+    cfg = _load_config(args)
+    store = SqliteStore(cfg.banco)
+    store.migrate()
+    # Os nomes de organizacao e cliente so existem no arquivo de configuracao, e
+    # este comando e um dos poucos lugares que o le. Sem esta linha a tela mostra
+    # um id opaco para quem precisa saber de quem e o trabalho -- que foi
+    # exatamente o que a primeira execucao real mostrou.
+    store.save_client(_stable_id(ids.CLIENT, cfg.organization, cfg.client),
+                      cfg.organization, cfg.client)
+    read = ReadModel(store=store, areas_root=str(cfg.areas),
+                     organization=cfg.organization,
+                     budget_usd=cfg.budget.max_cost_usd,
+                     max_dispatches=cfg.limits.max_dispatches_per_day)
+
+    # Escopo do operador local. `None` seria "todos os workspaces do banco";
+    # nomear os do proprio arquivo de configuracao e mais estreito e continua
+    # sendo verdade -- e o dia em que houver identidade real, so este ponto muda.
+    visible = frozenset({_stable_id(ids.WORKSPACE, cfg.organization, cfg.client,
+                                    cfg.workspace)})
+    if args.all_workspaces:
+        visible = None
+
+    httpd = serve(read, host=args.host, port=args.port,
+                  principal=Principal(name="local", workspaces=visible))
+    where = f"http://{args.host}:{args.port}/"
+    print(f"Mission Control em {where}")
+    print("somente leitura -- nenhuma acao desta tela altera o motor")
+    print("ctrl-c para parar")
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print()
+    finally:
+        httpd.server_close()
+        store.close()
+    return 0
+
+
 def cmd_log(args) -> int:
     cfg = _load_config(args)
     motor = container.build(cfg)
@@ -457,6 +509,15 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("rules", help="regras, limites e adapters em vigor")
     p.set_defaults(fn=cmd_rules)
+
+    p = sub.add_parser("ui", help="Mission Control: o estado do motor numa tela")
+    p.add_argument("--config", default="regente.yaml")
+    p.add_argument("--host", default="127.0.0.1",
+                   help="loopback por padrao: esta versao nao autentica ninguem")
+    p.add_argument("--port", type=int, default=8787)
+    p.add_argument("--all-workspaces", action="store_true",
+                   help="mostra todo workspace do banco, nao so o configurado")
+    p.set_defaults(fn=cmd_ui)
 
     args = ap.parse_args(argv)
     try:

@@ -145,9 +145,19 @@ class Run:
     morreu" ser diferente de "a task falhou".
     """
     id: str
+    #: Id INTERNO da task. Vazio quando este run nao nasceu de uma task
+    #: guardada -- o caminho de missao avulsa monta o trabalho a partir do
+    #: provedor, e nem sempre existe linha para apontar.
+    #:
+    #: Ja carregou dois significados: um caminho gravava o id, outro gravava a
+    #: chave externa. A mesma coluna respondendo duas perguntas diferentes fez
+    #: `task_runs` devolver vazio para metade dos runs, e nada acusou.
     task_id: str
     workspace_id: str
     agent: str
+    #: Como a task aparece para uma pessoa. Sempre preenchido -- e o unico
+    #: campo do run que um humano reconhece.
+    task_key: str = ""
     state: RunState = RunState.RUNNING
     worker: str | None = None
     workspace_path: str | None = None

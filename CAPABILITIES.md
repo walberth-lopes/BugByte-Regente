@@ -17,6 +17,177 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone 12 — Mission Control, Read Model e API
+
+O motor tinha estado operacional e nenhuma superficie de operacao humana. Este
+marco constroi a janela.
+
+```
+Store / Engine  ->  Read Model  ->  API  ->  Mission Control
+```
+
+Cada camada so consome a anterior. A tela nunca fala com SQLite, adapter,
+provedor ou Core; a API nunca decide nada sobre o trabalho; o read model nunca
+escreve.
+
+### A regra que define a camada
+
+**A UI nao duplica a decisao do motor.** Nao existe, em nenhum arquivo da tela
+ou da API, codigo que conclua que uma task esta bloqueada, que um CI passou, que
+um lease venceu ou que um estado esta preso. Toda conclusao chega pronta de quem
+tem autoridade para calcula-la.
+
+Dois campos carregam isso explicitamente:
+
+| campo | por que viaja pronto |
+|---|---|
+| `state.owner` | `engine` / `human` / `external` / `nobody` sai de `ENGINE_ADVANCES`, `AWAITING_EXTERNAL`, `TERMINAL` e `is_terminus`. Uma tela que deduzisse isso erraria em silencio na primeira mudanca da maquina de estados. |
+| `ci_green` | exige `CONCLUDED` **e** resultado bom. `NO_CHECKS` e o caso perigoso: nada rodou, e a ausencia de vermelho parece verde para qualquer `if not red`. |
+
+### Ausencia nunca vira sucesso
+
+Provado com a Mission Control aberta sobre o workspace real, que esta bloqueado:
+
+```
+ALVO           nenhum alvo resolvido para esta task
+ENTREGA        nada foi entregue por esta task
+LINHA DO TEMPO nenhum evento gravado para isto
+MOTIVO         nenhum motivo registrado
+```
+
+Nenhum desses campos fica em branco. Um campo vazio numa tela le-se como "nada
+de errado".
+
+### O que a tela mostra sobre um sistema bloqueado
+
+Sobre o banco real de `sombra-sg`, sem nenhum ajuste:
+
+```
+STUCK · sg · cliente squad-tech · ultimo tick desconhecido
+
+35 BLOCKED   57 READY   8 TESTING
+0 runs ativos   0 leases vivos   0 entregas em voo   0 precisam de voce
+
+SEM ROTA DE SAIDA
+SG-1185  TESTING  nobody  este motor nao tem etapa que avance daqui
+```
+
+E na task:
+
+```
+TESTING
+a mudanca existe e esta sendo verificada pelo motor
+MOTIVO         nenhum motivo registrado
+HA             1d00h
+QUEM MOVE      nobody
+PROXIMO PASSO  este motor nao tem etapa que avance daqui; precisa de uma pessoa
+
+BLOQUEIOS
+NO_ROUTE  TESTING nao tem etapa de saida neste motor
+          -> precisa de uma pessoa
+```
+
+O painel nao fica verde. A saude diz `STUCK`, lista as oito tasks pelo nome e
+mantem dois sinais em `UNKNOWN` -- porque nao examinado nao e o mesmo que
+examinado e limpo.
+
+### Quatro categorias que nao se misturam
+
+Confundi-las faz a fila humana mentir. O agrupamento e por **dono do proximo
+passo**, nao por aparencia:
+
+| categoria | quem move | exemplo |
+|---|---|---|
+| precisa de voce | `human` | uma decisao na fila |
+| bloqueado | — | algo impede, e nao e voce |
+| sem rota | `nobody` | o motor nao tem etapa que avance daqui |
+| aguardando | `external` | o CI ainda nao respondeu |
+
+### Defeitos encontrados
+
+| # | Defeito | Por que estava invisivel |
+|---|---|---|
+| 1 | **`runs.task_id` carregava dois significados.** O orquestrador gravava o id da linha; o caminho de missao avulsa gravava a chave do fornecedor. `task_runs` casa por id, entao metade dos runs ficava invisivel a partir da propria task -- sem erro, sem log, com a tela dizendo "nenhuma execucao". Pior: as guardas de recuperacao do M11 comparam `task.id` contra `run.task_id`, entao um run do caminho avulso nao seria reconhecido como vivo. | Nenhuma superficie precisava ligar as duas pontas. O terminal ja sabe qual task abriu. |
+| 2 | **O cliente nao tinha nome guardado.** A hierarquia sempre foi Organizacao -> Cliente -> Workspace, mas so o workspace tinha linha; o nome do cliente vivia no arquivo de configuracao, fora do alcance de qualquer leitura. A primeira tela que lista varios clientes mostrou `cli_aeaa33dd838c`. | O terminal sabe qual configuracao abriu, entao nunca precisou perguntar. |
+| 3 | **A saude da tela era estruturalmente menos informada que a do terminal.** O read model nao recebia os tetos de orcamento, entao a pergunta de orcamento respondia `UNKNOWN` na tela e um numero no terminal. A mesma pergunta, duas respostas, e a pior era a que o operador olha. | So aparece com as duas superficies lado a lado. |
+| 4 | **`501` generico para metodo de escrita.** A recusa honesta -- "esta API e somente leitura" -- existia no roteador e nunca chegava ao HTTP, porque a biblioteca padrao responde antes. "Metodo nao suportado" le-se como "ainda nao implementado", e alguem acabaria implementando. | O teste de roteamento passava; so o teste que sobe o servidor de verdade viu. |
+
+O defeito 1 e o mais grave e nao tem nada a ver com UI. Foi encontrado porque um
+read model e a primeira coisa que precisa juntar task e run pelos dois lados.
+
+### Contraprovas
+
+- Um id valido do tenant errado le como ausente -- task, run e delivery.
+- "Nao existe" e "existe e nao e seu" respondem identico: mesmo status, mesmo corpo. Distinguir confirmaria a existencia de um workspace alheio.
+- Duas chaves `SAME-1` iguais, mesmo repositorio e mesma branch nos dois clientes continuam duas coisas.
+- Filtro de estado inexistente devolve vazio, nunca o board inteiro.
+- Um workspace inexistente nao empresta as tasks do primeiro que houver.
+- `POST`/`PUT`/`PATCH`/`DELETE` respondem `405 read_only`, com motivo, tambem por HTTP.
+- Uma auditoria AST prova que a API nao chama nenhum metodo de escrita do store.
+- Uma auditoria AST prova que o read model nao faz nenhuma leitura sem tenant (38 chamadas conferidas).
+- A saude da tela e byte a byte a do motor, incluindo os tetos.
+- Um cliente sem nome gravado aparece como "sem nome gravado", nunca como o proprio id.
+
+### Sweep de mutacao
+
+31 mutacoes, todas da categoria que **nao quebra nada**: a pagina abre, o painel
+fica verde, os campos ficam preenchidos, e a resposta esta errada.
+
+```
+capturadas   30
+nao provada   1   (so alcancavel por symlink; este sistema nao permite criar um)
+```
+
+Quatro escaparam na primeira passada. Uma era mutacao mal escolhida -- trocava o
+objeto de workspace sem trocar a consulta, e portanto nao mudava resposta
+nenhuma. As outras tres eram lacunas reais, e uma delas revelou um teste que
+**passava pela guarda errada**: a task chegava a `BLOCKED` por transicao, e
+transicao grava evento com resumo, entao a fallback de "nenhum motivo registrado"
+nunca era exercitada. Uma task que ja nasce bloqueada exercita.
+
+A mutacao nao provada e a segunda guarda dos estaticos: com a checagem de
+segmentos suspeitos no lugar, a conferencia do caminho resolvido so e alcancavel
+por um link dentro da pasta apontando para fora. O teste existe e e pulado aqui
+por falta de privilegio no Windows.
+
+### Estado das capacidades
+
+| Capacidade | Estado | Evidencia |
+|---|---|---|
+| Read model como camada explicita | **EXERCISED_REAL** | aberto sobre o banco real de `sombra-sg` |
+| Mission Control respondendo as nove perguntas | **EXERCISED_REAL** | navegado no browser sobre dados reais |
+| Estado com nome, significado, motivo, idade e dono | **EXERCISED_REAL** | task real `SG-1185` |
+| Saude reexposta, nunca recalculada | CONTRACT_TESTED | comparada sinal a sinal com o motor |
+| Escopo de tenancy em cada rota | CONTRACT_TESTED | 8 rotas x id valido do tenant errado |
+| API somente leitura | CONTRACT_TESTED | 4 metodos + auditoria AST + HTTP real |
+| Ausencia nunca vira sucesso | CONTRACT_TESTED | PR, CI, evento, motivo, alvo |
+| `UNKNOWN` nunca vira saudavel | CONTRACT_TESTED | sweep + teste direto |
+| Estatico sem leitura arbitraria de disco | CONTRACT_TESTED | travessia; symlink **nao provado aqui** |
+| Identidade da API | **IMPLEMENTED** | `Principal` com escopo; **sem autenticacao** |
+| Atualizacao ao vivo | CONTRACT_TESTED | polling de 5s, erro visivel, sem estado inventado |
+
+### Limitacoes
+
+**Nao ha autenticacao.** Existe um `Principal` com escopo de workspaces e nada
+que prove quem e o portador. Por isso o servidor so escuta em loopback por
+padrao. Expor na rede sem antes ligar uma identidade real entrega o estado de
+todos os clientes visiveis a quem alcancar a porta. A fronteira existe vazia
+porque e o que fica dificil de acrescentar depois.
+
+**A tela e somente leitura, e isso e por decisao.** Decidir uma escalada
+continua sendo `regente decide`, no terminal. A tela mostra a fila e o briefing;
+nao decide.
+
+**Um cliente so, um banco so, nesta execucao real.** A prova multi-tenant e de
+contrato: dois clientes com nomes locais identicos no mesmo banco. O que nao foi
+exercitado e a Mission Control sobre dois clientes reais simultaneos.
+
+**Polling, nao tempo real.** O motor nao tem barramento de eventos ao vivo, e um
+transporte em tempo real sobre uma fonte que so muda a cada tick seria
+infraestrutura sem informacao nova.
+
+---
+
 ## Milestone 11 — closing the cycle
 
 The question: can the Regente actually deliver? Not "do the tests pass", but
