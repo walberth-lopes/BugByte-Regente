@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "regente"
 version = "0.1.0"
-description = "Sistema operacional para agentes de engenharia de software."
+description = "An operating system for software engineering agents."
 requires-python = ">=3.13"
 classifiers = ["Private :: Do Not Upload"]
 dependencies = [
@@ -13,8 +13,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# O motor nao depende de UI nem de LLM para rodar um tick. Extras carregam so
-# quem precisa: o Core Engine tem de subir num ambiente sem FastAPI e sem SDK.
+# The engine depends on neither a UI nor an LLM to run a tick. Extras load only
+# for whoever needs them: the Core Engine has to start in an environment with no
+# FastAPI and no SDK.
 ui = ["fastapi>=0.115", "uvicorn>=0.30"]
 llm = ["anthropic>=0.40"]
 dev = ["pytest>=8.3"]

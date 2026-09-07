@@ -80,7 +80,7 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
             directory=Path(o["snapshots"]), observer=observer)
     elif modo == "http":
         site = o["site"].rstrip("/")
-        secrets = o["segredos"]           # SecretProvider, injected by the composition
+        secrets = o["secrets"]            # SecretProvider, injected by the composition
         ref_usuario = o.get("user_ref") or "env:JIRA_EMAIL"
         ref_token = o.get("token_ref") or "env:JIRA_API_TOKEN"
         transport = HttpTransport(
