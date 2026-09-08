@@ -90,22 +90,31 @@ regente --version
 ### O que o instalador faz
 
 1. Instala o [uv](https://docs.astral.sh/uv/) se ele ainda não existir. O uv é
-   um binário único, e é ele que baixa um Python caso a máquina não tenha
-   nenhum — por isso o Regente não pede que você instale Python antes.
-2. Roda `uv tool install regente`, que baixa do
+   um binário único.
+2. **Baixa o Python 3.13 se a sua máquina não tiver** — cerca de 25 MB, e é por
+   isso que o Regente não pede que você instale Python antes. O Python fica
+   dentro da pasta do uv; nada é instalado no sistema e nada é alterado no
+   Python que você já usa.
+3. Roda `uv tool install regente`, que baixa do
    [PyPI](https://pypi.org/project/regente/) e cria um ambiente **isolado** só
    para o Regente.
    As dependências dele não se misturam com nada seu, e nada seu quebra o dele.
-3. Coloca o atalho `regente` num diretório do PATH, para o comando existir em
+4. Coloca o atalho `regente` num diretório do PATH, para o comando existir em
    qualquer terminal — como o `git` ou o `gcloud`.
 
 Nada é instalado no seu Python do sistema, e nada precisa de administrador.
 
-Se você já tem o `uv`, o instalador é dispensável — uma linha basta:
+Se você já tem o `uv`, o instalador é dispensável — uma linha basta, e ela
+também traz o Python se faltar:
 
 ```bash
 uv tool install regente
 ```
+
+> `pip install regente` **não** faz isso. O pip instala pacotes, não
+> interpretadores: num Python 3.12 ele falha com
+> *"regente requires a different Python: 3.12.13 not in >=3.13"*. Use o `uv`, ou
+> instale um Python 3.13 antes.
 
 ### Atualizar e desinstalar
 

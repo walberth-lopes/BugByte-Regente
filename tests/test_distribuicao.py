@@ -358,3 +358,34 @@ def test_the_publish_target_is_not_an_index_used_for_resolution():
         assert "pypi.org/simple" not in indice.get("url", ""), (
             "ha um indice declarado apontando para o PyPI publico; isso "
             "atrapalha a resolucao dentro do repositorio")
+
+
+@pytest.mark.parametrize("arquivo", INSTALADORES)
+def test_the_installer_guarantees_the_python_the_package_needs(arquivo):
+    """Instalar uma ferramenta nao pode exigir instalar um interpretador antes.
+
+    O Regente pede Python 3.13, e o uv baixa um quando a maquina nao tem -- foi
+    medido: `Downloading cpython-3.13.15 (20.9MiB)`. Mas quem tiver
+    `python-downloads = never` na configuracao do uv veria a instalacao falhar
+    com uma mensagem sobre versao de interpretador, sem pista nenhuma de que o
+    proprio uv resolveria aquilo.
+
+    Por isso o instalador diz `automatic` explicitamente, em vez de torcer para
+    o padrao valer.
+    """
+    texto = (RAIZ / arquivo).read_text(encoding="utf-8")
+    assert "UV_PYTHON_DOWNLOADS" in texto, (
+        f"{arquivo} nao garante que o uv possa baixar o Python necessario")
+    assert "automatic" in texto, f"{arquivo} nao pede o download automatico"
+
+
+def test_the_installer_says_a_python_may_be_downloaded():
+    """Um download de 25 MB sem aviso parece a instalacao travada.
+
+    Quem roda `curl | sh` ve o cursor parado e nao sabe se algo quebrou. Uma
+    linha antes resolve.
+    """
+    for arquivo in INSTALADORES:
+        texto = (RAIZ / arquivo).read_text(encoding="utf-8")
+        assert "baixa um" in texto and "MB" in texto, (
+            f"{arquivo} nao avisa que pode baixar um Python")

@@ -53,7 +53,18 @@ if (Get-Command uv -ErrorAction SilentlyContinue) {
 }
 
 # ------------------------------------------------------------ 2. o Regente
+#
+# O REGENTE PRECISA DE PYTHON 3.13, E O uv BAIXA UM se a maquina nao tiver.
+#
+# `UV_PYTHON_DOWNLOADS=automatic` e explicito de proposito: quem tem
+# `python-downloads = never` na configuracao do uv veria a instalacao falhar com
+# uma mensagem sobre versao de interpretador, sem nenhuma pista de que o proprio
+# uv resolveria aquilo. Instalar uma ferramenta nao deveria exigir que a pessoa
+# saiba o que e um interpretador.
+$env:UV_PYTHON_DOWNLOADS = 'automatic'
+
 Diga "  [2/3] Instalando o Regente a partir de $from..."
+Diga "        (se faltar Python 3.13 na maquina, o uv baixa um - ~25 MB)"
 # `--force` reinstala por cima de uma versao anterior sem perguntar: quem roda o
 # instalador de novo esta pedindo a versao nova.
 #
