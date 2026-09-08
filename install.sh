@@ -22,10 +22,15 @@
 set -eu
 
 REPO="${REGENTE_REPO:-https://github.com/walberth-lopes/BugByte-Regente}"
-REF="${REGENTE_REF:-main}"
-# `REGENTE_FROM` permite instalar do PyPI (`regente`), de um caminho local, ou
-# de outro repositorio -- sem editar este arquivo.
-FROM="${REGENTE_FROM:-git+${REPO}@${REF}}"
+REF="${REGENTE_REF:-}"
+# O padrao e o PyPI: e o caminho mais curto e o que nao depende do GitHub estar
+# no ar. `REGENTE_REF` instala um branch (util para testar uma versao antes de
+# publicar), e `REGENTE_FROM` aponta para uma pasta local ou outro repositorio.
+if [ -n "$REF" ]; then
+    FROM="${REGENTE_FROM:-git+${REPO}@${REF}}"
+else
+    FROM="${REGENTE_FROM:-regente}"
+fi
 
 diga() { printf '%s\n' "$*"; }
 erro() { printf '\nErro: %s\n' "$*" >&2; exit 1; }

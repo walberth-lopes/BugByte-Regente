@@ -66,13 +66,17 @@ regente = "regente.cli:main"
 # comando -- um argumento esquecido nao pode ser a diferenca entre os dois
 # indices.
 #
+# E um `publish-url`, e NAO um `[[tool.uv.index]]`. A diferenca mordeu de
+# verdade: declarar um indice chamado `pypi-real` apontando para
+# `https://pypi.org/simple/` quebrava a resolucao DENTRO do repositorio --
+# `uv tool install regente` respondia "not found in the package registry" aqui
+# e funcionava em qualquer outra pasta. Publicar nao precisa de um indice de
+# leitura; precisa de um endereco de envio.
+#
 # O TestPyPI segue disponivel para ensaiar antes de cada versao:
 #     uv publish --publish-url https://test.pypi.org/legacy/
-[[tool.uv.index]]
-name = "pypi-real"
-url = "https://pypi.org/simple/"
+[tool.uv]
 publish-url = "https://upload.pypi.org/legacy/"
-explicit = true
 
 [tool.hatch.build.targets.wheel]
 # `regente/` inteiro, e isso inclui `app/ui/` -- a Mission Control ja construida.

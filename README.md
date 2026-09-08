@@ -92,12 +92,20 @@ regente --version
 1. Instala o [uv](https://docs.astral.sh/uv/) se ele ainda não existir. O uv é
    um binário único, e é ele que baixa um Python caso a máquina não tenha
    nenhum — por isso o Regente não pede que você instale Python antes.
-2. Roda `uv tool install`, que cria um ambiente **isolado** só para o Regente.
+2. Roda `uv tool install regente`, que baixa do
+   [PyPI](https://pypi.org/project/regente/) e cria um ambiente **isolado** só
+   para o Regente.
    As dependências dele não se misturam com nada seu, e nada seu quebra o dele.
 3. Coloca o atalho `regente` num diretório do PATH, para o comando existir em
    qualquer terminal — como o `git` ou o `gcloud`.
 
 Nada é instalado no seu Python do sistema, e nada precisa de administrador.
+
+Se você já tem o `uv`, o instalador é dispensável — uma linha basta:
+
+```bash
+uv tool install regente
+```
 
 ### Atualizar e desinstalar
 

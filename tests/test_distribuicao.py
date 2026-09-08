@@ -282,8 +282,9 @@ def test_the_publish_target_is_declared_and_not_left_to_a_default():
     substituida, e a diferenca entre os dois indices nao pode ser um argumento
     esquecido.
     """
-    indices = _pyproject().get("tool", {}).get("uv", {}).get("index", [])
-    alvos = [i.get("publish-url", "") for i in indices if i.get("publish-url")]
+    uv = _pyproject().get("tool", {}).get("uv", {})
+    alvos = [uv["publish-url"]] if uv.get("publish-url") else []
+    alvos += [i["publish-url"] for i in uv.get("index", []) if i.get("publish-url")]
     assert len(alvos) == 1, (
         f"esperava exatamente um alvo de publicacao declarado, achei {alvos}")
     assert alvos[0].startswith("https://"), "o alvo nao e uma URL segura"
@@ -319,3 +320,41 @@ def test_the_installer_teaches_the_flow_that_exists(arquivo):
     assert "regente init" in texto, f"{arquivo} nao diz o primeiro comando"
     assert "regente access inicial" not in texto, (
         f"{arquivo} ainda manda conceder acesso a mao; o `init` ja faz isso")
+
+
+@pytest.mark.parametrize("arquivo", INSTALADORES)
+def test_the_installer_pulls_from_the_index_and_not_from_git(arquivo):
+    """Instalar nao deveria depender do GitHub estar no ar.
+
+    Enquanto o pacote nao existia num indice, puxar do repositorio era a unica
+    forma. Agora ha `regente` no PyPI: e mais curto, nao clona nada, e nao
+    quebra quando o repositorio muda de nome ou de visibilidade.
+
+    O caminho do git continua acessivel por `REGENTE_REF` -- que e o que serve
+    para provar uma versao ANTES de publica-la.
+    """
+    texto = (RAIZ / arquivo).read_text(encoding="utf-8")
+    assert "REGENTE_REF" in texto, (
+        f"{arquivo} perdeu a forma de instalar de um branch")
+    assert "git+" in texto, f"{arquivo} perdeu o caminho do git por completo"
+    # O padrao, quando ninguem pede nada, e o nome no indice.
+    assert "'regente'" in texto or '"regente"' in texto or ":-regente}" in texto, (
+        f"{arquivo} nao instala do indice por padrao")
+
+
+def test_the_publish_target_is_not_an_index_used_for_resolution():
+    """Publicar precisa de um ENDERECO DE ENVIO, e nao de um indice de leitura.
+
+    Isto mordeu de verdade: um `[[tool.uv.index]]` chamado `pypi-real` apontando
+    para `https://pypi.org/simple/` quebrava a resolucao DENTRO do repositorio.
+    `uv tool install regente` respondia "not found in the package registry"
+    aqui, e funcionava em qualquer outra pasta -- um defeito que so aparece para
+    quem trabalha no proprio projeto.
+    """
+    uv = _pyproject().get("tool", {}).get("uv", {})
+    assert uv.get("publish-url", "").startswith("https://"), (
+        "o destino de publicacao nao esta declarado em [tool.uv]")
+    for indice in uv.get("index", []):
+        assert "pypi.org/simple" not in indice.get("url", ""), (
+            "ha um indice declarado apontando para o PyPI publico; isso "
+            "atrapalha a resolucao dentro do repositorio")

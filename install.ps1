@@ -14,10 +14,13 @@
 $ErrorActionPreference = 'Stop'
 
 $repo = if ($env:REGENTE_REPO) { $env:REGENTE_REPO } else { 'https://github.com/walberth-lopes/BugByte-Regente' }
-$ref  = if ($env:REGENTE_REF)  { $env:REGENTE_REF }  else { 'main' }
-# `REGENTE_FROM` permite instalar do PyPI (`regente`), de uma pasta local, ou de
-# outro repositorio -- sem editar este arquivo.
-$from = if ($env:REGENTE_FROM) { $env:REGENTE_FROM } else { "git+$repo@$ref" }
+$ref  = $env:REGENTE_REF
+# O padrao e o PyPI: e o caminho mais curto e o que nao depende do GitHub estar
+# no ar. `REGENTE_REF` instala um branch (util para testar uma versao antes de
+# publicar), e `REGENTE_FROM` aponta para uma pasta local ou outro repositorio.
+$from = if ($env:REGENTE_FROM) { $env:REGENTE_FROM }
+        elseif ($ref) { "git+$repo@$ref" }
+        else { 'regente' }
 
 function Diga($t) { Write-Host $t }
 function Morra($t) { Write-Host ""; Write-Host "Erro: $t" -ForegroundColor Red; exit 1 }
