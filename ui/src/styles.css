@@ -486,7 +486,7 @@ a.hint:hover { color: var(--c-accent); }
 
 .faixa {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   background: var(--c-card);
   border: 1px solid var(--c-border);
   border-radius: var(--r-lg);
@@ -515,7 +515,10 @@ a.hint:hover { color: var(--c-accent); }
 .faixa .l, .faixa .n, .faixa .why { display: block; }
 .faixa .l {
   font-size: var(--fs-sm); font-weight: 600; color: var(--c-text-3);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  /* O rotulo QUEBRA, e nao trunca. "Tasks monitor..." obriga a pessoa a
+     adivinhar o que o numero conta -- e o numero sozinho nao informa nada.
+     Duas linhas custam altura; um rotulo cortado custa o sentido. */
+  line-height: 1.25;
 }
 .faixa .n {
   font-size: var(--fs-3); font-weight: 800; line-height: 1;
