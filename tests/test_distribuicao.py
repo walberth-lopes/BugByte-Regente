@@ -300,7 +300,10 @@ def test_the_version_is_not_one_already_published():
 
     A guarda nao alcanca a rede: ela confere o que sabemos localmente.
     """
-    ja_usadas = {"0.1.0"}      # publicada no TestPyPI durante o ensaio
+    ja_usadas = {
+        "0.1.0",               # publicada no TestPyPI durante o ensaio
+        "0.1.1",               # a primeira no indice real
+    }
     versao = _pyproject()["project"]["version"]
     assert versao not in ja_usadas, (
         f"a versao {versao} ja foi publicada em algum indice com outro "
