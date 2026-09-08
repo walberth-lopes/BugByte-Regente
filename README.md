@@ -917,20 +917,31 @@ concessão explícita de patente — é por isso que ela, e não a MIT.
 
 ## Publicar uma versão
 
-O pacote é publicado hoje no **TestPyPI**, que é descartável: uma versão errada
-lá não custa nada. No índice real, uma versão publicada **não pode ser
-substituída**.
+O pacote vai para o **PyPI**. Uma versão publicada lá **não pode ser
+substituída**: corrigir é publicar a próxima.
 
 ```bash
 uv build
-uv publish --index testpypi
+uv publish --index pypi-real
 ```
 
 O alvo está fixo em `pyproject.toml` (`[[tool.uv.index]]`), e não passado na
-linha de comando — um argumento esquecido mandaria o pacote para o índice real.
-Publicar de verdade exige alterar aquele bloco, e `tests/test_distribuicao.py`
-falha quando isso acontece, para a mudança ser deliberada.
+linha de comando — a diferença entre o índice real e o de ensaio não pode ser um
+argumento esquecido.
 
-A credencial é sua e não fica no repositório: crie um token em
-<https://test.pypi.org/manage/account/token/> e exporte
-`UV_PUBLISH_TOKEN` na sessão em que for publicar.
+**Ensaie antes de cada versão.** O TestPyPI é descartável, e o ensaio já pagou
+por si uma vez: instalar do índice revelou um defeito de layout que não aparecia
+rodando do disco.
+
+```bash
+uv publish --publish-url https://test.pypi.org/legacy/
+```
+
+A credencial é sua e não fica no repositório. Crie um token em
+<https://pypi.org/manage/account/token/> (ou em
+<https://test.pypi.org/manage/account/token/> para o ensaio — são contas
+separadas) e exporte `UV_PUBLISH_TOKEN` na sessão em que for publicar.
+
+**Suba o número da versão antes.** `tests/test_distribuicao.py` recusa reaproveitar
+um número já publicado: o mesmo `0.1.0` com dois conteúdos torna ambíguo qualquer
+relato de defeito.

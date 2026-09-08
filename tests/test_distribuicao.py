@@ -268,23 +268,42 @@ def test_nothing_blocks_the_upload_by_accident():
         "sobrou um classificador que o indice recusa: " + ", ".join(privados))
 
 
-def test_publishing_defaults_to_the_disposable_index():
-    """Uma versao publicada no PyPI real NAO pode ser substituida.
+def test_the_publish_target_is_declared_and_not_left_to_a_default():
+    """Qual indice recebe a publicacao nao pode depender de um argumento.
 
-    Enquanto a decisao for ensaiar, o alvo precisa ser o TestPyPI -- e por
-    configuracao, e nao por lembrar de um argumento na hora. `uv publish` sem
-    alvo vai para o indice real, e um comando distraido queima a versao para
-    sempre.
+    Esta guarda ja teve o efeito para o qual foi escrita: ela apontava para o
+    TestPyPI enquanto a decisao era ensaiar, e FALHOU no dia de publicar de
+    verdade -- que era o ponto, porque subir para o indice real passou a exigir
+    uma alteracao deliberada aqui.
 
-    No dia de publicar de verdade, esta guarda falha, e falhar e o ponto: subir
-    para o indice real passa a exigir uma alteracao deliberada aqui.
+    O que ela protege agora e o mesmo principio de outro angulo: existe UM alvo,
+    ele esta escrito no arquivo, e ninguem depende de lembrar
+    `--publish-url` na hora. Uma versao publicada no PyPI real nao pode ser
+    substituida, e a diferenca entre os dois indices nao pode ser um argumento
+    esquecido.
     """
     indices = _pyproject().get("tool", {}).get("uv", {}).get("index", [])
-    alvos = [i.get("publish-url", "") for i in indices]
-    assert alvos, "nenhum alvo de publicacao declarado"
-    assert all("test.pypi.org" in a for a in alvos), (
-        "ha alvo de publicacao apontando para o indice real: "
-        + ", ".join(a for a in alvos if "test.pypi.org" not in a))
+    alvos = [i.get("publish-url", "") for i in indices if i.get("publish-url")]
+    assert len(alvos) == 1, (
+        f"esperava exatamente um alvo de publicacao declarado, achei {alvos}")
+    assert alvos[0].startswith("https://"), "o alvo nao e uma URL segura"
+
+
+def test_the_version_is_not_one_already_published():
+    """Um numero de versao vale UMA VEZ, e para sempre.
+
+    Reaproveitar um numero com conteudo diferente torna ambiguo qualquer relato
+    de defeito: "regente 0.1.0" deixa de identificar um artefato. Foi por isso
+    que a primeira publicacao no indice real saiu como `0.1.1` -- o `0.1.0` ja
+    existia no ensaio, com outro conteudo.
+
+    A guarda nao alcanca a rede: ela confere o que sabemos localmente.
+    """
+    ja_usadas = {"0.1.0"}      # publicada no TestPyPI durante o ensaio
+    versao = _pyproject()["project"]["version"]
+    assert versao not in ja_usadas, (
+        f"a versao {versao} ja foi publicada em algum indice com outro "
+        f"conteudo; suba o numero antes de publicar")
 
 
 @pytest.mark.parametrize("arquivo", INSTALADORES)

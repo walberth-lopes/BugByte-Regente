@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "regente"
-version = "0.1.0"
+version = "0.1.1"
 description = "Sistema operacional para agentes de engenharia de software."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -56,16 +56,22 @@ regente = "regente.cli:main"
 
 # ONDE O `uv publish` PUBLICA.
 #
-# Enquanto a decisao for ensaiar, o alvo e o TestPyPI -- um indice descartavel,
-# onde uma versao errada nao custa nada. No PyPI de verdade uma versao publicada
-# NAO pode ser substituida: `0.1.0` seria queimado para sempre.
+# O alvo e o PyPI real, por decisao explicita. Foi o TestPyPI enquanto a decisao
+# era ensaiar -- e o ensaio pagou por si: instalar do indice mostrou os rotulos
+# da faixa de metricas cortados, um defeito que nao aparecia rodando do disco.
 #
-# Publicar no indice real e uma decisao, e ela tem de parecer uma: exige trocar
-# este bloco, e nao esquecer um argumento.
+# O que muda agora e o custo do erro. Uma versao publicada aqui NAO pode ser
+# substituida: `0.1.1` fica sendo `0.1.1` para sempre, e corrigir e publicar
+# `0.1.2`. Por isso o alvo continua declarado AQUI, e nao passado na linha de
+# comando -- um argumento esquecido nao pode ser a diferenca entre os dois
+# indices.
+#
+# O TestPyPI segue disponivel para ensaiar antes de cada versao:
+#     uv publish --publish-url https://test.pypi.org/legacy/
 [[tool.uv.index]]
-name = "testpypi"
-url = "https://test.pypi.org/simple/"
-publish-url = "https://test.pypi.org/legacy/"
+name = "pypi-real"
+url = "https://pypi.org/simple/"
+publish-url = "https://upload.pypi.org/legacy/"
 explicit = true
 
 [tool.hatch.build.targets.wheel]
