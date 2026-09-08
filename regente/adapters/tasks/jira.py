@@ -141,6 +141,14 @@ class JiraTasks(TaskProvider):
     #: JQL que define o que este workspace considera trabalho seu. Vem da
     #: configuracao: e o unico lugar onde a nocao de "relevante" e declarada.
     jql: str = "statusCategory != Done ORDER BY updated DESC"
+    #: O que os status DESTE board significam, declarado pelo workspace.
+    #:
+    #: Vence o mapa embutido, e nao o substitui: um board que use os nomes
+    #: comuns continua funcionando sem configurar nada, e um que use outros
+    #: passa a funcionar sem editar codigo. O que NAO muda e a regra de ouro --
+    #: um status que nem o mapa nem a declaracao conhecam continua `UNKNOWN`,
+    #: nunca coagido para o vizinho mais conveniente.
+    status_overrides: dict[str, ExternalStatus] = field(default_factory=dict)
     #: De onde sai a chave de recurso usada pelo scheduler. Ver `_recursos`.
     resources_by: str = "parent"
     #: Teto de paginas. Existe para que um JQL solto nao vire uma varredura de
@@ -242,7 +250,10 @@ class JiraTasks(TaskProvider):
         status = campos.get("status") or {}
         nome_status = str(status.get("name") or "")
         category = str((status.get("statusCategory") or {}).get("key") or "")
-        status = STATUS_MAP.get(nome_status.strip().upper())
+        bruto = nome_status.strip().upper()
+        # A declaracao do workspace primeiro: quem configurou o proprio board
+        # sabe mais sobre ele do que uma constante deste arquivo.
+        status = self.status_overrides.get(bruto) or STATUS_MAP.get(bruto)
         if status is None:
             status = CATEGORY_MAP.get(category, ExternalStatus.UNKNOWN)
 

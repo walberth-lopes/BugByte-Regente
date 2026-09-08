@@ -454,7 +454,14 @@ def test_the_audit_separates_who_acted_from_who_was_affected(bench):
     assert e.data["actor"] != e.data["target"]
     assert e.data["workspace_id"] == "wks_a"
     assert e.data["client_id"] == "cli_a"
-    assert e.data["abilities"] == ["approval.decide"]
+    # As capacidades do PAPEL, e nao uma lista fixa. Fixar a lista faria este
+    # teste quebrar toda vez que um papel ganhasse uma capacidade -- e o que ele
+    # existe para provar e que a concessao grava o que o papel dava NA HORA,
+    # nao que `operator` tenha exatamente N capacidades.
+    from regente.core.access import abilities_of
+
+    assert e.data["abilities"] == sorted(a.value for a in abilities_of("operator"))
+    assert "approval.decide" in e.data["abilities"]
     assert e.data["result"] == "ACCEPTED"
     assert e.data["grant_id"]
     assert e.ts is not None

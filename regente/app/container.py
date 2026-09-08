@@ -83,6 +83,21 @@ class Engine:
             environment=(self.config.projects[0].default_environment
                          if self.config.projects else "staging"))
 
+    def operations(self) -> "OperationService":
+        """Ligar, pausar e parar. UM caminho, para terminal e navegador.
+
+        Montado aqui pelo mesmo motivo dos outros: duas construcoes divergem, e
+        a que diverge e a que esquece de passar a policy.
+        """
+        from ..engine.operation import OperationService
+
+        return OperationService(
+            store=self.store, policy=self.policy or PolicyEngine.from_config([]),
+            organization=self.config.organization, client=self.config.client,
+            workspace_name=self.workspace.name,
+            environment=(self.config.projects[0].default_environment
+                         if self.config.projects else "staging"))
+
     def access(self) -> AccessService:
         """Administracao de acesso. UMA, para terminal e navegador."""
         return AccessService(
@@ -365,6 +380,7 @@ def build(cfg: Config) -> Engine:
         runner=runner, gate=gate, risk=risk, limits=cfg.limits,
         budget=cfg.budget, notificador=notificador, project_id=project_id,
         lease_seconds=cfg.lease_seconds,
+        selection=cfg.selection,
         organization=cfg.organization, client=cfg.client,
         # The tick reads the checks of deliveries already in flight. Given to
         # the orchestrator rather than built inside it: what a workspace can

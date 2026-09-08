@@ -51,6 +51,65 @@ class ExternalStatus(str, Enum):
         return self in (ExternalStatus.COMPLETED, ExternalStatus.CANCELLED)
 
 
+#: Como um workspace DECLARA o que os status do board dele significam.
+#:
+#: Existe porque o mapeamento morava numa constante do adapter, e so funcionava
+#: para quem usasse exatamente aqueles nomes. Um board com `Refinamento` /
+#: `Em desenvolvimento` caia inteiro em `UNKNOWN`, e a unica saida era editar
+#: codigo Python -- que e pedir para o cliente virar mantenedor.
+#:
+#: Os baldes sao os do MOTOR, e nao os de nenhuma ferramenta: e a posicao no
+#: ciclo de vida, que todo sistema de trabalho tem.
+STATUS_BUCKETS: dict[str, ExternalStatus] = {
+    "available": ExternalStatus.NOT_STARTED,
+    "disponivel": ExternalStatus.NOT_STARTED,
+    "analysis": ExternalStatus.IN_ANALYSIS,
+    "analise": ExternalStatus.IN_ANALYSIS,
+    "in_progress": ExternalStatus.IN_PROGRESS,
+    "andamento": ExternalStatus.IN_PROGRESS,
+    "review": ExternalStatus.IN_REVIEW,
+    "revisao": ExternalStatus.IN_REVIEW,
+    "validation": ExternalStatus.IN_VALIDATION,
+    "validacao": ExternalStatus.IN_VALIDATION,
+    "done": ExternalStatus.COMPLETED,
+    "concluido": ExternalStatus.COMPLETED,
+    # `ignored` e `blocked` caem em CANCELADA de proposito: para o motor, os
+    # dois significam "nao pegue isto". Inventar um estado interno novo daria a
+    # impressao de um comportamento que nao existe.
+    "ignored": ExternalStatus.CANCELLED,
+    "ignorado": ExternalStatus.CANCELLED,
+    "blocked": ExternalStatus.CANCELLED,
+    "bloqueado": ExternalStatus.CANCELLED,
+    "cancelled": ExternalStatus.CANCELLED,
+    "cancelado": ExternalStatus.CANCELLED,
+}
+
+
+def status_map_from(declared: dict[str, Any] | None) -> dict[str, ExternalStatus]:
+    """Traduz a declaracao do workspace em `NOME DO BOARD -> estado interno`.
+
+    Um balde que nao existe LEVANTA, em vez de ser ignorado. O contrario faria
+    um erro de digitacao virar um balde vazio -- e o board inteiro cairia em
+    `UNKNOWN` sem ninguem entender por que, que e o defeito que esta funcao
+    existe para consertar.
+
+    O nome do status e normalizado para MAIUSCULA sem espaco nas pontas: ninguem
+    deve descobrir que a configuracao nao pegou porque o board escreveu
+    `To Do` e o YAML dizia `TO DO`.
+    """
+    saida: dict[str, ExternalStatus] = {}
+    for balde, nomes in (declared or {}).items():
+        chave = str(balde).strip().lower()
+        if chave not in STATUS_BUCKETS:
+            raise ValueError(
+                f"'{balde}' nao e um estado que o motor entenda. "
+                f"Use um de: {', '.join(sorted(set(STATUS_BUCKETS)))}")
+        interno = STATUS_BUCKETS[chave]
+        for nome in (nomes or ()):
+            saida[str(nome).strip().upper()] = interno
+    return saida
+
+
 #: Tipos de vinculo que o motor entende. Traduzir o nome do fornecedor para um
 #: destes e trabalho do adapter.
 #:

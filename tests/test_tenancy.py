@@ -569,12 +569,17 @@ GLOBAL_BY_DESIGN = {
     # escrita depois da importacao e sem nada de tenant. Declarada como todo o
     # resto, porque a guarda so vale enquanto ninguem acrescenta em silencio.
     ("api.py", "DENIAL_STATUS"), ("api.py", "REFUSAL_STATUS"),
-    ("api.py", "CREDENTIAL_STATUS"),
+    ("api.py", "CREDENTIAL_STATUS"), ("api.py", "OPERATION_STATUS"),
     # A mesma ideia na outra superficie: como cada recusa do motor vira codigo
     # de saida do processo. Traducao, nao estado -- e a CLI TRADUZ o veredito
     # do motor em vez de classificar por conta propria, que seria uma segunda
     # autoridade decidindo o que a primeira ja decidiu.
     ("cli.py", "EXIT_POR_RECUSA"),
+    # Os baldes de status que um workspace pode declarar. Vocabulario do motor,
+    # nao estado: sem escrita depois da importacao e sem nada de tenant. Quem
+    # declara o mapeamento e a configuracao de cada workspace, e o resultado
+    # disso vive no adapter daquele workspace -- nao aqui.
+    ("tasks.py", "STATUS_BUCKETS"),
     # Vocabulario de papeis: tres nomes, cada um com um conjunto fixo de
     # capacidades. Nao recebe escrita depois da importacao e nao guarda nada de
     # tenant -- mas passa pela declaracao como todo o resto, porque a guarda so

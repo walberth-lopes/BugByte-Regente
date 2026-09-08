@@ -784,6 +784,58 @@ que esquece do allowlist.
 a mesma checagem e nao sao a mesma pergunta -- e a segunda exigiria credencial
 de um comando de saude, que e o caminho mais curto para extrair material.
 
+### Intencao e execucao sao coisas diferentes
+
+O motor sempre soube dizer onde cada task esta. Nunca soube dizer se ELE esta
+trabalhando -- e sem isso a tela nao tinha o que mostrar nem o que controlar.
+
+```
+UI / CLI  --grava-->  intencao (RUNNING | PAUSED | STOPPED)
+                           |
+                     [identidade -> concessao -> capacidade -> policy -> auditoria]
+                           |
+`regente run`  --le a cada volta-->  obedece, e publica sinal de vida
+```
+
+**A tela nao inicia processo nenhum.** Um botao que subisse um processo daria a
+uma pagina web o poder de criar processos na maquina de alguem -- a autoridade
+paralela que os marcos 13 a 16 existiram para eliminar. Ela grava uma INTENCAO,
+pelo mesmo caminho que a decisao humana ja percorria.
+
+Isso da de graca a distincao que importa: `RUNNING` pedido sem sinal de vida
+recente e **`DEGRADED`**, nunca `RUNNING`. "O servidor HTTP esta vivo" e "o motor
+esta processando" sao fatos independentes, e a fase nunca os confunde.
+
+**A fase e derivada, nunca gravada.** Uma coluna criaria duas verdades sobre a
+mesma coisa, e a errada seria sempre a coluna -- a mesma decisao de `Status` de
+credencial no marco 15.
+
+**A intencao e relida a cada volta.** E o que faz `Pausar` ter efeito em segundos
+sem matar processo, e `Parar` ser obedecido por um processo que ja rodava.
+
+### Elegibilidade e prioridade nao sao a mesma pergunta
+
+```
+eligibility   esta task PODE ser pega?         booleana, um filtro
+priority      entre as que podem, qual antes?  um numero, uma ordem
+```
+
+Colapsar as duas faria "despriorizar" virar "esconder", e e assim que trabalho
+some de um board sem ninguem perceber. Uma task excluida por regra **continua
+aparecendo**, como adiada, com o nome da regra.
+
+A ordem final e a que sempre foi: `(prioridade, chave)`, menor primeiro, chave
+como desempate estavel. As regras do workspace mudam o NUMERO, nunca o criterio.
+O piso e negativo de proposito -- com piso em zero, uma task critica e uma comum
+somariam o mesmo delta e encostariam empatadas, e a regra teria apagado a
+informacao do board em vez de somar a ela.
+
+**O board declara o que os status dele significam.** O mapeamento morava numa
+constante do adapter; um board com outros nomes caia inteiro em `UNKNOWN`. Agora
+a declaracao do workspace vence o mapa embutido sem substitui-lo -- e um status
+que ninguem mapeou continua `UNKNOWN`, porque coagi-lo para o vizinho mais
+conveniente faria o motor pegar trabalho que a equipe tirou da fila.
+
 ### O ambiente do `git`, classificado uma variavel por vez
 
 Compor do vazio quebra o `git`: ele precisa de `PATH`, de `HOME`, de proxy.

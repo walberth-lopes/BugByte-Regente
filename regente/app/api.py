@@ -174,6 +174,13 @@ class Api:
     access: AccessService | None = None
     #: Administracao de credenciais. Mesma regra.
     credentials: CredentialService | None = None
+    #: Ligar, pausar e parar o processamento. Mesma regra: sem servico, a rota
+    #: recusa em vez de fingir que nao existe.
+    #:
+    #: A tela grava INTENCAO. Ela nao cria processo -- um botao que subisse um
+    #: processo daria a uma pagina web o poder de criar processos na maquina de
+    #: alguem, que e a autoridade paralela que os marcos 13 a 16 eliminaram.
+    operations: "OperationService | None" = None
     #: Sessao declarada somente-leitura pela composicao.
     #:
     #: NAO substitui nenhuma barreira: e uma recusa ADICIONAL, antes das do
@@ -209,6 +216,10 @@ class Api:
             if (len(parts) >= 4 and parts[:2] == ["api", "workspaces"]
                     and parts[3] == "credentials"):
                 return self._credential_write(method, parts, body, who)
+            if (method == "POST" and len(parts) == 5
+                    and parts[:2] == ["api", "workspaces"]
+                    and parts[3:] == ["operation", "intent"]):
+                return self._operation_write(parts[2], body, who)
             return _error(405, "read_only",
                           "esta API e somente leitura; autoridade de escrita "
                           "pertence ao motor e ao humano, nao a uma tela")
@@ -268,6 +279,32 @@ class Api:
         if head == "health" and not tail:
             view = self.read.health(workspace_id)
             return Response(200, view.as_dict()) if view else _not_found("workspace")
+
+        if head == "operation" and not tail:
+            # "o servidor HTTP esta vivo" e "o motor esta processando" sao
+            # coisas diferentes, e esta rota existe para a tela nao confundir as
+            # duas. Se ela nao existisse, uma pagina que carrega pareceria um
+            # motor que trabalha.
+            if self.operations is None:
+                return Response(200, {
+                    "phase": "STOPPED", "intent": "STOPPED",
+                    "explain": "esta composicao nao acompanha o processamento",
+                    "controllable": False})
+            from ..core.operation import explain
+
+            op, beat, fase = self.operations.state(workspace_id)
+            return Response(200, {
+                "phase": fase.value,
+                "intent": op.intent.value,
+                "explain": explain(fase, beat),
+                "needs_attention": fase.needs_attention,
+                "interval_seconds": op.interval_seconds,
+                "changed_by": op.changed_by,
+                "changed_at": op.changed_at,
+                "controllable": True,
+                "process": ({"pid": beat.pid, "host": beat.host,
+                             "ticks": beat.ticks, "at": beat.at,
+                             "detail": beat.detail} if beat else None)})
 
         if head == "tasks":
             if not tail:
@@ -329,6 +366,41 @@ class Api:
         return _not_found("recurso")
 
     # ------------------------------------------------------------------
+    def _operation_write(self, workspace_id: str, body: dict | None,
+                         who: Principal) -> Response:
+        """Grava a intencao de operacao. Mesmo caminho do terminal.
+
+        A tela nao decide se pode: ela pergunta ao mesmo servico que o
+        `regente engine` chama, e mostra a resposta. Uma segunda avaliacao aqui
+        seria uma segunda autoridade, e as duas divergiriam.
+        """
+        from ..core.operation import Intent
+
+        if self.operations is None:
+            return _error(501, "sem_servico",
+                          "esta composicao nao concede controle do motor")
+        if not who.may_read(workspace_id):
+            return _not_found("workspace")
+
+        bruto = str((body or {}).get("intent") or "").strip().upper()
+        try:
+            intent = Intent(bruto)
+        except ValueError:
+            return _error(400, "invalid_argument",
+                          f"intencao {bruto!r} nao existe; use "
+                          f"{', '.join(i.value for i in Intent)}")
+
+        intervalo = (body or {}).get("interval_seconds")
+        saida = self.operations.set_intent(
+            who, workspace_id, intent,
+            note=str((body or {}).get("note") or "")[:300],
+            interval_seconds=int(intervalo) if intervalo is not None else None)
+        if not saida.accepted:
+            return _error(OPERATION_STATUS.get(saida.refusal, 400),
+                          saida.refusal.lower(), saida.reason)
+        return Response(200, {"intent": saida.intent.value,
+                              "detail": saida.detail})
+
     def _decide(self, parts: list[str], body: dict | None,
                 who: Principal) -> Response:
         """`POST /api/workspaces/{id}/approvals/{id}/decision`.
@@ -607,6 +679,16 @@ class Api:
         return Response(200, content_type=kind, body=data)
 
 
+#: Como cada recusa do servico de operacao vira HTTP. Tabela de traducao, e
+#: nao classificacao: quem decide e o motor, e a API so escolhe o numero.
+OPERATION_STATUS: dict[str, int] = {
+    "UNAUTHENTICATED": 401,
+    "NOT_FOUND": 404,
+    "POLICY_DENIED": 403,
+    "INVALID": 400,
+}
+
+
 def _credential_dict(credential, at) -> dict:
     """Uma credencial, dita para fora.
 
@@ -774,6 +856,7 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
           decisions: DecisionService | None = None,
           access: AccessService | None = None,
           credentials: CredentialService | None = None,
+          operations: "OperationService | None" = None,
           session_token: str = "",
           read_only: bool = False) -> ThreadingHTTPServer:
     """Sobe o servidor. Loopback por padrao, e isso continua sendo uma decisao.
@@ -785,7 +868,7 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
     """
     mimetypes.init()
     api = Api(read=read, decisions=decisions, access=access,
-              credentials=credentials,
+              credentials=credentials, operations=operations,
               read_only=read_only, session_token=session_token,
               identity_note=(identity.describe() if identity is not None
                              else "sem provedor de identidade"),

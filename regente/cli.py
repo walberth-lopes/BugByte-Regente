@@ -432,6 +432,132 @@ def cmd_access(args) -> int:
         motor.close()
 
 
+def cmd_run(args) -> int:
+    """Roda ciclos ate mandarem parar. O processo que faz o Regente trabalhar.
+
+    Ate o marco de operacao, o motor so avancava quando alguem digitava
+    `regente tick`. Tudo o mais estava pronto -- lease, orcamento, recuperacao,
+    entrega -- e faltava alguem chamar de novo.
+
+    Este comando NAO decide nada. Ele le a intencao gravada a cada volta e
+    obedece: `Pausar` na tela para de despachar em segundos, `Parar` encerra
+    limpo, e Ctrl+C tambem. Toda decisao continua onde sempre esteve.
+    """
+    import signal
+    import socket
+    import os
+
+    from .core.operation import Intent
+    from .engine.loop import ContinuousLoop
+
+    cfg = _load_config(args)
+    motor = container.build(cfg)
+    ws = motor.workspace.id
+    ops = motor.operations()
+
+    # `--iniciar` grava a intencao antes de comecar, pelo mesmo caminho da tela.
+    # Sem ele, `run` obedece o que ja estava gravado -- que e o que faz um
+    # reinicio depois de queda voltar ao estado em que a pessoa deixou.
+    if args.iniciar:
+        saida = ops.set_intent(motor.terminal_principal(), ws, Intent.RUNNING,
+                               note="regente run --iniciar",
+                               interval_seconds=args.intervalo)
+        if not saida.accepted:
+            print(f"{saida.refusal}: {saida.reason}", file=sys.stderr)
+            motor.close()
+            return _exit_for(saida.refusal)
+
+    op, _, fase = ops.state(ws)
+    if op.intent is Intent.STOPPED and not args.iniciar:
+        print("o processamento deste workspace esta PARADO.")
+        print("  ligue com: regente run --iniciar")
+        print("  ou pela tela: regente ui")
+        motor.close()
+        return EXIT_OK
+
+    laco = ContinuousLoop(
+        read_intent=lambda: (lambda o: (o.intent, o.interval_seconds))(
+            motor.store.operation(ws)),
+        tick=lambda: len(motor.orchestrator.tick().dispatched),
+        beat=lambda ticks, detalhe: ops.beat(
+            ws, pid=os.getpid(), host=socket.gethostname(), ticks=ticks,
+            detail=detalhe),
+        stand_down=lambda: ops.stood_down(ws),
+        on_error=lambda e: print(f"  ciclo falhou: {type(e).__name__}: "
+                                 f"{redaction.redact_url(str(e))[:200]}",
+                                 file=sys.stderr))
+
+    # Ctrl+C e SIGTERM viram PEDIDO de parada, e nao morte. O laco termina o
+    # que comecou, apaga o sinal de vida e sai -- sem isso, um processo morto
+    # continua parecendo vivo ate o prazo de graca passar.
+    def parar(signum, frame):
+        print("\n  parada pedida; terminando o ciclo atual...", file=sys.stderr)
+        laco.request_stop("sinal do terminal")
+
+    signal.signal(signal.SIGINT, parar)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, parar)
+
+    print(f"{motor.workspace.name}: processando a cada {op.interval_seconds}s "
+          f"(Ctrl+C para parar)")
+    try:
+        rel = laco.run(max_cycles=args.ciclos)
+    finally:
+        motor.close()
+    print(f"  {rel.ticks} ciclo(s), {rel.dispatched} despacho(s), "
+          f"{rel.failures} falha(s) -- {rel.stopped_because}")
+    return EXIT_OK
+
+
+def cmd_engine(args) -> int:
+    """Liga, pausa, retoma e para o processamento -- e diz o que esta havendo.
+
+    Grava INTENCAO. Nao cria nem mata processo: quem executa e um `regente run`,
+    e se nao houver nenhum o estado mostra isso em vez de fingir.
+    """
+    from .core.operation import Intent
+
+    cfg = _load_config(args)
+    motor = container.build(cfg)
+    try:
+        ops = motor.operations()
+        ws = motor.workspace.id
+
+        if args.acao == "estado":
+            from .core.operation import explain
+
+            op, beat, fase = ops.state(ws)
+            print(f"fase       : {fase.value}")
+            print(f"o que e    : {explain(fase, beat)}")
+            print(f"intencao   : {op.intent.value}"
+                  + (f" (por {op.changed_by})" if op.changed_by else ""))
+            print(f"intervalo  : {op.interval_seconds}s")
+            if beat:
+                print(f"processo   : pid {beat.pid} em {beat.host}, "
+                      f"{beat.ticks} ciclo(s), sinal de {beat.at}")
+            else:
+                print("processo   : nenhum sinal de vida")
+            return EXIT_OK if not fase.needs_attention else EXIT_BLOCKED
+
+        alvo = {"iniciar": Intent.RUNNING, "retomar": Intent.RUNNING,
+                "pausar": Intent.PAUSED, "parar": Intent.STOPPED}[args.acao]
+        saida = ops.set_intent(motor.terminal_principal(), ws, alvo,
+                               note=args.nota or "",
+                               interval_seconds=args.intervalo)
+        if not saida.accepted:
+            print(f"{saida.refusal}: {saida.reason}", file=sys.stderr)
+            return _exit_for(saida.refusal)
+        print(f"{motor.workspace.name}: {saida.detail}")
+        if alvo is Intent.RUNNING:
+            _, beat, fase = ops.state(ws)
+            if beat is None:
+                print("  nenhum processo esta rodando ainda. "
+                      "Inicie com: regente run")
+        return EXIT_OK
+    finally:
+        motor.close()
+
+
 def cmd_ui(args) -> int:
     """Sobe a Mission Control sobre o estado deste workspace.
 
@@ -516,8 +642,18 @@ def cmd_ui(args) -> int:
         environment=(cfg.projects[0].default_environment
                      if cfg.projects else "staging"))
 
+    from .engine.operation import OperationService
+
+    operations = OperationService(
+        store=store, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
+        organization=cfg.organization, client=cfg.client,
+        workspace_name=cfg.workspace,
+        environment=(cfg.projects[0].default_environment
+                     if cfg.projects else "staging"))
+
     httpd = serve(read, host=args.host, port=args.port, identity=identity,
                   decisions=decisions, access=access, credentials=credentials,
+                  operations=operations,
                   session_token=identity.token,
                   read_only=args.read_only)
     where = f"http://{args.host}:{args.port}/"
@@ -844,6 +980,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nota", default="")
     p.add_argument("--config", default="regente.yaml")
     p.set_defaults(fn=cmd_access)
+
+    p = sub.add_parser("run", help="roda ciclos continuamente ate mandarem parar")
+    p.add_argument("--iniciar", action="store_true",
+                   help="grava a intencao RUNNING antes de comecar")
+    p.add_argument("--intervalo", type=int, default=None,
+                   help="segundos entre ciclos (padrao: o do workspace)")
+    p.add_argument("--ciclos", type=int, default=None,
+                   help="para depois de N ciclos (diagnostico)")
+    p.set_defaults(fn=cmd_run)
+
+    p = sub.add_parser("engine", help="liga, pausa, retoma e para o processamento")
+    p.add_argument("acao", choices=["estado", "iniciar", "pausar", "retomar",
+                                    "parar"])
+    p.add_argument("--intervalo", type=int, default=None,
+                   help="segundos entre ciclos")
+    p.add_argument("--nota", default="")
+    p.set_defaults(fn=cmd_engine)
 
     p = sub.add_parser("ui", help="Mission Control: o estado do motor numa tela")
     p.add_argument("--config", default="regente.yaml")

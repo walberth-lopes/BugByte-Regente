@@ -31,6 +31,7 @@ from ..core import ids
 from ..core.errors import AlreadyExists, CorruptedState
 from ..core.access import Ability, AccessGrant, PrincipalRef
 from ..core.credential import Credential, SecretRef, uses_from
+from ..core.operation import Heartbeat, Intent, Operation
 from ..core.model import (ActionRecord, Approval, ApprovalState, Dependency, Event,
                           ExternalRef, Lease, Option, Project, Repository, Run,
                           RunState, Task, Workspace, now)
@@ -173,6 +174,27 @@ CREATE INDEX IF NOT EXISTS ix_deliveries_task ON deliveries(workspace_id, task_k
 -- Revogar NAO apaga: preenche `revoked_at`. Uma concessao apagada leva junto a
 -- prova de que existiu, e "nunca teve acesso" e "teve e perdeu" sao fatos
 -- diferentes para quem investiga.
+-- O que uma PESSOA pediu ao processamento. Sobrevive ao processo, e e por isso
+-- que parar e voltar funciona entre reinicios.
+CREATE TABLE IF NOT EXISTS operation (
+  workspace_id TEXT PRIMARY KEY,
+  intent TEXT NOT NULL DEFAULT 'STOPPED',
+  interval_seconds INTEGER NOT NULL DEFAULT 60,
+  changed_by TEXT NOT NULL DEFAULT '',
+  changed_at TEXT,
+  note TEXT NOT NULL DEFAULT '');
+
+-- O que um PROCESSO afirma. Separada da de cima de proposito: um processo ao
+-- morrer nao pode sobrescrever a intencao de quem o ligou. E um heartbeat velho
+-- num banco reaberto significa "ninguem esta trabalhando", que e a verdade.
+CREATE TABLE IF NOT EXISTS operation_heartbeat (
+  workspace_id TEXT PRIMARY KEY,
+  at TEXT NOT NULL,
+  pid INTEGER NOT NULL DEFAULT 0,
+  host TEXT NOT NULL DEFAULT '',
+  ticks INTEGER NOT NULL DEFAULT 0,
+  detail TEXT NOT NULL DEFAULT '');
+
 CREATE TABLE IF NOT EXISTS access_grants (
   id TEXT PRIMARY KEY,
   client_id TEXT NOT NULL, workspace_id TEXT NOT NULL,
@@ -224,7 +246,7 @@ CREATE TABLE IF NOT EXISTS counters (
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "11"
+SCHEMA_VERSION = "12"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -491,6 +513,37 @@ def _v7_to_v8(c: sqlite3.Connection) -> None:
                     AND task_id <> ''""")
 
 
+def _v11_to_v12(c: sqlite3.Connection) -> None:
+    """Intencao de operacao e sinal de vida. Duas tabelas, e nao uma.
+
+    A intencao e o que uma PESSOA pediu: ela sobrevive a queda do processo, e e
+    isso que faz `stop`/`start` funcionarem entre reinicios. O sinal de vida e o
+    que um PROCESSO afirma; ele nao sobrevive a nada, e nao deve mesmo -- um
+    heartbeat antigo num banco reaberto significa exatamente "ninguem esta
+    trabalhando", que e a verdade.
+
+    Guardar as duas na mesma linha faria um processo ao morrer sobrescrever a
+    intencao de quem o ligou.
+
+    Nenhum workspace comeca `RUNNING`. Um banco migrado nao passa a despachar
+    trabalho porque foi migrado: ligar continua sendo um ato de alguem.
+    """
+    c.execute("""CREATE TABLE IF NOT EXISTS operation (
+                   workspace_id TEXT PRIMARY KEY,
+                   intent TEXT NOT NULL DEFAULT 'STOPPED',
+                   interval_seconds INTEGER NOT NULL DEFAULT 60,
+                   changed_by TEXT NOT NULL DEFAULT '',
+                   changed_at TEXT,
+                   note TEXT NOT NULL DEFAULT '')""")
+    c.execute("""CREATE TABLE IF NOT EXISTS operation_heartbeat (
+                   workspace_id TEXT PRIMARY KEY,
+                   at TEXT NOT NULL,
+                   pid INTEGER NOT NULL DEFAULT 0,
+                   host TEXT NOT NULL DEFAULT '',
+                   ticks INTEGER NOT NULL DEFAULT 0,
+                   detail TEXT NOT NULL DEFAULT '')""")
+
+
 MIGRATIONS: dict[str, tuple[str, Any]] = {
     "1": ("2", _v1_to_v2),
     "2": ("3", _v2_to_v3),
@@ -502,6 +555,7 @@ MIGRATIONS: dict[str, tuple[str, Any]] = {
     "8": ("9", _v8_to_v9),
     "9": ("10", _v9_to_v10),
     "10": ("11", _v10_to_v11),
+    "11": ("12", _v11_to_v12),
 }
 
 
@@ -876,6 +930,78 @@ class SqliteStore(Store):
             "SELECT * FROM credentials WHERE workspace_id=? AND id=?",
             (workspace_id, credential_id)).fetchone()
         return self._credential_row(r) if r else None
+
+    # ---- operacao: o que pediram, e quem esta trabalhando ---------------
+
+    def operation(self, workspace_id: str) -> Operation:
+        """A intencao gravada. Ausente e `STOPPED`, e isso e uma afirmacao.
+
+        Um workspace sobre o qual ninguem disse nada nao esta rodando. Ler a
+        ausencia como `RUNNING` faria migrar um banco ligar o motor.
+        """
+        r = self._con.execute(
+            "SELECT * FROM operation WHERE workspace_id=?",
+            (workspace_id,)).fetchone()
+        if not r:
+            return Operation(workspace_id=workspace_id)
+        return Operation(
+            workspace_id=r["workspace_id"], intent=Intent(r["intent"]),
+            interval_seconds=int(r["interval_seconds"] or 60),
+            changed_by=r["changed_by"] or "",
+            changed_at=_dt(r["changed_at"]), note=r["note"] or "")
+
+    def save_operation(self, op: Operation) -> None:
+        self._con.execute(
+            """INSERT INTO operation
+                 (workspace_id, intent, interval_seconds, changed_by,
+                  changed_at, note)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(workspace_id) DO UPDATE SET
+                 intent=excluded.intent,
+                 interval_seconds=excluded.interval_seconds,
+                 changed_by=excluded.changed_by,
+                 changed_at=excluded.changed_at,
+                 note=excluded.note""",
+            (op.workspace_id, op.intent.value, int(op.interval_seconds),
+             op.changed_by, _iso(op.changed_at), op.note))
+        self._con.commit()
+
+    def heartbeat(self, workspace_id: str) -> Heartbeat | None:
+        r = self._con.execute(
+            "SELECT * FROM operation_heartbeat WHERE workspace_id=?",
+            (workspace_id,)).fetchone()
+        if not r:
+            return None
+        return Heartbeat(at=_dt(r["at"]), pid=int(r["pid"] or 0),
+                         host=r["host"] or "", ticks=int(r["ticks"] or 0),
+                         detail=r["detail"] or "")
+
+    def beat(self, workspace_id: str, beat: Heartbeat) -> None:
+        """O processo diz que esta vivo. Uma linha por workspace.
+
+        Sobrescreve: dois processos no mesmo workspace nao devem existir, e a
+        exclusao real disso e o LEASE por task -- nao esta tabela. Aqui, o
+        ultimo a bater e o que a tela mostra, e o `pid` diz qual e.
+        """
+        self._con.execute(
+            """INSERT INTO operation_heartbeat
+                 (workspace_id, at, pid, host, ticks, detail)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(workspace_id) DO UPDATE SET
+                 at=excluded.at, pid=excluded.pid, host=excluded.host,
+                 ticks=excluded.ticks, detail=excluded.detail""",
+            (workspace_id, _iso(beat.at), int(beat.pid), beat.host,
+             int(beat.ticks), beat.detail[:300]))
+        self._con.commit()
+
+    def clear_heartbeat(self, workspace_id: str) -> None:
+        """Some ao desligar limpo. Sem isto, um processo que terminou de forma
+        ordeira continuaria parecendo vivo ate o prazo expirar -- e a tela
+        mostraria `STOPPING` para algo que ja acabou."""
+        self._con.execute(
+            "DELETE FROM operation_heartbeat WHERE workspace_id=?",
+            (workspace_id,))
+        self._con.commit()
 
     # ---- concessoes de acesso -------------------------------------------
 

@@ -303,3 +303,33 @@ button.choice.revoke { border-color: var(--stuck); color: var(--stuck); }
   padding: 12px 16px; color: var(--ink);
 }
 code.mono { color: var(--ink-dim); }
+
+/* ---- painel de operacao -------------------------------------------------
+   Os quatro botoes gravam INTENCAO. A tela nao inicia processo nenhum, e o
+   texto do painel diz isso -- um botao que parecesse ligar a maquina criaria
+   a expectativa errada no unico lugar onde ela custa caro. */
+.op-panel { display: grid; gap: 8px; }
+.op-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.op-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+.op-btn {
+  font: inherit; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line, #384152); background: var(--panel2, #1d2431);
+  color: inherit;
+}
+.op-btn:hover:not(:disabled) { border-color: var(--accent, #7aa2f7); }
+/* Desabilitado precisa PARECER desabilitado. Um botao que aceita clique e nao
+   faz nada e pior que um ausente: ensina a nao confiar na tela. */
+.op-btn:disabled { opacity: .38; cursor: not-allowed; }
+.op-hint {
+  font-size: 12px; padding: 6px 8px; border-radius: 6px;
+  background: var(--panel2, #1d2431); border-left: 3px solid var(--line, #384152);
+}
+.op-hint.bad { border-left-color: var(--bad, #f7768e); }
+.chip {
+  font-size: 12px; font-weight: 600; letter-spacing: .06em;
+  padding: 3px 9px; border-radius: 999px; border: 1px solid currentColor;
+}
+.chip.ok   { color: var(--ok, #9ece6a); }
+.chip.warn { color: var(--warn, #e0af68); }
+.chip.bad  { color: var(--bad, #f7768e); }
+.chip.dim  { color: var(--dim, #7d8590); }

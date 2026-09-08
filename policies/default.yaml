@@ -126,3 +126,17 @@ rules:
     effect: ALLOW
     match: {action: "agent.run"}
     reason: "sem isto o motor nunca despacha, e a fila nunca anda"
+
+  # ---- operar o motor ----------------------------------------------------
+  # Ligar, pausar e parar o PROCESSAMENTO. Permite que a acao seja avaliada;
+  # nao liga nada. Quem liga e uma pessoa com concessao para isso, e o que
+  # executa e um processo que alguem iniciou -- a tela grava intencao, nunca
+  # cria processo.
+  #
+  # Sem esta regra o default DENY vale e o motor nao pode ser desligado por
+  # ninguem, que e pior do que nao poder ser ligado: numa emergencia, o botao
+  # que falta e o de parar.
+  - name: human_operates_the_engine
+    effect: ALLOW
+    match: {action: "workspace.engine.control"}
+    reason: "quem esta de plantao precisa poder pausar sem matar processo"

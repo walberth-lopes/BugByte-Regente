@@ -16,7 +16,7 @@ com o produto vira um incidente.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Callable
 
@@ -27,6 +27,7 @@ from ..core.model import (Dependency, Event, ExternalRef, Run, RunState, Task, W
                           now)
 from ..core.policy import AutonomyLevel
 from ..core.risk import RiskEngine, RiskLevel
+from ..core.selection import Selection, Verdict
 from ..core.scheduling import Candidate, Limits, Plan, plan
 from ..core.states import (_AVANCOS, ACTIVE, AWAITING_EXTERNAL, OWNED_ACTIVE,
                            TaskState, engine_can_advance, is_terminus,
@@ -123,6 +124,12 @@ class Orchestrator:
     #: Segundos de vida de um lease. O worker renova; se morrer, vence e a
     #: recuperacao devolve a task a fila.
     lease_seconds: int = 900
+    #: Regras de elegibilidade e prioridade do workspace. Vazio = tudo elegivel,
+    #: na prioridade que a origem deu. Ausencia de regra nao filtra.
+    selection: "Selection" = field(default_factory=lambda: Selection())
+    #: Preenchido por `plan()`; so existe para o plano poder DIZER o que ficou
+    #: de fora por regra, em vez de omitir em silencio.
+    _excluded: tuple = ()
     #: Reads the checks of deliveries in flight. `None` means this workspace
     #: has no remote at all -- in which case a task that somehow reaches
     #: `CI_RUNNING` is escalated rather than watched, because an engine that
@@ -438,6 +445,22 @@ class Orchestrator:
         return None, ""
 
     # ---- 2. descoberta --------------------------------------------------
+    def _selection_of(self, e) -> "Verdict":
+        """O veredito das regras do workspace para esta task.
+
+        Aplicado na FRONTEIRA, onde os campos externos existem -- e nao dentro
+        do scheduler, que nao deve aprender o que e um rotulo ou um titulo.
+        """
+        from ..core.selection import Selectable
+
+        campos = Selectable(
+            title=e.title, key=e.key, project=e.project, status=e.status.value,
+            labels=list(e.labels), priority=e.priority, assignee=e.assignee,
+            type=str(e.data.get("tipo") or e.data.get("type") or ""),
+            components=list(e.data.get("componentes")
+                            or e.data.get("components") or ()))
+        return self.selection.evaluate(campos, base_priority=e.priority)
+
     def _discover(self, rel: TickReport) -> bool:
         """Devolve True quando esta foi a primeira passada (baseline)."""
         ja_tinha = bool(self.store.tasks(self.workspace.id))
@@ -503,16 +526,24 @@ class Orchestrator:
                         de=before, to_state=current_status)
 
     def _create_task(self, e: ExternalTask) -> Task:
+        veredito = self._selection_of(e)
         t = Task(
             id=ids.new_id(ids.TASK), workspace_id=self.workspace.id,
             project_id=e.project or self.project_id, title=e.title,
             state=TaskState.DISCOVERED,
             externo=ExternalRef(provider=self.tasks_provider.name, key=e.key, url=e.url),
-            description=e.description, priority=e.priority,
+            description=e.description, priority=veredito.priority,
             resources=tuple(e.resources),
             data={**dict(e.data), "situacao_externa": e.status.value,
                    "estado_externo": e.external_status,
-                   "rotulos": list(e.labels)})
+                   "rotulos": list(e.labels),
+                   # Guardado com o PORQUE. Uma ordem que ninguem consegue
+                   # explicar e uma ordem em que ninguem confia, e a primeira
+                   # pergunta de quem ve o board reordenado e "por que essa
+                   # primeiro?".
+                   "elegivel": veredito.eligible,
+                   "selecao": list(veredito.reasons),
+                   "excluida_por": veredito.excluded_by})
         try:
             self.store.save_task(t)
         except AlreadyExists:
@@ -684,15 +715,32 @@ class Orchestrator:
             r.task_id: frozenset(por_id[r.task_id].resources)
             for r in ativos if r.task_id in por_id
         }
+        # Inelegivel nao vira candidata -- e tambem NAO SOME. Ela continua no
+        # board, com o motivo gravado, e aparece como adiada. Trabalho que
+        # desaparece sem explicacao e como um board perde tarefas sem ninguem
+        # perceber; uma regra de exclusao tem de ser visivel para poder ser
+        # discutida.
+        prontas = [t for t in todas if t.state is TaskState.READY]
+        elegiveis = [t for t in prontas if t.data.get("elegivel") is not False]
+        self._excluded = tuple(
+            (t.id, f"fora por regra de selecao: "
+                   f"{t.data.get('excluida_por') or 'nao elegivel'}")
+            for t in prontas if t.data.get("elegivel") is False)
         candidates = [
             Candidate(task_id=t.id, priority=t.priority,
                       resources=frozenset(t.resources), key=t.key)
-            for t in todas if t.state is TaskState.READY
+            for t in elegiveis
         ]
         hoje = self.clock().strftime("%Y-%m-%d")
-        return plan(candidates, self._graph(), completed, running_now,
-                       self.limits, self.store.dispatch_count(self.workspace.id, hoje),
-                       nomes={t.id: t.key for t in todas})
+        p = plan(candidates, self._graph(), completed, running_now,
+                    self.limits, self.store.dispatch_count(self.workspace.id, hoje),
+                    nomes={t.id: t.key for t in todas})
+        if self._excluded:
+            from ..core.scheduling import Deferred
+
+            p = replace(p, deferred=p.deferred + tuple(
+                Deferred(i, motivo) for i, motivo in self._excluded))
+        return p
 
     def _dispatch(self, rel: TickReport) -> None:
         p = self.plan()

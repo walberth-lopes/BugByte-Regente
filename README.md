@@ -354,6 +354,155 @@ regente credentials revogar crd_abc123
 
 A porta fecha na chamada seguinte, sem reiniciar nada.
 
+### 11. Deixar o Regente trabalhando
+
+Até aqui você rodou `regente tick` à mão. Ninguém quer fazer isso para sempre.
+
+O processamento tem um **estado próprio**, separado do estado das tasks:
+
+```bash
+regente engine estado
+```
+
+```
+fase       : STOPPED
+o que e    : ninguem pediu para rodar; use `regente run` para iniciar
+intencao   : STOPPED
+processo   : nenhum sinal de vida
+```
+
+São duas coisas diferentes, e o Regente nunca as confunde:
+
+| | |
+|---|---|
+| **intenção** | o que *você pediu*. Fica gravada, e sobrevive a reinício. |
+| **processo** | quem está *de fato* executando ciclos. Publica sinal de vida. |
+
+Ligue e deixe rodando:
+
+```bash
+regente engine iniciar --intervalo 60
+regente run
+```
+
+O `regente run` roda ciclos até mandarem parar. Ele relê sua intenção a cada
+volta — então você pode pausar de outro terminal, ou pela tela, sem matar
+processo nenhum:
+
+```bash
+regente engine pausar     # continua vivo, para de despachar
+regente engine retomar
+regente engine parar      # o processo termina o ciclo atual e sai limpo
+```
+
+`Ctrl+C` também funciona: o ciclo atual termina, o sinal de vida é apagado, e a
+intenção gravada continua valendo — reiniciar `regente run` volta de onde parou.
+
+**As seis fases, e o que cada uma quer dizer:**
+
+| fase | significa |
+|---|---|
+| `STOPPED` | ninguém pediu para rodar |
+| `STARTING` | pediram; o processo ainda não deu sinal de vida |
+| `RUNNING` | há processo trabalhando |
+| `PAUSED` | processo vivo, deliberadamente sem despachar |
+| `STOPPING` | parada pedida; um processo ainda está terminando |
+| `DEGRADED` | **pediram para rodar e ninguém apareceu** |
+
+`DEGRADED` é a mais importante: é a única que pede ação sua. Ela existe porque
+"a tela está aberta" e "o motor está trabalhando" são fatos diferentes, e um
+painel que mostrasse `RUNNING` só porque alguém clicou em Iniciar estaria
+afirmando algo sobre o mundo com base num pedido.
+
+### 12. Fazer isso tudo pela tela
+
+```bash
+regente ui
+```
+
+No topo do painel há um bloco **processamento** com a fase, o processo (pid e
+máquina), e quatro botões: `Iniciar`, `Pausar`, `Retomar`, `Parar`.
+
+Os botões **gravam intenção** — eles não iniciam processos. Quem executa
+continua sendo um `regente run` que você deixou rodando. Uma página web que
+pudesse criar processos na sua máquina seria uma autoridade paralela, e é
+exatamente isso que o Regente não tem.
+
+Se você ainda não recebeu `workspace.engine.control` neste workspace, os botões
+não aparecem — e a tela diz qual comando resolve.
+
+### 13. Escolher o que roda primeiro
+
+Por padrão a ordem é a prioridade que veio do board, com a chave como desempate
+estável. Você pode somar regras suas no `regente.yaml`:
+
+```yaml
+selecao:
+  - nome: faxina primeiro
+    campo: title
+    compara: contains
+    valor: "FAXINA"
+    delta: -100          # negativo roda ANTES
+
+  - nome: so backend
+    campo: labels
+    compara: contains
+    valor: backend
+    efeito: require      # nada fora disto é elegível
+
+  - nome: nunca risco legal
+    campo: title
+    compara: contains
+    valor: "LEGAL RISK"
+    efeito: exclude      # vence qualquer require
+```
+
+Duas perguntas separadas, de propósito:
+
+* **elegibilidade** — esta task *pode* ser pega? (`require` / `exclude`)
+* **prioridade** — entre as que podem, qual antes? (`delta`)
+
+Uma task pode ser elegível e ter prioridade baixa. Se as duas fossem a mesma
+coisa, "despriorizar" viraria "esconder" — e é assim que trabalho some de um
+board sem ninguém perceber. Uma task excluída por regra **continua aparecendo**,
+como adiada, com o nome da regra que a excluiu.
+
+Campos disponíveis: `title`, `key`, `project`, `status`, `labels`, `priority`,
+`assignee`, `type`, `components`. Comparações: `contains`, `equals`,
+`starts_with`, `in`, `lt`, `gt`. Um campo ou uma comparação que não existam
+fazem o Regente recusar a configuração, com a lista do que existe — nunca uma
+regra que silenciosamente nunca casa.
+
+### 14. Conectar um board de verdade
+
+O Regente não assume que o seu board usa `TO DO` / `IN PROGRESS` / `DONE`. Você
+declara o que os seus status significam:
+
+```yaml
+providers:
+  tasks:
+    name: jira
+    site: https://suaempresa.atlassian.net
+    jql: "project = ABC AND statusCategory != Done"
+    status_map:
+      available:   ["Refinamento", "To Do"]
+      andamento:   ["Em Desenvolvimento"]
+      revisao:     ["Em Revisão"]
+      done:        ["Pronto"]
+      ignorado:    ["Cancelado"]
+```
+
+Um status que não estiver em lugar nenhum fica **`UNKNOWN`** e a task não é
+pega. Isso é de propósito: um status novo no board significa que alguém mudou o
+processo, e adivinhar o vizinho mais conveniente faria o motor pegar trabalho
+que a equipe tirou da fila.
+
+Depois registre a credencial (passo 10) e prove:
+
+```bash
+regente credentials testar --provider tasks --uso task.read
+```
+
 ### O que esperar
 
 O Regente diz não com frequência, e quase sempre a resposta certa é olhar o
@@ -369,15 +518,20 @@ você e um que age em seu nome sem você saber.
 ```bash
 regente init      # cria regente.yaml e a pasta tasks/
 regente doctor    # prova que o motor sobe: banco, adapters, policies
-regente tick      # roda um ciclo
+regente tick      # roda UM ciclo
+regente run       # roda ciclos até mandarem parar
 regente status    # o que está acontecendo, o que precisa de você
 ```
+
+Tudo também funciona como `python -m regente ...` e `uv run regente ...`.
 
 | comando | o que faz |
 |---|---|
 | `init` | cria a configuração inicial |
 | `doctor` | prova cada aposta do ambiente por comando, não por suposição |
 | `tick` | um ciclo: recupera, descobre, analisa, planeja, despacha, colhe |
+| `run` | ciclos contínuos: obedece a intenção gravada, sobrevive a falha, sai limpo |
+| `engine` | `estado`, `iniciar`, `pausar`, `retomar`, `parar` — grava intenção, não cria processo |
 | `status` | as quatro perguntas: o que roda, o que precisa de você, o que travou, o que terminou |
 | `plan` | o que o scheduler faria agora — sem executar |
 | `needs-me` | a fila de decisões humanas, com briefing |

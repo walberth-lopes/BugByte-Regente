@@ -211,11 +211,121 @@ function taskTable(rows, opts = {}) {
 // telas
 // ---------------------------------------------------------------------------
 
+/**
+ * O painel de operacao. Mostra o que ESTA acontecendo, e nao o que a tela quer.
+ *
+ * "o servidor HTTP esta vivo" e "o motor esta processando" sao coisas
+ * diferentes. Esta pagina carregando nao prova nenhuma das duas sobre a outra:
+ * a fase vem do motor, derivada da intencao gravada e do sinal de vida de um
+ * processo. `DEGRADED` -- pediram para rodar e ninguem apareceu -- e o estado
+ * mais importante daqui, porque e o unico que pede acao de alguem.
+ */
+function operationPanel(op) {
+  const fase = String(op.phase || "STOPPED");
+  const classe = {
+    RUNNING: "ok", PAUSED: "warn", STARTING: "warn",
+    STOPPING: "warn", STOPPED: "dim", DEGRADED: "bad",
+  }[fase] || "dim";
+
+  // Cada botao diz para que intencao ele leva. O rotulo e a intencao ficam
+  // juntos de proposito: um botao "Retomar" que grave PAUSED seria invisivel.
+  const podeControlar = op.controllable !== false && can("workspace.engine.control");
+  const botao = (rotulo, intent, ativo) => `
+    <button class="op-btn" data-intent="${intent}" ${ativo ? "" : "disabled"}
+            title="${ativo ? "grava a intencao " + intent
+                           : "indisponivel nesta fase"}">${rotulo}</button>`;
+
+  const rodando = fase === "RUNNING";
+  const pausado = fase === "PAUSED";
+  const parado = fase === "STOPPED" || fase === "DEGRADED";
+
+  const processo = op.process
+    ? `pid ${esc(op.process.pid)} em ${esc(op.process.host)} — ` +
+      `${esc(op.process.ticks)} ciclo(s)`
+    : "nenhum processo deu sinal de vida";
+
+  // A explicacao vem do MOTOR, e nao daqui. Uma segunda redacao na tela
+  // divergiria da do terminal, e as duas descreveriam o mesmo estado diferente.
+  return `
+    <div class="panel op-panel">
+      <div class="op-head">
+        <span class="chip ${classe}">${esc(fase)}</span>
+        <strong>${esc(op.explain || "")}</strong>
+      </div>
+      <div class="dim">intencao gravada: ${esc(op.intent || "?")}
+        ${op.changed_by ? "— por " + esc(op.changed_by) : ""}
+        · ciclo a cada ${esc(op.interval_seconds || "?")}s</div>
+      <div class="dim">processo: ${processo}</div>
+      ${podeControlar ? `<div class="op-actions">
+        ${botao("Iniciar", "RUNNING", !rodando)}
+        ${botao("Pausar", "PAUSED", rodando)}
+        ${botao("Retomar", "RUNNING", pausado)}
+        ${botao("Parar", "STOPPED", !parado)}
+      </div>` : `<div class="dim op-actions">
+        ${op.controllable === false
+          ? "esta sessao nao acompanha o processamento"
+          : "voce nao tem <code>workspace.engine.control</code> neste workspace." +
+            " Peca a quem administra, ou use: " +
+            "<code>regente access conceder &lt;voce&gt; --papel operator</code>"}
+      </div>`}
+      ${fase === "DEGRADED" ? `<div class="op-hint">
+        Ninguem esta executando os ciclos. Rode <code>regente run</code> na pasta
+        deste workspace, ou clique em <strong>Parar</strong> para registrar que o
+        processamento deve ficar desligado.</div>` : ""}
+      ${fase === "RUNNING" || fase === "PAUSED" ? "" : `<div class="op-hint dim">
+        Os botoes gravam uma INTENCAO. Quem executa e um processo
+        <code>regente run</code> — esta tela nao inicia processos.</div>`}
+    </div>`;
+}
+
+/** True quando a identidade desta sessao tem a capacidade neste workspace. */
+function can(ability) {
+  const aqui = ((state.identity || {}).abilities || {})[ws()] || [];
+  return aqui.includes(ability);
+}
+
+/**
+ * Grava a intencao. A tela NAO decide se pode: ela pergunta, e mostra a
+ * resposta do motor -- inclusive a recusa, com o nome que o motor deu.
+ */
+async function setIntent(intent, botao) {
+  const antes = botao.textContent;
+  botao.disabled = true;
+  botao.textContent = "…";
+  try {
+    await post(api("/operation/intent"), { intent });
+    await render();
+  } catch (e) {
+    botao.disabled = false;
+    botao.textContent = antes;
+    const alvo = botao.closest(".op-panel");
+    if (alvo) {
+      const aviso = document.createElement("div");
+      aviso.className = "op-hint bad";
+      aviso.textContent = "recusado: " + e.message;
+      alvo.appendChild(aviso);
+    }
+  }
+}
+
+// Delegacao: o painel e reescrito a cada leitura, e um listener por botao
+// vazaria a cada render.
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest(".op-btn");
+  if (b && !b.disabled) setIntent(b.dataset.intent, b);
+});
+
 const pages = {};
 
 pages.overview = async () => {
-  const [o, tasks] = await Promise.all([get(api("/overview")), get(api("/tasks"))]);
+  const [o, tasks, op] = await Promise.all([
+    get(api("/overview")), get(api("/tasks")), get(api("/operation")),
+  ]);
   const rows = tasks.tasks;
+
+  // O painel de operacao vem PRIMEIRO. "isto esta trabalhando?" e a primeira
+  // pergunta de quem abre a tela, e ate aqui ela nao tinha resposta nenhuma.
+  const painel = operationPanel(op);
 
   // Agrupamento por DONO do proximo passo, nao por aparencia. As quatro
   // categorias sao semanticamente diferentes e ficam separadas: misturar
@@ -234,6 +344,9 @@ pages.overview = async () => {
       <span class="dim">ultima atividade ${esc(o.last_activity_age)}</span>
       <a href="#/health" style="margin-left:auto">ver saude →</a>
     </div>
+
+    <h2>processamento</h2>
+    ${painel}
 
     <h2>estado operacional</h2>
     <div class="grid wide">

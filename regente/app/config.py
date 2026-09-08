@@ -19,6 +19,7 @@ import yaml
 
 from ..core.policy import AutonomyLevel
 from ..core.scheduling import Limits
+from ..core.selection import Selection, rules_from
 from ..engine.supervisor import Budget
 
 
@@ -88,6 +89,9 @@ class Config:
     #: area futura recortada dele, e nao deixa rastro no git status da area
     #: isolada -- o unico jeito de ver e comparar antes e depois.
     watched_sources: tuple[str, ...] = ()
+    #: Regras de elegibilidade e prioridade deste workspace. Vazio = tudo
+    #: elegivel, na prioridade que a origem deu -- ausencia de regra nao filtra.
+    selection: "Selection" = field(default_factory=lambda: Selection())
 
     @property
     def banco(self) -> Path:
@@ -162,6 +166,7 @@ def load(path: str | Path) -> Config:
         policies=caminho_policies,
         lease_seconds=int(raw.get('lease_seconds', 900)),
         secrets=tuple(str(x) for x in (raw.get('secrets') or ())),
+        selection=rules_from(raw.get('selection') or raw.get('selecao') or []),
         helpers={str(k): tuple(str(a) for a in v)
                  for k, v in (raw.get('helpers') or {}).items()},
         targets={k: dict(v) for k, v in (raw.get('targets') or {}).items()},

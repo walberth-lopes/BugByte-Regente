@@ -69,6 +69,7 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
     roda contra a rede.
     """
     from ..core.credential import Use
+    from ..ports.tasks import status_map_from
     from .tasks.jira import JiraTasks
     from .tasks.transport import HttpTransport, SnapshotTransport
 
@@ -107,6 +108,7 @@ def _tasks_jira(o: dict[str, Any]) -> Port:
         resources_by=o.get("resources_by", "parent"),
         max_pages=int(o.get("max_pages", 10)),
         per_page=int(o.get("per_page", 100)),
+        status_overrides=status_map_from(o.get("status_map")),
         site=o.get("site", ""))
 
 

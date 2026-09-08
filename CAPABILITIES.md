@@ -17,6 +17,188 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone Operacao — o motor continua sozinho, e alguem consegue liga-lo
+
+Os marcos anteriores provaram que o motor **pode** agir com autoridade. Este
+pergunta outra coisa: uma pessoa consegue ligar o Regente e deixa-lo
+trabalhando? A resposta era nao, e o motivo nao era falta de mecanismo -- era
+que o mecanismo so avancava quando alguem digitava `regente tick`.
+
+### O que faltava, medido
+
+```
+$ grep -rn "while True|--continuous|daemon" regente/cli.py regente/app/
+(nada)
+```
+
+Nao havia laco, nem sono entre ciclos, nem sinal de vida, nem desligamento
+limpo. E nao havia **estado do processamento**: existia estado de task e de run,
+nunca do motor. Consequencia direta -- a tela nao tinha o que mostrar nem o que
+controlar, e nao dava para separar
+
+```
+o servidor HTTP da tela esta vivo    de    o motor esta processando
+```
+
+### A decisao que o marco forcou
+
+A tentacao era o botao `Iniciar` subir um processo. Isso daria a uma pagina web
+o poder de criar processos no computador de alguem -- a autoridade paralela que
+os marcos 13 a 16 existiram para eliminar.
+
+O desenho separa **intencao** de **execucao**:
+
+```
+UI / CLI  --grava-->  intencao (RUNNING | PAUSED | STOPPED)
+                           |
+                     [identidade -> concessao -> capacidade -> policy -> auditoria]
+                           |
+`regente run`  --le a cada volta-->  obedece, e publica sinal de vida
+```
+
+A tela nao inicia processo nenhum. Ela grava uma intencao pelo mesmo caminho que
+a decisao humana ja percorria. Quem executa e um processo que alguem iniciou.
+
+Isso da de graca a honestidade que o marco pede: **intencao `RUNNING` sem sinal
+de vida e `DEGRADED`**, nunca `RUNNING`.
+
+### Seis fases, derivadas e nunca gravadas
+
+| fase | quando |
+|---|---|
+| `STOPPED` | ninguem pediu |
+| `STARTING` | pediram; o processo ainda nao apareceu (prazo curto) |
+| `RUNNING` | pediram e ha processo com sinal recente |
+| `PAUSED` | processo vivo, deliberadamente sem despachar |
+| `STOPPING` | parada pedida, processo ainda terminando |
+| `DEGRADED` | pediram e ninguem apareceu -- a unica que pede acao |
+
+Derivadas de (intencao, sinal de vida, relogio). Uma coluna `fase` criaria duas
+verdades sobre a mesma coisa, e a errada seria sempre a coluna -- a mesma
+decisao de `Status` de credencial no marco 15.
+
+### Elegibilidade e prioridade sao perguntas diferentes
+
+```
+eligibility   esta task PODE ser pega?         booleana, um filtro
+priority      entre as que podem, qual antes?  um numero, uma ordem
+```
+
+Colapsar as duas faria "despriorizar" virar "esconder" -- e e assim que trabalho
+some de um board sem ninguem perceber. Uma task excluida por regra **continua
+aparecendo**, como adiada, com o nome da regra que a excluiu.
+
+A ordem final continua sendo a que ja existia: `(prioridade, chave)`, menor
+primeiro, chave como desempate estavel. As regras mudam o NUMERO, nunca o
+criterio de desempate.
+
+O piso de prioridade e **negativo**. Com piso em zero, uma task que o board
+marcou como critica (10) e uma comum (100) somariam o mesmo `-100` e encostariam
+empatadas -- a regra do workspace teria apagado a informacao do board em vez de
+somar a ela.
+
+### O board declara o que os status dele significam
+
+O mapeamento morava numa constante do adapter e so servia a quem usasse aqueles
+nomes. Um board com `Refinamento` / `Em Desenvolvimento` caia inteiro em
+`UNKNOWN`, e a saida era editar Python -- que e pedir para o cliente virar
+mantenedor.
+
+Agora o workspace declara, e a declaracao vence o mapa embutido sem substitui-lo.
+O que nao muda: um status que ninguem mapeou continua `UNKNOWN` e a task nao e
+pega. Coagir para o vizinho mais conveniente faria o motor pegar trabalho que a
+equipe tirou da fila.
+
+Um balde escrito errado **levanta**, com a lista dos que existem. Ignorar em
+silencio faria o board inteiro cair em `UNKNOWN` sem ninguem entender por que.
+
+### Exercitado de verdade
+
+Um `regente run` real, um servidor de UI real, e um navegador real:
+
+```
+regente engine iniciar        -> sem concessao: NOT_FOUND, rc=3
+regente access inicial        -> concedido
+regente engine iniciar        -> STOPPED -> RUNNING
+regente engine estado         -> STARTING: "aguardando o processo dar sinal"
+regente run                   -> RUNNING, pid 1680, 4 ciclos
+```
+
+Pela tela, com identidade `dev-token:first-client`:
+
+```
+POST /operation/intent  sem concessao   -> HTTP 404 NOT_FOUND
+(concedido `operator`)
+POST intent RUNNING -> 200  STOPPED -> RUNNING
+POST intent PAUSED  -> 200  RUNNING -> PAUSED
+POST intent TURBO   -> 400  "intencao 'TURBO' nao existe; use RUNNING, PAUSED, STOPPED"
+```
+
+E no navegador: o painel mostrou `RUNNING · pid 1680 em DESKTOP-09OD9Q8 · 1
+ciclo(s)`; um clique em **Pausar** levou o processo vivo a `PAUSED · processo
+vivo, sem despachar` mantendo o pid. Um clique parou de despachar sem matar
+nada.
+
+A trilha de auditoria gravou cada transicao com o ator certo --
+`dev-token:first-client` para o que veio da tela, a conta do sistema para o que
+veio do terminal.
+
+### Sweep de mutacao
+
+18 mutantes sobre as guardas novas. **16 capturados na primeira rodada, 2
+escaparam -- e os dois escapes eram buracos meus, nao ruido:**
+
+**17. task inelegivel vira candidata.** Eu havia testado `Selection.evaluate`
+isoladamente -- exclusao vence exigencia, empate estavel, piso negativo -- e
+nunca que uma task inelegivel deixa de ser DESPACHADA. Trocar o filtro do
+orquestrador por `list(prontas)` passava com a suite inteira verde: a regra
+funcionaria na tela e nao no despacho, que e o pior lugar para ela nao
+funcionar.
+
+**18. a rota de operacao deixa de checar escopo.** Nenhum teste provava que o
+escopo e avaliado ANTES do corpo.
+
+A primeira versao do teste 18 estava errada, e vale registrar: dei capacidade
+nos dois workspaces para "isolar escopo de capacidade", sem perceber que
+`may_read` e verdadeiro por desenho quando ha capacidade ali -- "quem recebeu
+uma capacidade precisa enxergar o workspace". O escopo passava com razao, e o
+teste acusava o produto de um defeito que era meu. A diferenca que a checagem
+realmente faz e de ORDEM: sem ela, um corpo invalido para um workspace fora do
+alcance responde `400`, ou seja, a API comenta o corpo de um recurso que quem
+pergunta nao deveria saber que existe. Reescrito sobre essa propriedade e
+remutado: os dois ficam vermelhos.
+
+**Resultado final: 18/18.**
+
+### Um travamento que virou defeito
+
+A mutacao que removia o `break` de `STOPPED` nao falhou -- **pendurou o sweep
+por tres horas**, e o driver tratou isso como progresso. A causa era um defeito
+de verdade, e nao do teste:
+
+```
+regente run --ciclos 3   com o motor PAUSADO   ->  nunca termina
+```
+
+O limite contava ciclos de TRABALHO, e uma volta pausada nao produz trabalho --
+o contador nunca alcancava o limite. Passou a contar VOLTAS. Um limite que nao
+limita e pior que nenhum: quem o passou acredita que o processo termina.
+
+O driver ganhou prazo por mutacao e uma terceira saida, `PENDUROU`, separada de
+capturada e de escapada -- pendurado nao e nenhuma das duas: e resultado nenhum.
+
+### Limitacoes
+
+**Configurar provider e credencial pela tela ainda nao existe.** A tela controla
+o processamento e le tudo; registrar um provider Jira e uma credencial continua
+sendo `regente.yaml` mais `regente credentials registrar`. As rotas de escrita
+de credencial ja existem desde o marco 15 -- falta a tela que as usa.
+
+**Os dois bloqueios externos continuam**, e nao foram contornados: nenhuma
+credencial de Jira que o motor resolva, e nenhum agente de modelo autenticado.
+
+---
+
 ## Milestone 6 — o caminho operacional fechado
 
 O M16 provou autoridade. O M6.1 provou transporte ate um subprocesso. Faltava o

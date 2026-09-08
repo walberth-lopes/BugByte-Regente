@@ -43,6 +43,16 @@ a cada chamada. O motor virou principal de servico com concessao propria --
 abrir excecao para o processo automatico seria devolver a segunda autoridade, e
 seria a mais facil de justificar.
 
+O marco de operacao respondeu a pergunta que faltava: uma pessoa consegue ligar
+o Regente e deixa-lo trabalhando? Ate ele, o motor so avancava quando alguem
+digitava `regente tick`. Agora ha `regente run` continuo, estado de
+processamento com seis fases derivadas, e quatro botoes na tela -- que gravam
+INTENCAO e nao criam processo.
+
+Junto vieram as duas pecas que faltavam para conectar um board real: o workspace
+declara o que os status dele significam, e regras de elegibilidade e prioridade
+separadas, deterministicas, com o motivo de cada posicao visivel.
+
 O marco 6 fechou o caminho operacional. O levantamento achou duas coisas que
 ninguem esperava: `GitClone.push` levantava `NameError` em toda execucao real --
 `_looks_local` era chamada em dois lugares e definida em nenhum -- e o provedor

@@ -53,6 +53,11 @@ class Ability(str, Enum):
     CREDENTIAL_GRANT = "workspace.credential.grant"
     CREDENTIAL_REVOKE = "workspace.credential.revoke"
     CREDENTIAL_LIST = "workspace.credential.list"
+    #: Ligar, pausar e parar o PROCESSAMENTO. Separada de decidir escalada:
+    #: quem responde a fila humana nao ganha, por tabela, o direito de desligar
+    #: o motor de um cliente -- e quem opera o motor nao ganha o de assinar
+    #: decisoes em nome de alguem.
+    ENGINE_CONTROL = "workspace.engine.control"
 
 
 #: O conjunto de quem administra acesso. Nomeado porque "administrador" e uma
@@ -66,8 +71,10 @@ ADMIN = frozenset({Ability.GRANT, Ability.REVOKE, Ability.LIST})
 KEEPER = frozenset({Ability.CREDENTIAL_GRANT, Ability.CREDENTIAL_REVOKE,
                     Ability.CREDENTIAL_LIST})
 
-#: Quem so responde a fila humana.
-OPERATOR = frozenset({Ability.DECIDE})
+#: Quem so responde a fila humana, e liga e desliga o processamento. As duas
+#: coisas andam juntas na pratica: quem esta de plantao respondendo a fila e
+#: quem pausa o motor quando algo esta errado.
+OPERATOR = frozenset({Ability.DECIDE, Ability.ENGINE_CONTROL})
 
 #: O motor. Uma capacidade so: usar as credenciais que lhe foram registradas.
 #: Ele nao decide escalada, nao concede acesso e nao administra credencial --
