@@ -285,3 +285,18 @@ def test_publishing_defaults_to_the_disposable_index():
     assert all("test.pypi.org" in a for a in alvos), (
         "ha alvo de publicacao apontando para o indice real: "
         + ", ".join(a for a in alvos if "test.pypi.org" not in a))
+
+
+@pytest.mark.parametrize("arquivo", INSTALADORES)
+def test_the_installer_teaches_the_flow_that_exists(arquivo):
+    """O instalador ensina o proximo passo, e ele precisa ser o passo REAL.
+
+    Ele mandava rodar tres comandos -- `init`, `access inicial` e `ui`. O `init`
+    passou a fazer os tres, e uma instrucao desatualizada num instalador e pior
+    que nenhuma: ela e a primeira coisa que a pessoa le, e ensina um fluxo que o
+    produto nao tem mais.
+    """
+    texto = (RAIZ / arquivo).read_text(encoding="utf-8")
+    assert "regente init" in texto, f"{arquivo} nao diz o primeiro comando"
+    assert "regente access inicial" not in texto, (
+        f"{arquivo} ainda manda conceder acesso a mao; o `init` ja faz isso")
