@@ -666,7 +666,8 @@ regente credentials testar --provider tasks --uso task.read
 
 ### 14b. Conectar o GitHub, e escolher o que ele traz
 
-Abra **Configuração › Integrações** e clique em **Conectar GitHub**.
+Abra **Configuração › Conexões**. No cartão **Repositório**, escolha o
+GitHub e clique em **Conectar GitHub**.
 
 Ele abre o navegador se você ainda não tiver autorizado, pergunta de qual conta
 ou organização, e traz a lista dos seus repositórios. Você marca os que este
@@ -828,7 +829,7 @@ superior direito; por padrão ela segue o tema do seu sistema).
 | Ver commits, pull requests e o resultado do CI | **Entregas** |
 | Conectar o Jira, o GitHub, o agente | **Configuração › Conexões** |
 | Autorizar o Regente a usar um serviço | **Configuração › Credenciais** |
-| Conectar o GitHub e escolher seus repositórios | **Configuração › Integrações** |
+| Conectar o GitHub e escolher seus repositórios | **Configuração › Conexões** |
 | Dizer o que os status do seu board significam | **Configuração › Status do board** |
 | Dizer o que deve rodar primeiro | **Configuração › Regras e prioridade** |
 | Dar acesso a outra pessoa | **Configuração › Acesso** |

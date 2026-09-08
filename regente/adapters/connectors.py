@@ -52,6 +52,16 @@ from .secrets import _minimal_env
 #: Quanto esperar por uma pergunta rapida a uma ferramenta local.
 TIMEOUT = 20
 
+#: Por quanto tempo a resposta de `estado()` continua valendo.
+#:
+#: A tela le a lista de conectores a cada 5 segundos. Sem esta memoria curta,
+#: cada leitura roda `gh auth status` e `gh api user` -- doze subprocessos por
+#: minuto para responder uma pergunta que muda uma vez por semana.
+#:
+#: Curta de proposito: quem acabou de autorizar no navegador espera ver a tela
+#: mudar, e nao esperar um minuto. Autorizar limpa a memoria na hora.
+VALIDADE_DO_ESTADO = 20.0
+
 
 # ===========================================================================
 # o vocabulario
@@ -193,6 +203,10 @@ class GitHubConector(Conector):
     e nenhum segredo em lugar nenhum que ele alcance.
     """
     cli: str = "gh"
+    #: A ultima resposta de `estado()`, e ate quando ela vale. Memoria curta e
+    #: por instancia -- nao ha nada de tenant aqui, so o que a FERRAMENTA local
+    #: respondeu sobre a sessao de quem esta na maquina.
+    _lembrado: tuple[float, Passo] | None = None
     nome: str = "github"
     name: str = "github"
     titulo: str = "GitHub"
@@ -201,6 +215,15 @@ class GitHubConector(Conector):
 
     # ------------------------------------------------------------------
     def estado(self) -> Passo:
+        import time
+
+        if self._lembrado is not None and time.monotonic() < self._lembrado[0]:
+            return self._lembrado[1]
+        passo = self._perguntar_estado()
+        self._lembrado = (time.monotonic() + VALIDADE_DO_ESTADO, passo)
+        return passo
+
+    def _perguntar_estado(self) -> Passo:
         if shutil.which(self.cli) is None:
             return Passo(
                 "instalar", "Instale o GitHub CLI",
@@ -228,6 +251,8 @@ class GitHubConector(Conector):
     # ------------------------------------------------------------------
     def autorizar(self) -> Passo:
         """Abre o navegador. Devolve o passo seguinte, e nao um sucesso."""
+        # A memoria vale ate alguem mexer -- e autorizar e exatamente mexer.
+        self._lembrado = None
         if shutil.which(self.cli) is None:
             return self.estado()
 

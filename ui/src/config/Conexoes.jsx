@@ -28,6 +28,7 @@ import Gaveta from "../components/Gaveta.jsx";
 import { ALCANCE, PERMISSAO, USO_POR_PAPEL, digaOErro, rotulo } from "../present.js";
 import { Icon } from "../Icon.jsx";
 import Procedencia from "./Procedencia.jsx";
+import Conectar from "./Conectar.jsx";
 
 /** O ícone de cada papel. Reconhecer o cartão num relance é mais rápido que
  *  ler o título de todos eles. */
@@ -42,22 +43,32 @@ const ICONE = {
 
 export default function Conexoes() {
   const { api } = useRegente();
-  const leitura = useLeitura([api("/connections"), api("/settings"), "/api/catalog"]);
+  const leitura = useLeitura([
+    api("/connections"),
+    api("/settings"),
+    "/api/catalog",
+    api("/connectors"),
+    api("/resources"),
+    api("/resources/providers"),
+  ]);
 
   return (
     <Leitura estado={leitura} oQue="as conexões">
-      {(con, cfg, cat) => (
+      {(con, cfg, cat, conectores, recursos, arvores) => (
         <Conteudo
           conexoes={con.connections}
           campo={cfg.fields.providers}
           papeis={cat.roles}
+          conectores={conectores.connectors}
+          recursos={recursos.resources}
+          arvores={arvores.providers}
         />
       )}
     </Leitura>
   );
 }
 
-function Conteudo({ conexoes, campo, papeis }) {
+function Conteudo({ conexoes, campo, papeis, conectores, recursos, arvores }) {
   const { podeAqui } = useRegente();
   const pode = podeAqui("workspace.settings.write");
   const [editando, setEditando] = useState(null);
@@ -76,16 +87,30 @@ function Conteudo({ conexoes, campo, papeis }) {
       <Procedencia campo={campo} chave="providers" />
 
       <div className="providers">
-        {papeis.map((p) => (
-          <Cartao
-            key={p.role}
-            papel={p}
-            conexao={daConexao(p.role)}
-            atual={configurado[p.role] || null}
-            pode={pode}
-            aoConfigurar={() => setEditando(p.role)}
-          />
-        ))}
+        {papeis.map((p) => {
+          // O conector deste papel, quando o servico escolhido tiver um. E o
+          // que transforma "registre uma credencial em outra aba" num botao
+          // aqui mesmo.
+          const escolhido = (configurado[p.role] || {}).name
+            || daConexao(p.role).adapter;
+          const conector = conectores.find(
+            (c) => c.role === p.role && c.connector === escolhido);
+          return (
+            <Cartao
+              key={p.role}
+              papel={p}
+              conexao={daConexao(p.role)}
+              atual={configurado[p.role] || null}
+              pode={pode}
+              conector={conector}
+              arvore={
+                arvores.find((a) => a.provider === escolhido)?.tree || []
+              }
+              escolhidos={recursos.filter((r) => r.provider === escolhido)}
+              aoConfigurar={() => setEditando(p.role)}
+            />
+          );
+        })}
       </div>
 
       {editando && (
@@ -99,7 +124,8 @@ function Conteudo({ conexoes, campo, papeis }) {
   );
 }
 
-function Cartao({ papel, conexao, atual, pode, aoConfigurar }) {
+function Cartao({ papel, conexao, atual, pode, conector, arvore, escolhidos,
+                 aoConfigurar }) {
   const { api } = useRegente();
   const [prova, setProva] = useState(null);
   const [indo, setIndo] = useState(false);
@@ -170,17 +196,28 @@ function Cartao({ papel, conexao, atual, pode, aoConfigurar }) {
         </ul>
       )}
 
-      {conexao.state === "SEM_CREDENCIAL" && (
-        <Alerta
-          tone="warn"
-          titulo="Falta a credencial"
-          detalhe="O serviço está escolhido, e o Regente ainda não tem autorização para falar com ele."
-          acao={
-            <Link href="#/config/credenciais" variante="btn btn-sm">
-              Registrar credencial
-            </Link>
-          }
+      {/* Com conector, conectar JA registra a credencial -- mandar a pessoa
+          para outra aba seria devolver o passo que este marco veio apagar. */}
+      {conector ? (
+        <Conectar
+          servico={conector}
+          arvore={arvore}
+          escolhidos={escolhidos}
+          pode={pode}
         />
+      ) : (
+        conexao.state === "SEM_CREDENCIAL" && (
+          <Alerta
+            tone="warn"
+            titulo="Falta a credencial"
+            detalhe="O serviço está escolhido, e o Regente ainda não tem autorização para falar com ele."
+            acao={
+              <Link href="#/config/credenciais" variante="btn btn-sm">
+                Registrar credencial
+              </Link>
+            }
+          />
+        )
       )}
 
       <div className="row">

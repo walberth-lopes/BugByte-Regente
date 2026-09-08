@@ -1090,7 +1090,14 @@ fieldset.grupo > .hint { margin-top: var(--s-3); display: block; }
   background: var(--c-card); border: 1px solid var(--c-border);
   border-radius: var(--r-lg); box-shadow: var(--sh-1);
   padding: var(--s-5); display: grid; gap: var(--s-3); align-content: start;
+  /* Um item de grid nasce com `min-width: auto` -- ele se RECUSA a ficar menor
+     que o conteudo. Um endereco de Jira sem espaco (`.../projects/SG/boards/5`)
+     nao tem onde quebrar, entao o cartao estourava a propria coluna e empurrava
+     o vizinho para fora da tela. Duas linhas, e as duas sao necessarias: esta
+     deixa encolher, e a de baixo da onde quebrar. */
+  min-width: 0;
 }
+.provider > * { min-width: 0; }
 .provider .top { display: flex; align-items: center; gap: var(--s-3); }
 .provider .top .bolha {
   width: 38px; height: 38px; border-radius: 10px; flex: none;
@@ -1102,6 +1109,9 @@ fieldset.grupo > .hint { margin-top: var(--s-3); display: block; }
 .provider-atual {
   padding: var(--s-3) var(--s-4); background: var(--c-card-alt);
   border-radius: var(--r-md); font-size: var(--fs-sm);
+  /* `anywhere`, e nao `break-word`: um endereco longo precisa quebrar mesmo
+     sem espaco nenhum, e `break-word` so quebra depois de tentar caber. */
+  overflow-wrap: anywhere;
 }
 
 .mini {
@@ -1184,6 +1194,15 @@ fieldset.grupo > .hint { margin-top: var(--s-3); display: block; }
 }
 /* O primeiro agrupamento não precisa da margem que o separa do anterior. */
 .gaveta-corpo > fieldset.grupo:first-child { margin-top: 0; }
+
+/* Um título dentro da gaveta. Ela deixou de ser só formulário: escolher o que
+   um serviço traz é uma lista, e uma lista longa precisa de onde começar. */
+.gaveta-secao {
+  font-size: var(--fs-sm); font-weight: 650; color: var(--c-text-2);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  margin: var(--s-2) 0 0;
+}
+.gaveta-corpo > .gaveta-secao:first-child { margin-top: 0; }
 
 /* As ações ficam à vista. Num formulário de dez campos, um botão "Salvar" no
    fim do documento é um botão que a pessoa procura. */

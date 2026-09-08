@@ -103,10 +103,15 @@ class ConnectService:
                 "title": c.titulo,
                 "description": c.descricao,
                 "role": c.papel,
-                # "Conectado" aqui significa: a configuracao aponta para ESTE
-                # adapter. Nao significa que a credencial serve -- quem responde
-                # isso e a tela de conexoes, que prova de verdade.
+                # DUAS perguntas, e nao uma. `connected` diz que a
+                # configuracao aponta para este adapter; `authorized` diz que ha
+                # credencial viva com o que ele precisa.
+                #
+                # Fundir as duas fez a tela oferecer "escolher repositorios"
+                # num cartao que dizia "falta credencial" no cabecalho -- o
+                # botao prometia um passo que ainda nao era possivel.
                 "connected": str(atual.get("name") or "") == c.name,
+                "authorized": self._autorizado(actor, workspace_id, c),
                 "current": atual.get("org") or atual.get("site") or "",
                 "step": passo.as_dict(),
             })
@@ -223,6 +228,32 @@ class ConnectService:
                 "aviso_detalhe": (
                     f"{saida.reason} -- conceda com: regente access conceder "
                     f"engine:{workspace_id} --papel service")}
+
+    def _autorizado(self, actor, workspace_id: str, conector) -> bool:
+        """Ha credencial viva com o que este conector precisa?
+
+        Sem ela, conectar ainda e o proximo passo -- e nao escolher. Quem nao
+        pode listar credenciais recebe `False`: a tela oferece conectar, e a
+        recusa vem de quem tem autoridade para dar, como sempre.
+        """
+        from ..core.credential import Status
+
+        try:
+            proposta = conector.proposta("__sonda__")
+        except Exception:                                 # noqa: BLE001
+            return False
+        if not proposta.precisa_credencial:
+            return True
+
+        listagem = self.credentials.listing(actor, workspace_id)
+        if not isinstance(listagem, list):
+            return False
+        agora = self.credentials.clock()
+        precisa = uses_from(proposta.capacidades)
+        return any(c.provider == proposta.papel
+                   and c.status(agora) is Status.ACTIVE
+                   and precisa <= set(c.capabilities)
+                   for c in listagem)
 
     def _conector(self, nome: str):
         return self.conectores.get(str(nome).strip())

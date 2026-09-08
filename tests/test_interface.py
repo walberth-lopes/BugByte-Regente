@@ -171,7 +171,7 @@ def test_the_screen_never_says_a_resource_vanished():
     falar do que se OBSERVOU -- "sumiu" manda alguem remover uma selecao boa.
     """
     texto = _so_o_que_aparece(_fonte("present.js")
-                             + _fonte("config/Integracoes.jsx"))
+                             + _fonte("config/Conectar.jsx"))
     for proibida in ("sumiu", "foi apagado", "deixou de existir",
                      "não existe mais", "nao existe mais"):
         assert proibida not in texto.lower(), (
@@ -185,7 +185,7 @@ def test_a_failed_search_never_looks_like_an_empty_account():
     depois de um provedor fora do ar le-se como "minha conta esvaziou", e a
     reacao razoavel e remover a selecao que ainda estava certa.
     """
-    fonte = _so_o_que_aparece(_fonte("config/Integracoes.jsx"))
+    fonte = _so_o_que_aparece(_fonte("config/Conectar.jsx"))
     assert "nada foi removido" in fonte.lower(), (
         "a tela nao tranquiliza quem viu a busca falhar")
     assert "continua valendo" in fonte.lower()
