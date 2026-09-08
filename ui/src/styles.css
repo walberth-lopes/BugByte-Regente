@@ -879,6 +879,11 @@ textarea.mono, .input.mono { font-family: var(--font-mono); font-size: var(--fs-
 }
 .check-inline input { margin-top: 3px; accent-color: var(--c-accent); flex: none; }
 
+/* A coluna de marcar de uma tabela de escolha. Estreita e sem cabecalho: o que
+   ela seleciona esta escrito na linha, e um titulo ali so repetiria. */
+.col-marca { width: 34px; }
+.col-marca .check-inline { padding: 0; }
+
 fieldset.grupo {
   border: 1px solid var(--c-border); border-radius: var(--r-md);
   padding: var(--s-3) var(--s-5) var(--s-5);

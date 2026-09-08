@@ -58,6 +58,16 @@ class Ability(str, Enum):
     #: o motor de um cliente -- e quem opera o motor nao ganha o de assinar
     #: decisoes em nome de alguem.
     ENGINE_CONTROL = "workspace.engine.control"
+    #: ESCOLHER quais recursos do provedor este workspace usa.
+    #:
+    #: Separada de usar credencial, e por um motivo concreto: uma credencial que
+    #: alcanca 47 repositorios nao decide em quais o motor trabalha. Quem decide
+    #: e uma pessoa, e a decisao fica gravada e atribuivel.
+    #:
+    #: Separada tambem de configurar (`SETTINGS_WRITE`): apontar o Regente para
+    #: outro board e mudar de fonte; escolher dois repositorios de uma fonte ja
+    #: apontada e operar dentro dela.
+    RESOURCE_SELECT = "workspace.resource.select"
     #: Apontar o motor: qual provider, quais status significam o que, quais
     #: regras de prioridade. Separada de operar: quem liga e desliga o
     #: processamento nao deveria, por tabela, poder apontar o motor para outro
@@ -69,7 +79,7 @@ class Ability(str, Enum):
 #: palavra que cada pessoa entende de um jeito, e porque um papel precisa ser
 #: uma ENTRADA para a policy, nunca um atalho que a substitua.
 ADMIN = frozenset({Ability.GRANT, Ability.REVOKE, Ability.LIST,
-                   Ability.SETTINGS_WRITE})
+                   Ability.SETTINGS_WRITE, Ability.RESOURCE_SELECT})
 
 #: Quem cuida das credenciais do workspace. Separado de `ADMIN` de proposito:
 #: administrar pessoas e administrar segredos sao trabalhos diferentes, e juntar

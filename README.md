@@ -624,6 +624,79 @@ Depois registre a credencial (passo 10) e prove:
 regente credentials testar --provider tasks --uso task.read
 ```
 
+### 14b. Escolher o que o Regente usa de cada serviço
+
+Conectar um serviço dá ao Regente permissão para **perguntar** o que existe
+nele. Não dá permissão para trabalhar em tudo o que ele alcança.
+
+Essa distinção é o assunto desta etapa. Uma credencial que enxerga 47
+repositórios autoriza *listar* 47 — quem decide em quais o Regente pode mexer é
+você, e a escolha fica gravada com seu nome e a data.
+
+Veja o que o serviço mostra:
+
+```bash
+regente integracoes descobrir --provider github --tipo repository
+```
+
+```
+  [ ] acme/api
+  [ ] acme/site
+  [x] acme/backend
+  [ ] acme/infra
+
+escolha com: regente integracoes escolher --provider github --tipo repository <id> [<id>...]
+```
+
+`[x]` é o que este workspace já usa. `[ ]` é o que existe e **o Regente não
+alcança**. Escolha:
+
+```bash
+regente integracoes escolher --provider github --tipo repository acme/api acme/site
+```
+
+```
+2 recurso(s) passaram a pertencer a este workspace
+  github:repository:acme/api
+  github:repository:acme/site
+```
+
+A partir daí o motor só enxerga esses. `regente integracoes listar` mostra o que
+está em uso, e `remover` tira — o Regente deixa de alcançar na hora, sem
+reiniciar nada.
+
+O mesmo vale do lado do trabalho. No Jira, o que se escolhe é o **projeto**:
+
+```bash
+regente integracoes descobrir --provider jira --tipo project
+regente integracoes escolher --provider jira --tipo project 10001
+```
+
+Tasks de projetos que ninguém escolheu não entram na fila.
+
+> **Enquanto você não escolher nada, nada muda.** Um workspace sem seleção
+> continua enxergando tudo o que enxergava antes. Isso é de propósito: a
+> atualização não pode parar o motor de quem já estava rodando por uma decisão
+> que ninguém tomou. A partir da primeira escolha, vale a escolha.
+
+**Listar e ler são permissões separadas.** A credencial precisa de
+`repo.discover` (ou `task.discover`) para a busca funcionar — ter `repo.read`
+não basta, e a recusa diz exatamente isso. Se você registrou credenciais antes
+desta versão, registre-as de novo incluindo a permissão de listar:
+
+```bash
+regente credentials registrar principal \
+    --provider repository \
+    --referencia helper:github \
+    --capacidades repo.discover,repo.read
+```
+
+Sem isso, buscar responde *"esta credencial não foi autorizada a listar"* — e o
+resto continua funcionando normalmente, porque ler o que já foi escolhido é
+outra permissão.
+
+Pela tela, o mesmo caminho está em **Configuração › Integrações**.
+
 ### 15. Configurar tudo pela tela
 
 A partir daqui você **não precisa mais editar YAML**. Abra a Mission Control e
@@ -738,6 +811,7 @@ superior direito; por padrão ela segue o tema do seu sistema).
 | Ver commits, pull requests e o resultado do CI | **Entregas** |
 | Conectar o Jira, o GitHub, o agente | **Configuração › Conexões** |
 | Autorizar o Regente a usar um serviço | **Configuração › Credenciais** |
+| Escolher quais repositórios e projetos o Regente usa | **Configuração › Integrações** |
 | Dizer o que os status do seu board significam | **Configuração › Status do board** |
 | Dizer o que deve rodar primeiro | **Configuração › Regras e prioridade** |
 | Dar acesso a outra pessoa | **Configuração › Acesso** |
@@ -888,6 +962,7 @@ Tudo também funciona como `python -m regente ...` e `uv run regente ...`.
 | `ui` | Mission Control: o estado do motor numa tela, no seu computador |
 | `access` | quem pode agir neste workspace, quem concedeu e quando |
 | `credentials` | credenciais de provider: endereço, capacidades, validade |
+| `integracoes` | o que cada serviço alcança, e o que este workspace escolheu usar |
 | `mission` | seleciona uma task, mostra o briefing, opcionalmente executa |
 
 ## O primeiro tick é baseline

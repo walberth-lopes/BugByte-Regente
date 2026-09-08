@@ -40,6 +40,7 @@ from typing import Any, TYPE_CHECKING
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..core.principal import ANONYMOUS, Principal
+from ..core.resource import Kind, ResourceRef
 from ..core.access import PrincipalRef
 from ..core.credential import Use
 from ..engine.access import AccessService, Refusal
@@ -120,6 +121,22 @@ CREDENTIAL_STATUS = {
     CredRefusal.CONFLICT: 409,
     CredRefusal.EXPIRED: 410,
     CredRefusal.REVOKED: 410,
+    CredRefusal.NO_CAPABILITY: 403,
+    CredRefusal.SOURCE_UNAVAILABLE: 503,
+}
+
+#: Como uma recusa de recurso vira HTTP.
+#:
+#: `SOURCE_UNAVAILABLE` -> 503 e a linha que importa. Ela e a resposta para
+#: "nao deu para perguntar ao provedor", e responder 404 ali faria a tela
+#: dizer que os repositorios sumiram quando o que caiu foi a rede.
+RESOURCE_STATUS = {
+    CredRefusal.UNAUTHENTICATED: 401,
+    CredRefusal.FORBIDDEN: 403,
+    CredRefusal.NOT_FOUND: 404,
+    CredRefusal.INVALID: 422,
+    CredRefusal.POLICY_DENIED: 403,
+    CredRefusal.CONFLICT: 409,
     CredRefusal.NO_CAPABILITY: 403,
     CredRefusal.SOURCE_UNAVAILABLE: 503,
 }
@@ -206,6 +223,15 @@ class Api:
     #: -- uma segunda definicao do formato, que divergiria da primeira e
     #: aceitaria o que o motor recusa.
     catalog: dict | None = None
+    #: Descobrir e escolher recursos. `None` quando a composicao nao os
+    #: administra -- e a tela mostra que integracoes nao sao editaveis aqui,
+    #: em vez de oferecer um botao que responde 500.
+    resources: "ResourceService | None" = None
+    #: `{provedor: (tipos que ele descobre)}`. Vem da COMPOSICAO pelo mesmo
+    #: motivo que `catalog`: saber que o Jira tem projetos e boards e o GitHub
+    #: tem contas e repositorios e conhecimento de fornecedor, e esta camada
+    #: nao importa adapter nenhum.
+    discovery_trees: dict | None = None
     #: Sessao declarada somente-leitura pela composicao.
     #:
     #: NAO substitui nenhuma barreira: e uma recusa ADICIONAL, antes das do
@@ -249,6 +275,9 @@ class Api:
                     and parts[3] == "settings"):
                 return self._settings_write(method, parts[2], parts[4],
                                             body, who)
+            if (len(parts) >= 4 and parts[:2] == ["api", "workspaces"]
+                    and parts[3] == "resources"):
+                return self._resource_write(method, parts, body, who)
             return _error(405, "read_only",
                           "esta API e somente leitura; autoridade de escrita "
                           "pertence ao motor e ao humano, nao a uma tela")
@@ -407,6 +436,9 @@ class Api:
             return Response(200, {"credentials": [_credential_dict(c, at)
                                                   for c in found]})
 
+        if head == "resources":
+            return self._resources_read(workspace_id, tail, query, who)
+
         if head == "escalations" and not tail:
             return Response(200, {"escalations": [
                 e.as_dict() for e in self.read.escalations(workspace_id)]})
@@ -470,6 +502,138 @@ class Api:
             return _error(SETTINGS_STATUS.get(saida.refusal, 400),
                           saida.refusal.lower(), saida.reason)
         return Response(200, {"key": saida.key, "detail": saida.detail})
+
+    # ---- integracoes -------------------------------------------------
+    #
+    # Duas rotas de leitura e tres de escrita, e a fronteira entre elas e o
+    # assunto do marco: DESCOBRIR pergunta ao provedor o que a identidade
+    # alcanca; ESCOLHER grava o que este workspace passa a usar. Descobrir nao
+    # seleciona nada, e nenhuma rota aqui escreve sem passar pelo servico.
+
+    def _resources_read(self, workspace_id: str, tail: list[str],
+                        query: dict[str, list[str]],
+                        who: Principal) -> Response:
+        """`GET .../resources` e `GET .../resources/providers`."""
+        if tail == ["providers"]:
+            # O que cada provedor SABE descobrir, e em que ordem de arvore.
+            # A tela precisa disto para navegar sem conhecer fornecedor: ela le
+            # a arvore daqui em vez de trazer um `if provider === 'github'`.
+            arvores = self.discovery_trees or {}
+            return Response(200, {"providers": [
+                {"provider": nome, "tree": list(tipos),
+                 "root": (list(tipos)[0] if tipos else "")}
+                for nome, tipos in sorted(arvores.items())]})
+
+        if tail:
+            return _not_found("recurso")
+
+        if self.resources is None:
+            # Sem servico, a resposta e uma lista vazia com o aviso -- e nao um
+            # erro. Um workspace que nao administra integracoes por aqui
+            # continua sendo um workspace valido.
+            return Response(200, {"resources": [], "editable": False,
+                                  "explain": "esta composicao nao administra "
+                                             "integracoes"})
+
+        papel = (query.get("role") or [""])[0].strip()
+        try:
+            filtro = Kind(papel) if papel else None
+        except ValueError:
+            return _error(400, "invalid_argument",
+                          f"papel invalido; use um de "
+                          f"{', '.join(k.value for k in Kind)}")
+
+        found = self.resources.selected(who, workspace_id, filtro)
+        if not isinstance(found, list):
+            return _error(RESOURCE_STATUS.get(found.refusal, 403),
+                          found.refusal.value.lower(), found.reason)
+        return Response(200, {
+            "editable": True,
+            "resources": [{
+                "provider": s.ref.provider, "kind": s.ref.kind, "id": s.ref.id,
+                "ref": str(s.ref), "name": s.name, "role": s.role.value,
+                "selected_by": s.selected_by, "selected_at": s.selected_at,
+                "last_seen_at": s.last_seen_at,
+            } for s in found]})
+
+    def _resource_write(self, method: str, parts: list[str], body: dict | None,
+                        who: Principal) -> Response:
+        """`POST .../resources/discover`, `.../select`; `DELETE .../{ref}`.
+
+        Descobrir e POST por um motivo, e nao por descuido: ele custa uma ida
+        ao provedor e deixa um evento na trilha. Um GET que faz isso seria
+        disparado por qualquer recarga de pagina, e o rastro ficaria cheio de
+        descobertas que ninguem pediu.
+        """
+        if self.resources is None:
+            return _error(403, "no_authority",
+                          "esta composicao nao administra integracoes")
+        workspace_id = parts[2]
+        if not who.may_read(workspace_id):
+            return _not_found("workspace")
+
+        if method == "DELETE":
+            if len(parts) != 5:
+                return _error(405, "read_only", "rota inexistente")
+            try:
+                ref = ResourceRef.parse(parts[4])
+            except ValueError as e:
+                return _error(400, "invalid_argument", str(e))
+            return self._resource_outcome(
+                self.resources.unselect(who, workspace_id, ref))
+
+        if len(parts) != 5 or not isinstance(body, dict):
+            return _error(400, "invalid_body", "corpo precisa ser um objeto JSON")
+
+        # Nem ator, nem escopo vem do corpo. A mesma recusa das credenciais, e
+        # pelo mesmo motivo: quem age e quem a identidade disser, e nunca quem
+        # a requisicao afirmar ser.
+        for proibido in ("actor", "selected_by", "workspace_id", "client_id"):
+            if proibido in body:
+                return _error(400, "invalid_body",
+                              f"'{proibido}' nao e aceito: ator e escopo nao "
+                              f"vem da requisicao")
+
+        provider = str(body.get("provider") or "").strip()
+        kind = str(body.get("kind") or "").strip()
+        if not provider or not kind:
+            return _error(400, "invalid_body",
+                          "'provider' e 'kind' sao obrigatorios")
+
+        pai = None
+        if body.get("parent"):
+            try:
+                pai = ResourceRef.parse(str(body["parent"]))
+            except ValueError as e:
+                return _error(400, "invalid_argument", str(e))
+
+        if parts[4] == "discover":
+            achado = self.resources.discover(who, workspace_id, provider, kind,
+                                             pai)
+            # 200 mesmo quando a descoberta falhou, e isso e deliberado: a
+            # resposta CARREGA a falha junto do que ja estava selecionado. Um
+            # 503 aqui apagaria a lista, e a tela mostraria um workspace vazio
+            # quando o que houve foi o provedor fora do ar.
+            return Response(200, achado.as_dict())
+
+        if parts[4] == "select":
+            ids = body.get("ids")
+            if not isinstance(ids, list):
+                return _error(400, "invalid_body",
+                              "'ids' precisa ser uma lista de identificadores")
+            return self._resource_outcome(self.resources.select_refs(
+                who, workspace_id, provider, kind,
+                [str(i) for i in ids], pai))
+
+        return _error(405, "read_only", "rota inexistente")
+
+    def _resource_outcome(self, saida) -> Response:
+        if not saida.accepted:
+            return _error(RESOURCE_STATUS.get(saida.refusal, 400),
+                          saida.refusal.value.lower() if saida.refusal
+                          else "recusado", saida.reason)
+        return Response(200, {"detail": saida.reason,
+                              "refs": [str(r) for r in saida.refs]})
 
     def _settings_read(self, workspace_id: str, who: Principal) -> Response:
         """A configuracao efetiva, campo a campo, COM a procedencia.
@@ -1150,6 +1314,8 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
           config: object | None = None,
           needs_credential: object | None = None,
           catalog: dict | None = None,
+          resources: "ResourceService | None" = None,
+          discovery_trees: dict | None = None,
           session_token: str = "",
           read_only: bool = False) -> ThreadingHTTPServer:
     """Sobe o servidor. Loopback por padrao, e isso continua sendo uma decisao.
@@ -1164,6 +1330,7 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
               credentials=credentials, operations=operations,
               settings=settings, probe_for=probe_for, config=config,
               needs_credential=needs_credential, catalog=catalog,
+              resources=resources, discovery_trees=discovery_trees,
               read_only=read_only, session_token=session_token,
               identity_note=(identity.describe() if identity is not None
                              else "sem provedor de identidade"),

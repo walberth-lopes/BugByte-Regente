@@ -42,6 +42,17 @@ class Use(str, Enum):
     capability` e o que ESTA credencial foi autorizada a fazer; `policy
     authority` e o que a organizacao permite. Sao tres perguntas.
     """
+    #: LISTAR o que existe, e nao LER o conteudo.
+    #:
+    #: Sao capacidades separadas porque respondem a perguntas diferentes:
+    #: descobrir pergunta "o que esta identidade alcanca?", e ler pergunta "o
+    #: que ha dentro disto?". Uma credencial de descoberta serve para a pessoa
+    #: escolher o que o workspace vai usar, e nao serve para o motor trabalhar.
+    #:
+    #: Sem essa separacao, conectar um provedor concederia leitura de tudo o que
+    #: a credencial alcanca -- que e exatamente o que este marco recusa.
+    TASK_DISCOVER = "task.discover"
+    REPO_DISCOVER = "repo.discover"
     TASK_READ = "task.read"
     TASK_WRITE = "task.write"
     REPO_READ = "repo.read"

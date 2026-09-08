@@ -124,6 +124,81 @@ export const DONO = {
 };
 
 // ---------------------------------------------------------------------------
+// Integracoes: o que o provedor mostra, e o que este workspace usa
+// ---------------------------------------------------------------------------
+
+/** Onde um recurso esta entre existir e ser usado (core/resource.py::Situacao). */
+export const SITUACAO = {
+  DISPONIVEL: { texto: "Disponível", tone: "muted" },
+  SELECIONADO: { texto: "Em uso", tone: "ok" },
+  // Nunca "sumiu". Pode ter sumido, pode ter perdido acesso, pode ser que a
+  // busca nem tenha chegado a rodar — e a frase precisa dizer o que se
+  // observou, e não uma causa que ninguém apurou.
+  NAO_ENCONTRADO: { texto: "Não veio na última busca", tone: "warn" },
+};
+
+/** Que tipo de coisa o Regente faz com um recurso (core/resource.py::Kind). */
+export const PAPEL_DO_RECURSO = {
+  task_source: "De onde vem o trabalho",
+  code: "Onde o código é escrito",
+  container: "Só para navegar",
+};
+
+/**
+ * Por que uma busca não respondeu, e o que fazer a respeito.
+ *
+ * Cada uma manda a pessoa a um lugar diferente. Reduzir todas a "erro ao
+ * buscar" apagaria justamente a diferença — e a pessoa iria procurar o
+ * problema na rede quando o que faltava era uma credencial.
+ */
+export const FALHA_DA_BUSCA = {
+  SEM_CREDENCIAL: {
+    titulo: "Falta uma credencial para este serviço",
+    saida: "Registre uma em Configuração › Credenciais.",
+  },
+  CREDENCIAL_EXPIRADA: {
+    titulo: "A credencial deste serviço venceu",
+    saida: "Registre uma nova em Configuração › Credenciais.",
+  },
+  CREDENCIAL_REVOGADA: {
+    titulo: "A credencial deste serviço foi revogada",
+    saida: "Registre uma nova em Configuração › Credenciais.",
+  },
+  SEM_CAPACIDADE: {
+    titulo: "Esta credencial não foi autorizada a listar",
+    saida:
+      "Listar e ler são permissões separadas. Registre a credencial " +
+      "novamente incluindo a permissão de listar.",
+  },
+  POLICY_RECUSOU: {
+    titulo: "A política deste workspace recusou a busca",
+    saida: "Fale com quem administra as políticas.",
+  },
+  PROVEDOR_INDISPONIVEL: {
+    titulo: "Não deu para falar com o serviço agora",
+    saida: "Tente de novo em alguns instantes. Nada foi alterado.",
+  },
+  NAO_SUPORTADO: {
+    titulo: "Este serviço não lista recursos",
+    saida: "Nada a fazer aqui — configure-o em Conexões.",
+  },
+};
+
+/** Como cada nível da árvore de cada provedor se chama em português. */
+export const TIPO_DE_RECURSO = {
+  account: { um: "conta", muitos: "Contas" },
+  repository: { um: "repositório", muitos: "Repositórios" },
+  project: { um: "projeto", muitos: "Projetos" },
+  board: { um: "board", muitos: "Boards" },
+  workspace: { um: "workspace", muitos: "Workspaces" },
+  space: { um: "espaço", muitos: "Espaços" },
+  list: { um: "lista", muitos: "Listas" },
+};
+
+/** O nome de um tipo que a tela ainda não conhece continua legível. */
+export const tipoPlural = (t) => TIPO_DE_RECURSO[t]?.muitos || rotulo(t);
+
+// ---------------------------------------------------------------------------
 // Saude
 // ---------------------------------------------------------------------------
 
@@ -179,6 +254,12 @@ export const PAPEL = {
 
 /** Capacidade de credencial (core/credential.py::Use), em portugues. */
 export const PERMISSAO = {
+  // Descobrir e ler sao capacidades separadas de proposito: uma credencial de
+  // descoberta serve para uma pessoa escolher o que o workspace vai usar, e nao
+  // serve para o Regente trabalhar. A frase precisa deixar isso visivel a quem
+  // marca a caixinha -- e por isso ela diz "listar", e nunca "ler".
+  "task.discover": "Listar projetos e boards",
+  "repo.discover": "Listar repositórios",
   "task.read": "Ler tasks",
   "task.write": "Atualizar tasks",
   "repo.read": "Ler repositórios",
@@ -200,6 +281,7 @@ export const USO_POR_PAPEL = {
 /** Capacidades de acesso (core/access.py::Ability), em portugues. */
 export const ACAO = {
   "approval.decide": "Decidir escalações",
+  "workspace.resource.select": "Escolher o que o workspace usa",
   "workspace.access.grant": "Conceder acesso",
   "workspace.access.revoke": "Revogar acesso",
   "workspace.access.list": "Ver quem tem acesso",

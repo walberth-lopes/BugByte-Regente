@@ -191,6 +191,31 @@ class GitHubRepos(RepositoryProvider):
             raise AdapterError(f"listagem devolveu {type(raw).__name__}, esperava lista")
         return [self._build(r, partial=True) for r in raw]
 
+    def discover_repositories(self,
+                              filtro: dict[str, Any] | None = None) -> list[RepoInfo]:
+        """A MESMA listagem, com a capacidade de DESCOBERTA.
+
+        Metodo separado de `list_repositories` por causa de uma unica palavra:
+        `use`. Descobrir pergunta "o que esta identidade alcanca?" para que uma
+        pessoa escolha; ler pergunta "o que ha dentro disto?" para que o motor
+        trabalhe. Sao credenciais diferentes de proposito -- conectar um
+        provedor nao deveria, por tabela, autorizar leitura de tudo.
+
+        Uma credencial registrada so com `repo.read` recusa aqui, e a recusa e a
+        resposta certa: ela foi autorizada a ler o que o workspace escolheu, e
+        nao a varrer a organizacao inteira.
+        """
+        f = filtro or {}
+        args = ["repo", "list", self.org, "--limit",
+                str(f.get("limite", self.list_limit)), "--json", LIST_FIELDS]
+        if f.get("sem_arquivados", True):
+            args.append("--no-archived")
+        raw = self._cli(args, use=Use.REPO_DISCOVER)
+        if not isinstance(raw, list):
+            raise AdapterError(
+                f"listagem devolveu {type(raw).__name__}, esperava lista")
+        return [self._build(r, partial=True) for r in raw]
+
     def get_repository(self, key: str) -> RepoInfo:
         target = key if "/" in key else f"{self.org}/{key}"
         raw = self._cli(["repo", "view", target, "--json", DETAIL_FIELDS])

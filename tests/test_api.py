@@ -37,7 +37,7 @@ SHA = "a" * 40
 #: Toda rota escopada por workspace. A lista existe para que uma rota nova
 #: entre aqui -- um endpoint sem teste de tenancy e como o vazamento chega.
 SCOPED = ["", "/overview", "/health", "/tasks", "/runs", "/deliveries",
-          "/events", "/escalations"]
+          "/events", "/escalations", "/resources", "/resources/providers"]
 
 
 @pytest.fixture

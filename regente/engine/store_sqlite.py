@@ -36,6 +36,7 @@ from ..core.settings import Overlay
 from ..core.model import (ActionRecord, Approval, ApprovalState, Dependency, Event,
                           ExternalRef, Lease, Option, Project, Repository, Run,
                           RunState, Task, Workspace, now)
+from ..core.resource import Kind, ResourceRef, Selecionado
 from ..core.policy import AutonomyLevel
 from ..core.risk import RiskLevel
 from ..core.states import TaskState, require
@@ -187,6 +188,32 @@ CREATE TABLE IF NOT EXISTS workspace_settings (
   changed_at TEXT,
   PRIMARY KEY (workspace_id, key));
 
+-- Os recursos do provedor que ESTE workspace escolheu usar.
+--
+-- Descobrir e uma coisa; escolher e outra. Uma credencial que alcanca 47
+-- repositorios nao autoriza o motor a trabalhar em 47 -- ela autoriza
+-- PERGUNTAR. Estas linhas sao a resposta humana, e sao o unico lugar de onde o
+-- motor tira o que pode tocar.
+--
+-- A chave carrega o workspace: dois clientes com o mesmo `org/backend` no mesmo
+-- provedor sao dois recursos. Sem isso, selecionar num apareceria selecionado
+-- no outro -- e nada falharia ate existir o segundo cliente.
+CREATE TABLE IF NOT EXISTS workspace_resources (
+  workspace_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  resource_id TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  role TEXT NOT NULL DEFAULT 'container',
+  selected_by TEXT NOT NULL DEFAULT '',
+  selected_at TEXT,
+  last_seen_at TEXT,
+  data TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (workspace_id, provider, kind, resource_id));
+
+CREATE INDEX IF NOT EXISTS ix_resources_workspace
+  ON workspace_resources (workspace_id, role);
+
 -- O que uma PESSOA pediu ao processamento. Sobrevive ao processo, e e por isso
 -- que parar e voltar funciona entre reinicios.
 CREATE TABLE IF NOT EXISTS operation (
@@ -259,7 +286,7 @@ CREATE TABLE IF NOT EXISTS counters (
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "13"
+SCHEMA_VERSION = "14"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -577,6 +604,38 @@ def _v12_to_v13(c: sqlite3.Connection) -> None:
                    PRIMARY KEY (workspace_id, key))""")
 
 
+def _v13_to_v14(c: sqlite3.Connection) -> None:
+    """Os recursos que este workspace escolheu usar. VAZIA.
+
+    Vazia de proposito, e a escolha importa. Preencher com o que ja existe --
+    marcar como selecionado todo repositorio que a credencial alcanca -- seria
+    exatamente o comportamento que este marco veio remover: a migracao daria ao
+    motor tudo, e ninguem teria decidido isso.
+
+    A CHAVE E ESCOPADA. `(workspace_id, provider, kind, resource_id)`: dois
+    clientes com um `silverguard/backend` no mesmo GitHub sao dois recursos, e
+    nao um compartilhado. Sem `workspace_id` na chave primaria, selecionar num
+    cliente apareceria selecionado no outro -- o defeito de tenancy mais
+    silencioso que existe, porque tudo funciona ate haver dois clientes.
+    """
+    c.execute("""CREATE TABLE IF NOT EXISTS workspace_resources (
+                   workspace_id TEXT NOT NULL,
+                   provider TEXT NOT NULL,
+                   kind TEXT NOT NULL,
+                   resource_id TEXT NOT NULL,
+                   name TEXT NOT NULL DEFAULT '',
+                   role TEXT NOT NULL DEFAULT 'container',
+                   selected_by TEXT NOT NULL DEFAULT '',
+                   selected_at TEXT,
+                   last_seen_at TEXT,
+                   data TEXT NOT NULL DEFAULT '{}',
+                   PRIMARY KEY (workspace_id, provider, kind, resource_id))""")
+    # Ler "o que este workspace usa" acontece a cada ciclo do motor, para
+    # filtrar o que ele pode tocar.
+    c.execute("""CREATE INDEX IF NOT EXISTS ix_resources_workspace
+                   ON workspace_resources (workspace_id, role)""")
+
+
 MIGRATIONS: dict[str, tuple[str, Any]] = {
     "1": ("2", _v1_to_v2),
     "2": ("3", _v2_to_v3),
@@ -590,7 +649,26 @@ MIGRATIONS: dict[str, tuple[str, Any]] = {
     "10": ("11", _v10_to_v11),
     "11": ("12", _v11_to_v12),
     "12": ("13", _v12_to_v13),
+    "13": ("14", _v13_to_v14),
 }
+
+
+def _resource_row(r) -> Selecionado:
+    try:
+        papel = Kind(r["role"])
+    except ValueError:
+        # Um papel que este motor nao conhece vira contêiner: o recurso continua
+        # listado e simplesmente nao e usado para trabalho. Levantar aqui
+        # derrubaria a leitura inteira por causa de uma linha.
+        papel = Kind.CONTAINER
+    return Selecionado(
+        workspace_id=r["workspace_id"],
+        ref=ResourceRef(provider=r["provider"], kind=r["kind"],
+                        id=r["resource_id"]),
+        name=r["name"], role=papel, selected_by=r["selected_by"],
+        selected_at=_dt(r["selected_at"]),
+        last_seen_at=_dt(r["last_seen_at"]),
+        data=json.loads(r["data"] or "{}"))
 
 
 class _Rows:
@@ -893,6 +971,73 @@ class SqliteStore(Store):
             granted_by=r["granted_by"], granted_at=_dt(r["granted_at"]),
             expires_at=_dt(r["expires_at"]), revoked_by=r["revoked_by"],
             revoked_at=_dt(r["revoked_at"]), note=r["note"])
+
+    # ---- recursos que o workspace escolheu usar ---------------------
+    #
+    # O escopo entra em toda consulta, e nao por disciplina: sem ele um cliente
+    # leria a selecao do outro, e a falha ficaria invisivel ate existir um
+    # segundo cliente.
+
+    def save_resource(self, r: Selecionado) -> None:
+        """Grava a escolha. Reescolher o mesmo recurso atualiza, nao duplica."""
+        with self._tx() as c:
+            c.execute(
+                """INSERT INTO workspace_resources
+                     (workspace_id, provider, kind, resource_id, name, role,
+                      selected_by, selected_at, last_seen_at, data)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT (workspace_id, provider, kind, resource_id)
+                   DO UPDATE SET name = excluded.name,
+                                 role = excluded.role,
+                                 last_seen_at = excluded.last_seen_at,
+                                 data = excluded.data""",
+                (r.workspace_id, r.ref.provider, r.ref.kind, r.ref.id, r.name,
+                 r.role.value, r.selected_by, _iso(r.selected_at),
+                 _iso(r.last_seen_at), _j(r.data)))
+
+    def resources(self, workspace_id: str,
+                  role: str | None = None) -> list[Selecionado]:
+        """O que ESTE workspace escolheu. Sempre escopado, sempre por parametro."""
+        q = "SELECT * FROM workspace_resources WHERE workspace_id=?"
+        args: list[Any] = [workspace_id]
+        if role is not None:
+            q += " AND role=?"
+            args.append(role)
+        return [_resource_row(r)
+                for r in self._con.execute(q + " ORDER BY provider, kind, name",
+                                           args)]
+
+    def drop_resource(self, workspace_id: str, provider: str, kind: str,
+                      resource_id: str) -> bool:
+        """Tira da selecao. Devolve se havia algo para tirar.
+
+        O booleano nao e enfeite: quem chama precisa distinguir "removi" de "nao
+        estava la". Sem ele, remover o recurso errado responderia sucesso.
+        """
+        with self._tx() as c:
+            cur = c.execute(
+                """DELETE FROM workspace_resources
+                    WHERE workspace_id=? AND provider=? AND kind=? AND resource_id=?""",
+                (workspace_id, provider, kind, resource_id))
+            return cur.rowcount > 0
+
+    def mark_resources_seen(self, workspace_id: str, provider: str, kind: str,
+                            ids: list[str], when: datetime) -> None:
+        """Marca que a ultima descoberta ENCONTROU estes recursos.
+
+        So marca os vistos, e NAO apaga os ausentes. Uma descoberta que falhou
+        pela metade apagaria selecao boa -- e apagar por ausencia e exatamente o
+        que este marco recusa.
+        """
+        if not ids:
+            return
+        marcas = ",".join("?" for _ in ids)
+        with self._tx() as c:
+            c.execute(
+                f"""UPDATE workspace_resources SET last_seen_at=?
+                     WHERE workspace_id=? AND provider=? AND kind=?
+                       AND resource_id IN ({marcas})""",
+                (_iso(when), workspace_id, provider, kind, *ids))
 
     def open_credential(self, credential: Credential) -> bool:
         """Registra. `False` quando ja ha uma viva para o mesmo uso.

@@ -574,6 +574,7 @@ GLOBAL_BY_DESIGN = {
     # escrita depois da importacao e sem nada de tenant. Declarada como todo o
     # resto, porque a guarda so vale enquanto ninguem acrescenta em silencio.
     ("api.py", "DENIAL_STATUS"), ("api.py", "REFUSAL_STATUS"),
+    ("api.py", "RESOURCE_STATUS"),
     ("api.py", "CREDENTIAL_STATUS"), ("api.py", "OPERATION_STATUS"),
     ("api.py", "SETTINGS_STATUS"),
     # Os papeis de provider que a tela mostra, e se cada um pede credencial.
@@ -585,6 +586,10 @@ GLOBAL_BY_DESIGN = {
     # do motor em vez de classificar por conta propria, que seria uma segunda
     # autoridade decidindo o que a primeira ja decidiu.
     ("cli.py", "EXIT_POR_RECUSA"),
+    # O que fazer diante de cada falha de descoberta. Frases, nao estado: sem
+    # escrita depois da importacao e sem nada de tenant. Declarada como todo o
+    # resto, porque a guarda so vale enquanto ninguem acrescenta em silencio.
+    ("cli.py", "SAIDA_DA_FALHA"),
     # Os baldes de status que um workspace pode declarar. Vocabulario do motor,
     # nao estado: sem escrita depois da importacao e sem nada de tenant. Quem
     # declara o mapeamento e a configuracao de cada workspace, e o resultado
@@ -595,6 +600,11 @@ GLOBAL_BY_DESIGN = {
     # tenant -- mas passa pela declaracao como todo o resto, porque a guarda so
     # vale enquanto ninguem acrescenta em silencio.
     ("access.py", "ROLES"),
+    # Como uma recusa do caminho governado vira uma falha de dominio. Traducao,
+    # nao estado: sem escrita depois da importacao, sem nada de tenant. Mora no
+    # adapter de proposito -- quem conhece a excecao e quem a levanta, e o motor
+    # nao importa excecao de ninguem.
+    ("discovery.py", "_POR_RECUSA"),
 }
 
 

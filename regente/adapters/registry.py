@@ -58,6 +58,17 @@ def create(cap: Capability, name: str, options: dict[str, Any] | None = None) ->
     return _REGISTRO[key](options or {})
 
 
+def has(cap: Capability, name: str) -> bool:
+    """Existe adapter deste nome para esta capacidade?
+
+    Pergunta, e nao tentativa: a composicao precisa saber se um provedor
+    DESCOBRE recursos sem construir nada nem tratar `KeyError` como resposta
+    normal. Um provedor que nao descobre e um caso comum e legitimo -- um
+    diretorio de arquivos nao tem o que listar --, e nao um erro.
+    """
+    return (cap, name) in _REGISTRO
+
+
 def available(cap: Capability | None = None) -> dict[str, list[str]]:
     output: dict[str, list[str]] = {}
     for (c, n) in sorted(_REGISTRO, key=lambda k: (k[0].value, k[1])):
@@ -321,6 +332,45 @@ def _runner_script(o: dict[str, Any]) -> Port:
         leave_trace=bool(o.get("leave_trace", True)))
 
 
+def _discovery_github(o: dict[str, Any]) -> Port:
+    """Descoberta no GitHub, sobre o provider de repositorio ja composto.
+
+    Recebe o provider pronto em vez de construir outro: dois objetos falando
+    com o mesmo GitHub teriam duas configuracoes, e a que divergisse seria
+    justamente a que ninguem revisou.
+    """
+    from .discovery import GitHubDiscovery
+    return GitHubDiscovery(repos=o["repos"], org=o["org"])
+
+
+def _discovery_jira(o: dict[str, Any]) -> Port:
+    """Descoberta num site Jira, com transporte e credencial PROPRIOS.
+
+    O transporte nao e o mesmo que le issues, e a diferenca esta numa palavra:
+    a capacidade pedida ao broker. Ler issues pede `task.read`; listar projetos
+    pede `task.discover`. Compartilhar o transporte faria as duas capacidades
+    virarem uma, e conectar o Jira passaria a conceder leitura do board inteiro.
+    """
+    from ..core.credential import Use
+    from .discovery import JiraDiscovery
+    from .tasks.transport import HttpTransport
+
+    site = str(o["site"]).rstrip("/")
+    broker = o["credentials"]
+    usuario = str(o.get("user") or "")
+    return JiraDiscovery(
+        transport=HttpTransport(
+            base_url=site,
+            credencial=lambda: (usuario, broker.material(Use.TASK_DISCOVER)),
+            timeout=int(o.get("timeout", 30)),
+            max_attempts=int(o.get("max_tentativas", 3)),
+            observer=o.get("observer")),
+        site=site,
+        max_results=int(o.get("descoberta_limite", 100)))
+
+
+register(Capability.DISCOVERY, "github", _discovery_github)
+register(Capability.DISCOVERY, "jira", _discovery_jira)
 register(Capability.TASKS, "filesystem", _tasks_filesystem)
 register(Capability.TASKS, "jira", _tasks_jira)
 register(Capability.REPOSITORY, "git-local", _repos_git_local)

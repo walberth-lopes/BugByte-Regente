@@ -150,3 +150,29 @@ rules:
     effect: ALLOW
     match: {action: "workspace.settings.write"}
     reason: "sem isto a tela nao configura nada e o YAML volta a ser obrigatorio"
+
+  # ---- integracoes: descobrir e escolher ---------------------------------
+  # DESCOBRIR pergunta ao provedor o que esta identidade alcanca. E leitura, e
+  # custa I/O -- por isso passa pela policy como qualquer outra acao, e por isso
+  # e uma acao SEPARADA de ler o conteudo. Conectar um provedor nao deveria, por
+  # tabela, autorizar o motor a ler tudo o que a credencial alcanca.
+  #
+  # O curinga cobre todo provedor: `github.resource.discover`,
+  # `jira.resource.discover`, e o proximo que aparecer. Um provedor novo nao
+  # deve exigir editar policy de todo mundo para simplesmente aparecer na tela.
+  - name: discover_provider_resources
+    effect: ALLOW
+    match: {action: "*.resource.discover"}
+    reason: "perguntar o que existe nao muda o mundo, e e como se escolhe"
+
+  # ESCOLHER grava que este workspace passa a usar um recurso. Permite que a
+  # acao seja avaliada; nao escolhe nada. Quem escolhe e uma pessoa com
+  # concessao, e a escolha fica na trilha.
+  #
+  # Sem esta regra o default DENY vale, e o workspace nunca ganha recurso
+  # nenhum -- o motor ficaria vendo tudo o que a credencial alcanca, que e
+  # exatamente o que este marco veio remover.
+  - name: human_selects_workspace_resources
+    effect: ALLOW
+    match: {action: "workspace.resource.select"}
+    reason: "sem isto ninguem escolhe, e o motor volta a alcancar tudo"

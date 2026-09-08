@@ -8,7 +8,7 @@ isso o Core Engine nunca precisa saber de onde elas vieram.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from ..adapters import conventions, registry
 from ..core import ids
@@ -25,6 +25,8 @@ from ..engine.access import AccessService
 from ..engine.credentials import CredentialService
 from ..engine.decision import DecisionService
 from ..engine.remote import RemoteDelivery
+from ..core.resource import Kind
+from ..engine.resources import SomenteSelecionados
 from ..engine.store_sqlite import SqliteStore
 from ..ports import Capability
 from ..ports.support import NotificationProvider
@@ -65,6 +67,10 @@ class Engine:
     #: Push, pull request and CI observation. `None` when the workspace has no
     #: workspace provider at all -- absent capability, not silent local action.
     delivery: RemoteDelivery | None = None
+    #: `{nome do provedor: porta de descoberta}`. Vazio quando nenhum dos
+    #: provedores configurados sabe listar o que a identidade alcanca -- que e
+    #: uma resposta legitima, e nao uma falha.
+    descobridores: dict = field(default_factory=dict)
 
     def close(self) -> None:
         self.store.close()
@@ -106,6 +112,26 @@ class Engine:
             workspace_name=self.workspace.name,
             environment=(self.config.projects[0].default_environment
                          if self.config.projects else "staging"))
+
+    def resources(self) -> "ResourceService":
+        """Descobrir e escolher. UM caminho, para terminal e navegador.
+
+        Montado aqui pelo mesmo motivo dos irmaos: duas construcoes divergem, e
+        a que diverge e sempre a que esquece de passar a policy.
+
+        `discovery_for` fecha sobre o mapa ja composto. O servico continua sem
+        saber o que e um GitHub -- ele pede "a porta deste provedor" e recebe
+        `None` quando aquele provedor nao descobre nada.
+        """
+        from ..engine.resources import ResourceService
+
+        return ResourceService(
+            store=self.store, policy=self.policy or PolicyEngine.from_config([]),
+            organization=self.config.organization, client=self.config.client,
+            workspace_name=self.workspace.name,
+            environment=(self.config.projects[0].default_environment
+                         if self.config.projects else "staging"),
+            discovery_for=self.descobridores.get)
 
     def credentials(self) -> CredentialService:
         """O caminho governado ate um segredo. UM, para terminal e navegador.
@@ -428,6 +454,40 @@ def build(cfg: Config) -> Engine:
         cicd = create(Capability.CICD, "cicd",
                       {"credentials": broker("cicd"), "observer": observe})
 
+    # ---- descoberta: quais provedores sabem dizer o que existe -----------
+    #
+    # Montado a partir dos MESMOS provedores ja configurados, e nao de uma lista
+    # propria: um provedor so aparece na tela de integracoes se este workspace
+    # ja o configurou. Uma segunda lista aqui deixaria a tela oferecer conexoes
+    # que o motor nao tem como usar.
+    #
+    # A credencial e a mesma que ja estava registrada -- o que muda e a
+    # CAPACIDADE pedida a ela. Uma credencial sem `repo.discover` recusa a
+    # descoberta e continua lendo o que o workspace escolheu, que e a resposta
+    # certa: ela nunca foi autorizada a varrer a organizacao inteira.
+    descobridores = discovery_ports(cfg, store, ws, projects, repos=repos,
+                                    observe=observe)
+
+    # ---- o corte: o motor so alcanca o que o workspace escolheu ----------
+    #
+    # Envelopado AQUI, na composicao, e nao em cada chamador. Um filtro no
+    # chamador teria mais de um chamador, e o que esquecesse seria o furo; aqui
+    # a unica forma de alcancar o provedor e passando por este objeto.
+    #
+    # Um workspace sem nenhuma selecao continua vendo tudo, de proposito: a
+    # tabela nasce vazia, e quem migra um banco existente nao pode acordar com o
+    # motor parado por uma decisao que ninguem tomou.
+    if repos is not None:
+        repos = SomenteSelecionados(inner=repos, workspace_id=ws.id, store=store,
+                                    role=Kind.CODE)
+    # O mesmo corte do outro lado. O envelope entra ANTES do orquestrador, e nao
+    # depois: o `Orchestrator` chama `list_tasks()` como sempre chamou, e o que
+    # muda e que a resposta ja vem cortada. Filtrar no orquestrador exigiria que
+    # ele conhecesse selecao, workspace e tenancy -- e o proximo chamador, que
+    # nao e o orquestrador, esqueceria.
+    tasks = SomenteSelecionados(inner=tasks, workspace_id=ws.id, store=store,
+                                role=Kind.TASK_SOURCE)
+
     policy = PolicyEngine.from_config(load_policies(cfg.policies))
     risk = RiskEngine.from_config(list(cfg.risk_factors))
     gate = Gate(store=store, policy=policy, risk=risk)
@@ -456,7 +516,45 @@ def build(cfg: Config) -> Engine:
 
     return Engine(config=cfg, store=store, workspace=ws, orchestrator=orq, gate=gate,
                   repos=repos, resolver=resolver, policy=policy, risk=risk,
-                  areas=areas, agent=runner, delivery=delivery)
+                  areas=areas, agent=runner, delivery=delivery,
+                  descobridores=descobridores)
+
+
+def discovery_ports(cfg: Config, store, ws, projects=(), repos=None,
+                    observe=None) -> dict[str, object]:
+    """As portas de descoberta deste workspace: `{provedor: porta}`.
+
+    Publica e usada em DOIS lugares -- por `build()`, quando o motor sobe, e
+    pelo comando da tela, que nao monta o motor inteiro. Uma segunda montagem
+    escrita a mao no outro lugar divergiria, e a que divergisse seria a que
+    esquece de vincular o broker.
+
+    So entram provedores que ESTE workspace ja configurou. Uma lista propria
+    aqui faria a tela oferecer integracoes que o motor nao tem como usar.
+
+    A credencial e a que ja estava registrada; o que muda e a CAPACIDADE pedida
+    a ela. Uma credencial sem `repo.discover` recusa a descoberta e continua
+    lendo o que o workspace escolheu -- ela nunca foi autorizada a varrer a
+    organizacao inteira, e a recusa e a resposta certa.
+    """
+    portas: dict[str, object] = {}
+    for chave in ("tasks", "repository"):
+        conf = cfg.providers.get(chave)
+        if conf is None or not registry.has(Capability.DISCOVERY, conf.name):
+            continue
+        extras: dict[str, object] = {
+            "credentials": _engine_broker(store, cfg, ws, chave, projects),
+            "observer": observe}
+        if chave == "repository":
+            if repos is None:
+                # Sem o provider de repositorio nao ha o que descobrir por ele.
+                # Construir um segundo aqui seria uma segunda configuracao
+                # falando com o mesmo lugar, e a que divergisse ninguem reviu.
+                continue
+            extras["repos"] = repos
+        portas[conf.name] = registry.create(
+            Capability.DISCOVERY, conf.name, {**conf.options, **extras})
+    return portas
 
 
 def _engine_broker(store, cfg, ws, key: str, projects):

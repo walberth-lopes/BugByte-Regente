@@ -468,6 +468,141 @@ def cmd_health(args) -> int:
             health_module.Level.STUCK: 2}[report.level]
 
 
+#: O que fazer diante de cada falha de descoberta.
+#:
+#: As mesmas frases da tela, e pelo mesmo motivo: cada falha manda a pessoa a um
+#: lugar diferente, e imprimir so o identificador manda todo mundo ao mesmo --
+#: geralmente investigar a rede quando o que faltava era uma credencial.
+SAIDA_DA_FALHA = {
+    "SEM_CREDENCIAL":
+        "falta uma credencial para este servico.\n"
+        "  registre com: regente credentials registrar <nome> --provider "
+        "<papel> --referencia <endereco> --capacidades repo.discover",
+    "CREDENCIAL_EXPIRADA":
+        "a credencial deste servico venceu; registre uma nova",
+    "CREDENCIAL_REVOGADA":
+        "a credencial deste servico foi revogada; registre uma nova",
+    "SEM_CAPACIDADE":
+        "esta credencial nao foi autorizada a LISTAR.\n"
+        "  listar e ler sao permissoes separadas: registre-a de novo incluindo "
+        "repo.discover (ou task.discover)",
+    "POLICY_RECUSOU":
+        "a policy deste workspace recusou a busca; fale com quem a administra",
+    "PROVEDOR_INDISPONIVEL":
+        "nao deu para falar com o servico agora; nada foi alterado",
+    "NAO_SUPORTADO":
+        "este servico nao lista recursos",
+}
+
+
+def cmd_integracoes(args) -> int:
+    """Descobre o que os provedores alcancam e escolhe o que este workspace usa.
+
+    O mesmo servico da tela, e nao um caminho paralelo. A CLI TRADUZ o veredito
+    do motor em codigo de saida; ela nao decide nada por conta propria -- uma
+    segunda autoridade aqui decidiria diferente da primeira num dia ruim.
+
+    Quatro acoes, e a fronteira entre as duas do meio e o assunto do marco:
+
+        listar      o que este workspace ja escolheu (nao custa rede)
+        descobrir   o que o provedor mostra a esta identidade (custa rede)
+        escolher    grava que o motor passa a alcancar aquilo
+        remover     o motor deixa de alcancar, no ato
+    """
+    from .core.resource import ResourceRef, Situacao
+
+    cfg = _load_config(args)
+    motor = container.build(cfg)
+    try:
+        service = motor.resources()
+        who = motor.terminal_principal()
+        workspace = motor.workspace.id
+
+        if args.acao == "listar":
+            saida = service.selected(who, workspace)
+            if not isinstance(saida, list):
+                print(f"{saida.refusal.value}: {saida.reason}", file=sys.stderr)
+                return _exit_for(saida.refusal)
+            if not saida:
+                print("este workspace ainda nao escolheu nenhum recurso")
+                print("descubra com: regente integracoes descobrir "
+                      "--provider <nome> --tipo <tipo>")
+                return 0
+            for r in saida:
+                print(f"  {r.ref}")
+                print(f"    nome        : {r.name}")
+                print(f"    papel       : {r.role.value}")
+                print(f"    escolhido   : {r.selected_at} por {r.selected_by}")
+                print(f"    visto por   : {r.last_seen_at or 'ainda nao'}")
+            return 0
+
+        if not args.provider:
+            print("informe --provider; veja quais existem em "
+                  "`regente doctor`", file=sys.stderr)
+            return EXIT_INVALID_ARGUMENT
+
+        if args.acao == "descobrir":
+            if not args.tipo:
+                print("informe --tipo (por exemplo: repository, project, board)",
+                      file=sys.stderr)
+                return EXIT_INVALID_ARGUMENT
+            pai = ResourceRef.parse(args.pai) if args.pai else None
+            achado = service.discover(who, workspace, args.provider, args.tipo,
+                                      pai)
+            if not achado.ok:
+                # Nao e "nada encontrado". Falhar em perguntar e outra coisa, e
+                # imprimir uma lista vazia aqui faria alguem concluir que a
+                # conta esvaziou.
+                print(SAIDA_DA_FALHA.get(
+                    achado.falha.value,
+                    "nao deu para perguntar ao provedor agora"),
+                    file=sys.stderr)
+                print(f"  motivo: {achado.falha.value} -- {achado.detalhe}",
+                      file=sys.stderr)
+                return EXIT_BLOCKED
+            if not achado.itens:
+                print(f"{args.provider} nao mostrou nenhum {args.tipo} a esta "
+                      f"identidade")
+                return 0
+            for i in achado.itens:
+                marca = {Situacao.SELECIONADO: "[x]",
+                         Situacao.DISPONIVEL: "[ ]",
+                         Situacao.NAO_ENCONTRADO: "[?]"}[i.status]
+                sufixo = "" if i.selectable else "   (so para navegar)"
+                print(f"  {marca} {i.ref.id}{sufixo}")
+                if i.label != i.ref.id:
+                    print(f"        {i.label}")
+            print()
+            print(f"escolha com: regente integracoes escolher "
+                  f"--provider {args.provider} --tipo {args.tipo} <id> [<id>...]")
+            return 0
+
+        if args.acao == "escolher":
+            if not args.ids:
+                print("informe ao menos um identificador", file=sys.stderr)
+                return EXIT_INVALID_ARGUMENT
+            pai = ResourceRef.parse(args.pai) if args.pai else None
+            saida = service.select_refs(who, workspace, args.provider,
+                                        args.tipo, list(args.ids), pai)
+        else:                                            # remover
+            if not args.ids:
+                print("informe o identificador a remover", file=sys.stderr)
+                return EXIT_INVALID_ARGUMENT
+            saida = service.unselect(
+                who, workspace,
+                ResourceRef(args.provider, args.tipo, args.ids[0]))
+
+        if not saida.accepted:
+            print(f"{saida.refusal.value}: {saida.reason}", file=sys.stderr)
+            return _exit_for(saida.refusal)
+        print(saida.reason)
+        for r in saida.refs:
+            print(f"  {r}")
+        return 0
+    finally:
+        motor.close()
+
+
 def cmd_credentials(args) -> int:
     """Administra as credenciais deste workspace.
 
@@ -941,12 +1076,52 @@ def cmd_ui(args) -> int:
     from .adapters.probe import probe_for as _probe
     from .adapters.registry import needs_credential as _needs_credential
 
+    # As PORTAS DE DESCOBERTA, pela mesma razao: a API nao sabe o que e um
+    # GitHub, e recebe o mapa pronto de quem compos. `discovery_ports` e a
+    # mesma funcao que o motor usa -- uma segunda montagem aqui divergiria, e a
+    # que divergisse seria a que esquece de vincular o broker.
+    from .app.container import _engine_broker, discovery_ports
+    from .core.model import Workspace
+    from .engine.resources import ResourceService
+
+    ws_para_descoberta = Workspace(id=configured, client_id=_stable_id(
+        ids.CLIENT, cfg.organization, cfg.client), name=cfg.workspace,
+        root=str(cfg.root))
+    repos_para_descoberta = None
+    if "repository" in cfg.providers:
+        # Construido so para descobrir, e sem envelope de selecao: descobrir
+        # precisa enxergar TUDO o que a credencial alcanca, senao ninguem teria
+        # como escolher o que ainda nao escolheu.
+        from .adapters import registry as _reg
+        from .ports import Capability as _Cap
+
+        conf_repo = cfg.providers["repository"]
+        repos_para_descoberta = _reg.create(
+            _Cap.REPOSITORY, conf_repo.name,
+            {**conf_repo.options,
+             "credentials": _engine_broker(store, cfg, ws_para_descoberta,
+                                           "repository", cfg.projects or ())})
+
+    descobridores = discovery_ports(cfg, store, ws_para_descoberta,
+                                    cfg.projects or (),
+                                    repos=repos_para_descoberta)
+    resources = ResourceService(
+        store=store, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
+        organization=cfg.organization, client=cfg.client,
+        workspace_name=cfg.workspace,
+        environment=(cfg.projects[0].default_environment
+                     if cfg.projects else "staging"),
+        discovery_for=descobridores.get)
+
     httpd = serve(read, host=args.host, port=args.port, identity=identity,
                   decisions=decisions, access=access, credentials=credentials,
                   operations=operations, settings=settings, config=cfg,
                   probe_for=lambda provider: _probe(provider, cfg),
                   needs_credential=_needs_credential,
                   catalog=catalogo_de_provedores(),
+                  resources=resources,
+                  discovery_trees={n: p.discovers()
+                                   for n, p in descobridores.items()},
                   session_token=identity.token,
                   read_only=args.read_only)
     where = f"http://{args.host}:{args.port}/"
@@ -1328,6 +1503,22 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nota", default="")
     p.add_argument("--config", default="regente.yaml")
     p.set_defaults(fn=cmd_credentials)
+
+    p = sub.add_parser(
+        "integracoes",
+        help="descobrir e escolher o que este workspace usa de cada provedor")
+    p.add_argument("acao", choices=["listar", "descobrir", "escolher", "remover"])
+    p.add_argument("ids", nargs="*",
+                   help="identificadores do provedor, em `escolher` e `remover`")
+    p.add_argument("--provider", default="",
+                   help="nome do provedor configurado, ex.: github, jira")
+    p.add_argument("--tipo", default="",
+                   help="tipo de recurso: repository, project, board...")
+    p.add_argument("--pai", default="",
+                   help="navegar dentro de outro recurso, na forma "
+                        "provedor:tipo:id")
+    p.add_argument("--config", default="regente.yaml")
+    p.set_defaults(fn=cmd_integracoes)
 
     p = sub.add_parser("access", help="quem pode agir neste workspace")
     p.add_argument("acao", choices=["listar", "conceder", "revogar", "inicial",

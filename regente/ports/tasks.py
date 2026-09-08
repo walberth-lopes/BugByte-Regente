@@ -168,6 +168,17 @@ class ExternalTask:
     #: tocados. Quem enriquece isso e a analise, nao o adapter.
     resources: tuple[str, ...] = ()
     labels: tuple[str, ...] = ()
+    #: De QUAIS recursos do provedor esta task pode ser atribuida.
+    #:
+    #: Vazio significa "este adapter nao sabe dizer", e nao "de nenhum". A
+    #: diferenca decide o comportamento de quem filtra por selecao: sem esta
+    #: informacao nao da para afirmar que a task pertence ao que o workspace
+    #: escolheu, e afirmar que nao pertence apagaria trabalho legitimo.
+    #:
+    #: Os valores sao identificadores COMO O PROVEDOR os escreve -- o mesmo
+    #: vocabulario de `ResourceRef.id`. E o que permite ao motor cruzar as duas
+    #: listas sem saber o que e um projeto.
+    sources: tuple[str, ...] = ()
     #: True quando o registro veio de uma LISTAGEM, com campos enxutos.
     #:
     #: Listar e buscar detalhe sao operacoes de custo muito diferente: um board

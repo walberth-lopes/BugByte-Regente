@@ -40,6 +40,19 @@ def _fonte(nome: str) -> str:
     return caminho.read_text(encoding="utf-8")
 
 
+def _so_o_que_aparece(codigo: str) -> str:
+    """A fonte sem comentario. E o que a pessoa poderia ler na tela.
+
+    Existe porque um guard que le o arquivo inteiro acusa a explicacao junto com
+    o defeito: o comentario que diz "nunca escreva 'sumiu'" contem a palavra
+    'sumiu'. Um guard que da alarme falso e desligado, e um guard desligado nao
+    guarda nada.
+    """
+    sem_bloco = re.sub(r"/\*.*?\*/", " ", codigo, flags=re.S)
+    return "\n".join(l for l in sem_bloco.splitlines()
+                     if not l.lstrip().startswith(("//", "*")))
+
+
 def _chaves_do_mapa(codigo: str, nome: str) -> set[str]:
     """As chaves de um objeto literal `const NOME = {...}` na fonte.
 
@@ -115,6 +128,67 @@ def test_every_health_signal_has_a_question_in_portuguese():
     assert not faltando, (
         "verificacoes de saude que apareceriam como identificador na tela: "
         + ", ".join(sorted(faltando)))
+
+
+def test_every_discovery_failure_tells_the_person_what_to_do():
+    """Cada falha manda a pessoa a um lugar diferente.
+
+    Reduzi-las todas a "erro ao buscar" apagaria justamente a diferenca -- e
+    quem visse a frase generica iria procurar o problema na rede quando o que
+    faltava era registrar uma credencial. Por isso a tela precisa de uma frase
+    POR falha, e nao de um mapa parcial com um fallback simpatico.
+    """
+    from regente.core.resource import Falha
+
+    fonte = _fonte("present.js")
+    descritas = _chaves_do_mapa(fonte, "FALHA_DA_BUSCA")
+    faltando = {f.value for f in Falha} - descritas
+    assert not faltando, (
+        "falhas de descoberta que apareceriam como identificador na tela: "
+        + ", ".join(sorted(faltando)))
+
+
+def test_every_resource_situation_and_role_has_a_human_name():
+    """`NAO_ENCONTRADO` na tela e um identificador vazando para o produto."""
+    from regente.core.resource import Kind, Situacao
+
+    fonte = _fonte("present.js")
+    faltando = {s.value for s in Situacao} - _chaves_do_mapa(fonte, "SITUACAO")
+    assert not faltando, ("situacoes sem nome humano: "
+                          + ", ".join(sorted(faltando)))
+
+    faltando = ({k.value for k in Kind}
+                - _chaves_do_mapa(fonte, "PAPEL_DO_RECURSO"))
+    assert not faltando, ("papeis de recurso sem nome humano: "
+                          + ", ".join(sorted(faltando)))
+
+
+def test_the_screen_never_says_a_resource_vanished():
+    """Nao se afirma uma causa que ninguem apurou.
+
+    Um recurso que nao veio na ultima busca pode ter sumido, pode ter perdido
+    acesso, e pode ser que a busca nem tenha chegado a rodar. A frase precisa
+    falar do que se OBSERVOU -- "sumiu" manda alguem remover uma selecao boa.
+    """
+    texto = _so_o_que_aparece(_fonte("present.js")
+                             + _fonte("config/Integracoes.jsx"))
+    for proibida in ("sumiu", "foi apagado", "deixou de existir",
+                     "não existe mais", "nao existe mais"):
+        assert proibida not in texto.lower(), (
+            f"a tela afirma uma causa nao apurada: {proibida!r}")
+
+
+def test_a_failed_search_never_looks_like_an_empty_account():
+    """A tela precisa dizer que nada foi removido quando a busca falha.
+
+    E o defeito central deste marco visto do lado de quem olha: uma lista vazia
+    depois de um provedor fora do ar le-se como "minha conta esvaziou", e a
+    reacao razoavel e remover a selecao que ainda estava certa.
+    """
+    fonte = _so_o_que_aparece(_fonte("config/Integracoes.jsx"))
+    assert "nada foi removido" in fonte.lower(), (
+        "a tela nao tranquiliza quem viu a busca falhar")
+    assert "continua valendo" in fonte.lower()
 
 
 def test_every_ability_has_a_human_description():

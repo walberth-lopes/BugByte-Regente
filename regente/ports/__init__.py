@@ -41,6 +41,13 @@ class Capability(str, Enum):
     RUNNER = "runner"
     STORE = "store"
     IDENTITY = "identity"
+    #: Perguntar ao provedor o que esta identidade alcanca.
+    #:
+    #: Separada de `TASKS` e `REPOSITORY` porque a pergunta e outra e a
+    #: credencial e outra: um adapter descobre com uma capacidade de
+    #: descoberta, e le conteudo com uma de leitura. Fundir as duas faria
+    #: conectar um provedor conceder leitura de tudo o que ele alcanca.
+    DISCOVERY = "discovery"
 
 
 class Port:

@@ -263,6 +263,14 @@ class JiraTasks(TaskProvider):
         links = self._links_of(campos)
         labels = tuple(str(x) for x in (campos.get("labels") or []))
 
+        # ID e CHAVE do projeto, os dois. A descoberta identifica projetos pelo
+        # id numerico; uma pessoa que configurou o board a mao escreveu a chave.
+        # Mandar so um dos dois faria o cruzamento falhar conforme o caminho por
+        # onde a selecao entrou -- e falharia calado, esvaziando a fila.
+        projeto = campos.get("project") or {}
+        origens = tuple(str(x) for x in (projeto.get("id"), projeto.get("key"))
+                        if x)
+
         return ExternalTask(
             key=key,
             title=str(campos.get("summary") or ""),
@@ -276,6 +284,7 @@ class JiraTasks(TaskProvider):
             links=links,
             resources=self._resources_of(key, campos),
             labels=labels,
+            sources=origens,
             partial=partial,
             data={
                 "tipo": str((campos.get("issuetype") or {}).get("name") or ""),
