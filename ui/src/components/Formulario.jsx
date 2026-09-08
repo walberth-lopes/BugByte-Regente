@@ -6,6 +6,7 @@
 // divergisse aceitaria o que o motor recusa.
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /** Um campo, desenhado a partir do que o catálogo disse sobre ele. */
 export function Campo({ campo, valor, aoMudar }) {
@@ -87,7 +88,9 @@ export function Confirmar({ aberto, titulo, impacto, rotuloOk, aoConfirmar, aoCa
   }, [aberto, aoCancelar]);
 
   if (!aberto) return null;
-  return (
+  // Tambem no `body`, e pelo mesmo motivo da gaveta: sobreposicao nao pode
+  // depender do bloco de contencao de quem a escreveu.
+  return createPortal(
     <div className="modal-fundo" onClick={aoCancelar}>
       <div
         className="modal"
@@ -107,7 +110,8 @@ export function Confirmar({ aberto, titulo, impacto, rotuloOk, aoConfirmar, aoCa
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

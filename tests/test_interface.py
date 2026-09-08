@@ -491,3 +491,92 @@ def test_the_ui_reads_the_state_back_after_every_write():
             faltando.append(arquivo.name)
     assert not faltando, (
         "escrevem e nao releem o estado: " + ", ".join(sorted(faltando)))
+
+
+# ===========================================================================
+# 6. ONDE OS FORMULARIOS ACONTECEM
+# ===========================================================================
+
+def test_every_form_opens_in_a_drawer_and_not_below_the_page():
+    """Um formulario que brota abaixo do cartao e tres defeitos de uma vez.
+
+    A pagina muda de altura debaixo do cursor; o formulario nasce fora da tela
+    em qualquer lista que ja role; e ele esconde justamente o cartao que estava
+    sendo configurado. A gaveta resolve os tres, e esta guarda impede que o
+    proximo formulario volte a ser escrito no fluxo da pagina.
+    """
+    formularios = {
+        "config/Conexoes.jsx": "FormConexao",
+        "config/Credenciais.jsx": "FormCredencial",
+        "config/Acesso.jsx": "FormAcesso",
+        "config/Regras.jsx": "FormRegra",
+        "config/StatusMap.jsx": "Editor",
+    }
+    for arquivo, funcao in formularios.items():
+        codigo = _fonte(arquivo)
+        assert "<Gaveta" in codigo, (
+            f"{arquivo}: o formulario de {funcao} nao abre numa gaveta")
+        # Os invólucros que o formulário TINHA quando era desenhado no fluxo da
+        # página, e não `form-row`/`form-actions`, que sao layout e continuam
+        # valendo dentro da gaveta. A primeira versao desta guarda procurava
+        # `className="form-` e acusava a grade de campos.
+        for antigo in ("form-conexao", "form-credencial", "form-acesso",
+                       "form-regra"):
+            assert antigo not in codigo, (
+                f"{arquivo}: sobrou `{antigo}` -- o formulario voltou a ser "
+                f"desenhado no fluxo da pagina")
+
+
+def test_overlays_are_rendered_outside_the_page_subtree():
+    """A gaveta e o modal saem para o `body`, e nao ficam onde foram escritos.
+
+    Isto nao e preferencia: QUALQUER ancestral com `transform`, `filter` ou uma
+    animacao que deixe matriz identidade vira o bloco de contencao de todo
+    `position: fixed` abaixo dele -- e a sobreposicao some para fora da tela sem
+    erro no console e sem nada que aponte a causa.
+
+    Aconteceu de verdade neste marco: a animacao de entrada da pagina
+    (`ui-pop`, com `animation-fill-mode: both`) deixava
+    `transform: matrix(1,0,0,1,0,0)` aplicado para sempre, e no telefone a
+    gaveta nascia 800px abaixo da dobra.
+    """
+    for arquivo in ("components/Gaveta.jsx", "components/Formulario.jsx"):
+        codigo = _fonte(arquivo)
+        assert "createPortal" in codigo, (
+            f"{arquivo}: a sobreposicao voltou a depender de onde foi escrita")
+        assert "document.body" in codigo, (
+            f"{arquivo}: o portal nao aponta para o `body`")
+
+
+def test_no_animation_leaves_a_transform_applied_forever():
+    """`animation-fill-mode: both` sobre um `transform` e uma armadilha.
+
+    Visualmente nao muda nada -- a matriz e a identidade. O que ela faz e
+    transformar o elemento em bloco de contencao de `position: fixed`, o que so
+    aparece quando alguem poe uma sobreposicao dentro dele, meses depois.
+    """
+    css = (FONTE / "styles.css").read_text(encoding="utf-8")
+    com_transform = {
+        m.group(1)
+        for m in re.finditer(r"@keyframes ([\w-]+) \{(?:[^{}]|\{[^}]*\})*?transform:",
+                             css, re.S)
+    }
+    culpados = [
+        linha.strip()
+        for linha in css.splitlines()
+        if re.search(r"animation:.*(both|forwards)", linha)
+        and any(nome in linha for nome in com_transform)
+    ]
+    assert not culpados, (
+        "animacoes que deixam um transform aplicado depois de terminar:\n  "
+        + "\n  ".join(culpados))
+
+
+def test_the_drawer_can_be_closed_with_the_keyboard():
+    """Uma sobreposicao sem saida pelo teclado prende quem nao usa o mouse."""
+    codigo = _fonte("components/Gaveta.jsx")
+    assert 'e.key === "Escape"' in codigo, "a gaveta nao fecha com Escape"
+    assert 'e.key !== "Tab"' in codigo, "a gaveta nao prende o Tab"
+    assert 'aria-modal="true"' in codigo, "a gaveta nao se declara modal"
+    assert "anterior.current?.focus" in codigo, (
+        "a gaveta nao devolve o foco para quem a abriu")

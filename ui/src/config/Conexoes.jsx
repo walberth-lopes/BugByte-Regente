@@ -24,6 +24,7 @@ import {
   Vazio,
 } from "../ui.jsx";
 import { Campo, Confirmar, useFeedback } from "../components/Formulario.jsx";
+import Gaveta from "../components/Gaveta.jsx";
 import { ALCANCE, PERMISSAO, USO_POR_PAPEL, digaOErro, rotulo } from "../present.js";
 import { Icon } from "../Icon.jsx";
 import Procedencia from "./Procedencia.jsx";
@@ -327,16 +328,35 @@ function FormConexao({ papel, configurado, aoFechar }) {
   }
 
   return (
-    <Painel className="form-conexao">
-      <div className="row">
-        <h2>Configurar: {papel.label}</h2>
-        <span className="spacer" />
-        <button className="btn btn-ghost btn-sm" onClick={aoFechar}>
-          Fechar
-        </button>
-      </div>
-      <p className="muted">{papel.description}</p>
-
+    <Gaveta
+      aberta
+      titulo={`Configurar: ${papel.label}`}
+      sub={papel.description}
+      aoFechar={aoFechar}
+      rodape={
+        <>
+          <button className="btn" onClick={aoFechar}>
+            Cancelar
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={!oferta || faltando.length > 0 || indo}
+            onClick={() =>
+              atual.name && atual.name !== escolhido
+                ? setConfirmar(true)
+                : salvar()
+            }
+            title={faltando.length ? `Falta preencher: ${faltando.join(", ")}` : ""}
+          >
+            Salvar
+          </button>
+          {faltando.length > 0 && (
+            <span className="hint">Falta preencher: {faltando.join(", ")}.</span>
+          )}
+          {feedback}
+        </>
+      }
+    >
       <fieldset className="grupo">
         <legend>Qual serviço</legend>
         <div className="opcoes">
@@ -416,29 +436,6 @@ function FormConexao({ papel, configurado, aoFechar }) {
         </>
       )}
 
-      {feedback}
-
-      <div className="form-actions">
-        <button className="btn" onClick={aoFechar}>
-          Cancelar
-        </button>
-        <button
-          className="btn btn-primary"
-          disabled={!oferta || faltando.length > 0 || indo}
-          onClick={() =>
-            atual.name && atual.name !== escolhido
-              ? setConfirmar(true)
-              : salvar()
-          }
-          title={faltando.length ? `Falta preencher: ${faltando.join(", ")}` : ""}
-        >
-          Salvar
-        </button>
-        {faltando.length > 0 && (
-          <span className="hint">Falta preencher: {faltando.join(", ")}.</span>
-        )}
-      </div>
-
       <Confirmar
         aberto={confirmar}
         titulo={`Trocar ${papel.label} de ${atual.name} para ${escolhido}?`}
@@ -450,6 +447,6 @@ function FormConexao({ papel, configurado, aoFechar }) {
           salvar();
         }}
       />
-    </Painel>
+    </Gaveta>
   );
 }

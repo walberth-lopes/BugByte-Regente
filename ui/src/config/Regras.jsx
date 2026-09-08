@@ -29,6 +29,7 @@ import {
   Dito,
 } from "../ui.jsx";
 import { Confirmar, useFeedback } from "../components/Formulario.jsx";
+import Gaveta from "../components/Gaveta.jsx";
 import { digaOErro, fraseDaRegra } from "../present.js";
 import Procedencia from "./Procedencia.jsx";
 
@@ -445,10 +446,27 @@ function FormRegra({ inicial, fila, aoCancelar, aoSalvar }) {
   const pegaria = tasksDaRegra({ ...previa, name: inicial.name }, fila);
 
   return (
-    <Painel className="form-regra">
-      <h2>{inicial._novo ? "Criar regra" : "Editar regra"}</h2>
-
-      <div className="field" style={{ marginTop: "var(--s-4)" }}>
+    <Gaveta
+      aberta
+      titulo={inicial._novo ? "Criar regra" : "Editar regra"}
+      sub="Uma condição, e o que o Regente deve fazer quando ela casar."
+      aoFechar={aoCancelar}
+      rodape={
+        <>
+          <button className="btn" onClick={aoCancelar}>
+            Cancelar
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={!String(valorTexto).trim()}
+            onClick={() => aoSalvar(montar())}
+          >
+            {inicial._novo ? "Criar regra" : "Salvar regra"}
+          </button>
+        </>
+      }
+    >
+      <div className="field">
         <label htmlFor="regra-nome">Nome desta regra</label>
         <input
           id="regra-nome"
@@ -575,19 +593,7 @@ function FormRegra({ inicial, fila, aoCancelar, aoSalvar }) {
         </span>
       </div>
 
-      <div className="form-actions">
-        <button className="btn" onClick={aoCancelar}>
-          Cancelar
-        </button>
-        <button
-          className="btn btn-primary"
-          disabled={!String(valorTexto).trim()}
-          onClick={() => aoSalvar(montar())}
-        >
-          {inicial._novo ? "Criar regra" : "Salvar regra"}
-        </button>
-      </div>
-    </Painel>
+    </Gaveta>
   );
 }
 

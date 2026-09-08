@@ -61,6 +61,7 @@ const USADOS = {
   seta: "alt-arrow-right-bold-duotone",
   externo: "square-top-down-bold-duotone",
   atualizar: "refresh-bold-duotone",
+  fechar: "close-circle-bold-duotone",
   claro: "sun-2-bold-duotone",
   escuro: "moon-bold-duotone",
   identidade: "user-circle-bold-duotone",

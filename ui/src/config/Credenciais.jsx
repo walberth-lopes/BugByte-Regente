@@ -25,6 +25,7 @@ import {
   Vazio,
 } from "../ui.jsx";
 import { Confirmar, useFeedback } from "../components/Formulario.jsx";
+import Gaveta from "../components/Gaveta.jsx";
 import { PERMISSAO, digaOErro, when } from "../present.js";
 import { SemAcesso } from "../components/Acesso.jsx";
 
@@ -333,15 +334,33 @@ function FormCredencial({ conexoes, aoFechar, aoPronto }) {
   }
 
   return (
-    <Painel className="form-credencial">
-      <div className="row">
-        <h2>Registrar credencial</h2>
-        <span className="spacer" />
-        <button className="btn btn-ghost btn-sm" onClick={aoFechar}>
-          Fechar
-        </button>
-      </div>
-
+    <Gaveta
+      aberta
+      titulo="Registrar credencial"
+      sub="Você diz onde o segredo está, e o Regente vai buscá-lo na hora de usar."
+      aoFechar={aoFechar}
+      rodape={
+        <>
+          <button className="btn" onClick={aoFechar}>
+            Cancelar
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={!ondeEsta.trim() || !usos.length || indo}
+            onClick={salvar}
+          >
+            Registrar credencial
+          </button>
+          {!usos.length && (
+            <span className="hint">
+              Escolha ao menos uma permissão — uma credencial que não autoriza
+              nada é recusada pelo motor.
+            </span>
+          )}
+          {feedback}
+        </>
+      }
+    >
       <fieldset className="grupo">
         <legend>Para qual conexão</legend>
         <div className="form-row">
@@ -462,26 +481,6 @@ function FormCredencial({ conexoes, aoFechar, aoPronto }) {
         ))}
       </fieldset>
 
-      {feedback}
-
-      <div className="form-actions">
-        <button className="btn" onClick={aoFechar}>
-          Cancelar
-        </button>
-        <button
-          className="btn btn-primary"
-          disabled={!ondeEsta.trim() || !usos.length || indo}
-          onClick={salvar}
-        >
-          Registrar credencial
-        </button>
-        {!usos.length && (
-          <span className="hint">
-            Escolha ao menos uma permissão — uma credencial que não autoriza nada
-            é recusada pelo motor.
-          </span>
-        )}
-      </div>
-    </Painel>
+    </Gaveta>
   );
 }

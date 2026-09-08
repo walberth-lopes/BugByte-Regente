@@ -14,6 +14,7 @@ import { post } from "../api.js";
 import { useRegente, useLeitura } from "../estado.jsx";
 import { Alerta, Leitura, Painel, Secao, Vazio } from "../ui.jsx";
 import { useFeedback } from "../components/Formulario.jsx";
+import Gaveta from "../components/Gaveta.jsx";
 import { digaOErro } from "../present.js";
 import Procedencia from "./Procedencia.jsx";
 
@@ -88,6 +89,7 @@ function Editor({ campo, fila }) {
   const [mapa, setMapa] = useState(gravado);
   const [sujo, setSujo] = useState(false);
   const [novo, setNovo] = useState("");
+  const [abrindo, setAbrindo] = useState(false);
 
   useEffect(() => {
     if (!sujo) setMapa(gravado);
@@ -168,6 +170,16 @@ function Editor({ campo, fila }) {
               } task(s)`
             : undefined
         }
+        acao={
+          pode ? (
+            <button
+              className="btn btn-sm"
+              onClick={() => setAbrindo(true)}
+            >
+              + Adicionar status
+            </button>
+          ) : null
+        }
       >
         <Painel flush>
           {encontrados.length ? (
@@ -220,39 +232,51 @@ function Editor({ campo, fila }) {
         </Secao>
       )}
 
-      {pode && (
-        <Painel>
-          <h3>Adicionar um status manualmente</h3>
-          <p className="muted" style={{ margin: "var(--s-2) 0 var(--s-4)" }}>
-            Útil quando você já sabe o nome de uma coluna que ainda não apareceu
-            em nenhuma task. Escreva exatamente como está no board.
+      <Gaveta
+        aberta={abrindo}
+        titulo="Adicionar um status manualmente"
+        sub="Útil quando você já sabe o nome de uma coluna que ainda não apareceu em nenhuma task."
+        aoFechar={() => setAbrindo(false)}
+        rodape={
+          <>
+            <button className="btn" onClick={() => setAbrindo(false)}>
+              Cancelar
+            </button>
+            <button
+              className="btn btn-primary"
+              disabled={!novo.trim() || novo.trim() in mapa}
+              onClick={() => {
+                definir(novo.trim(), "ignorado");
+                setNovo("");
+                setAbrindo(false);
+              }}
+            >
+              Adicionar
+            </button>
+          </>
+        }
+      >
+        <div className="field">
+          <label htmlFor="novo-status">Nome do status no board</label>
+          <input
+            id="novo-status"
+            className="input"
+            value={novo}
+            placeholder="Waiting for Customer"
+            onChange={(e) => setNovo(e.target.value)}
+          />
+          <span className="help">
+            Escreva exatamente como está no board — maiúsculas e acentos não
+            importam, mas as palavras sim. Ele entra como “Ignorar”, e você
+            escolhe a etapa certa na lista.
+          </span>
+        </div>
+        {novo.trim() in mapa && (
+          <p className="hint" style={{ color: "var(--c-amber)" }}>
+            Este status já está na lista.
           </p>
-          <div className="form-row">
-            <div className="field">
-              <label htmlFor="novo-status">Nome do status no board</label>
-              <input
-                id="novo-status"
-                className="input"
-                value={novo}
-                placeholder="Waiting for Customer"
-                onChange={(e) => setNovo(e.target.value)}
-              />
-            </div>
-            <div className="form-actions">
-              <button
-                className="btn btn-primary"
-                disabled={!novo.trim() || novo.trim() in mapa}
-                onClick={() => {
-                  definir(novo.trim(), "ignorado");
-                  setNovo("");
-                }}
-              >
-                Adicionar
-              </button>
-            </div>
-          </div>
-        </Painel>
-      )}
+        )}
+      </Gaveta>
     </>
   );
 }

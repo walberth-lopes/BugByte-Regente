@@ -21,6 +21,7 @@ import {
   Vazio,
 } from "../ui.jsx";
 import { Confirmar, useFeedback } from "../components/Formulario.jsx";
+import Gaveta from "../components/Gaveta.jsx";
 import { ACAO, digaOErro, when } from "../present.js";
 import { SemAcesso, ComoConceder } from "../components/Acesso.jsx";
 import { chaveDaSessao } from "../estado.jsx";
@@ -312,16 +313,31 @@ function FormAcesso({ aoFechar, aoPronto }) {
   }
 
   return (
-    <Painel className="form-acesso">
-      <div className="row">
-        <h2>Dar acesso a alguém</h2>
-        <span className="spacer" />
-        <button className="btn btn-ghost btn-sm" onClick={aoFechar}>
-          Fechar
-        </button>
-      </div>
-
-      <div className="field" style={{ marginTop: "var(--s-4)" }}>
+    <Gaveta
+      aberta
+      titulo="Dar acesso a alguém"
+      sub="A identidade recebe as permissões do papel escolhido, gravadas como estão hoje."
+      aoFechar={aoFechar}
+      rodape={
+        <>
+          <button className="btn" onClick={aoFechar}>
+            Cancelar
+          </button>
+          <button
+            className="btn btn-primary"
+            disabled={!formaOk || indo}
+            onClick={salvar}
+          >
+            Dar acesso
+          </button>
+          <span className="hint">
+            Mudar a definição de um papel depois não altera quem já recebeu.
+          </span>
+          {feedback}
+        </>
+      }
+    >
+      <div className="field">
         <label htmlFor="acesso-alvo">Identidade</label>
         <input
           id="acesso-alvo"
@@ -391,24 +407,6 @@ function FormAcesso({ aoFechar, aoPronto }) {
         </span>
       </div>
 
-      {feedback}
-
-      <div className="form-actions">
-        <button className="btn" onClick={aoFechar}>
-          Cancelar
-        </button>
-        <button
-          className="btn btn-primary"
-          disabled={!formaOk || indo}
-          onClick={salvar}
-        >
-          Dar acesso
-        </button>
-        <span className="hint">
-          As permissões ficam gravadas como estão hoje. Mudar a definição de um
-          papel depois não altera quem já recebeu.
-        </span>
-      </div>
-    </Painel>
+    </Gaveta>
   );
 }
