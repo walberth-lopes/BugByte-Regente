@@ -106,18 +106,23 @@ def _pergunte(rotulo: str, padrao: str) -> str:
 
 
 def _confirme(pergunta: str) -> bool:
-    """Sim ou nao, com NAO como resposta de quem nao respondeu.
+    """Sim ou nao, com SIM para quem responde e NAO para quem nao esta la.
 
-    Abrir a Mission Control prende o terminal ate alguem interromper. Isso e o
-    que a pessoa quer quando pediu; e uma armadilha quando ninguem pediu. Um
-    padrao negativo torna impossivel um script ficar preso servindo HTTP -- que
-    foi exatamente o que travou a suite inteira quando a tela abria sozinha.
+    Quem acabou de configurar o workspace quer ver a tela -- entao Enter abre.
+    Mas abrir prende o terminal: `cmd_ui` sobe um servidor e nao retorna nunca.
+    Num script isso seria um processo preso servindo HTTP para sempre, sem erro
+    e sem pista -- foi o que travou esta suite inteira uma vez.
+
+    A saida e a diferenca entre NAO RESPONDER e responder. Entrada fechada
+    levanta `EOFError`, e ai a resposta e NAO. Quem esta num terminal aperta
+    Enter e ve a tela; quem nao esta nunca fica preso.
     """
     try:
-        return input(f"  {pergunta} [s/N]: ").strip().lower() in ("s", "sim", "y")
+        dito = input(f"  {pergunta} [S/n]: ").strip().lower()
     except (EOFError, OSError):
         print("n")
         return False
+    return dito in ("", "s", "sim", "y", "yes")
 
 
 def cmd_init(args) -> int:
@@ -147,16 +152,18 @@ def cmd_init(args) -> int:
         print(f"{destination} ja existe. Use --force para sobrescrever.")
         return EXIT_CONFLICT
 
-    # QUEM DECIDE SE HA PERGUNTAS E UM ARGUMENTO, e nao o ambiente.
+    # PERGUNTAR E O PADRAO. `--silencioso` e a saida de quem esta num script.
     #
-    # A versao anterior olhava `sys.stdin.isatty()`, e isso se mostrou uma base
-    # ruim: no Git Bash do Windows, `< /dev/null` responde que E um terminal, e
-    # um cano responde que NAO e -- entao ora o comando travava esperando uma
-    # tecla, ora descartava em silencio respostas que alguem tinha enviado.
+    # Isto nao reintroduz o travamento que ja aconteceu aqui, e o motivo importa:
+    # perguntar LE a entrada, e uma entrada fechada -- o caso de todo CI --
+    # levanta `EOFError` na primeira leitura. O padrao vale, o comando imprime o
+    # que usou, e retorna. Ficar esperando so acontece com um terminal de
+    # verdade, onde esperar e o comportamento certo.
     #
-    # Agora e explicito. Sem `--perguntar`, o comando nunca le a entrada, nunca
-    # bloqueia, e IMPRIME os nomes que usou.
-    perguntar = args.perguntar and not (
+    # O que NAO da para fazer e decidir isso olhando `sys.stdin.isatty()`: no
+    # Git Bash do Windows, `< /dev/null` responde que E terminal e um cano
+    # responde que NAO e. Por isso a decisao e um argumento, e nao um palpite.
+    perguntar = not args.silencioso and not (
         args.organizacao or args.cliente or args.workspace)
 
     if perguntar:
@@ -180,8 +187,8 @@ def cmd_init(args) -> int:
         if not (args.organizacao or args.cliente or args.workspace):
             print(f"usando os nomes padrao: {organizacao} / {cliente} / "
                   f"{workspace}")
-            print("  (para escolher: regente init --perguntar, ou "
-                  "--organizacao X --cliente Y --workspace Z)")
+            print("  (para escolher: --organizacao X --cliente Y "
+                  "--workspace Z)")
 
     modelo = (recursos / "regente.yaml.example").read_text(encoding="utf-8")
     for chave, valor in (("organization", organizacao), ("client", cliente),
@@ -209,13 +216,13 @@ def cmd_init(args) -> int:
 
     # ABRIR A TELA E UMA RESPOSTA, e nao um palpite sobre o ambiente.
     #
-    # `cmd_ui` sobe um servidor e NAO RETORNA. Isso e o que a pessoa quer quando
-    # pediu, e uma armadilha quando ninguem pediu: a suite inteira parou uma vez
-    # num `regente init` de subprocesso servindo HTTP na porta 8787, sem erro e
-    # sem pista.
+    # `cmd_ui` sobe um servidor e NAO RETORNA -- e o que quem acabou de
+    # configurar quer ver, e uma armadilha para um script. A suite inteira parou
+    # uma vez num `regente init` de subprocesso servindo HTTP na porta 8787, sem
+    # erro e sem pista.
     #
-    # `--ui` abre; `--perguntar` pergunta; qualquer outro caminho so diz o
-    # proximo comando. Nao ha combinacao em que um script fique preso.
+    # Quem responde decide (Enter abre). Quem nao esta la nunca abre: entrada
+    # fechada e `EOFError`, e `EOFError` e nao. E `--silencioso` nem pergunta.
     abrir = args.ui or (perguntar and _confirme("Abrir a Mission Control agora?"))
     if not abrir:
         print()
@@ -1227,13 +1234,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--organizacao", default="")
     p.add_argument("--cliente", default="")
     p.add_argument("--workspace", default="")
-    # Perguntar e ABRIR A TELA sao os dois comportamentos que prendem o
-    # terminal. Os dois sao opt-in, e por isso `regente init` num script nunca
-    # trava -- ele escolhe os padroes, imprime quais foram, e retorna.
-    p.add_argument("--perguntar", action="store_true",
-                   help="pergunta os nomes e oferece abrir a Mission Control")
+    # `regente init` PERGUNTA. Quem esta num script passa `--silencioso`, e o
+    # comando usa os padroes, imprime quais foram, e retorna sem abrir nada.
+    #
+    # Esquecer `--silencioso` num CI tambem nao trava: perguntar le a entrada, e
+    # entrada fechada levanta `EOFError` na primeira leitura.
+    p.add_argument("--silencioso", action="store_true",
+                   help="nao pergunta nada e nao abre a tela; para scripts")
     p.add_argument("--ui", action="store_true",
-                   help="abre a Mission Control ao terminar")
+                   help="abre a Mission Control ao terminar, sem perguntar")
     # `init` termina abrindo a tela, entao ele precisa dos mesmos argumentos que
     # `ui` le. Sem isto, `cmd_ui` estouraria num `args.X` que o parser do `init`
     # nunca definiu -- a classe de defeito que o marco 6 fechou.

@@ -277,34 +277,60 @@ def test_the_cli_never_prints_a_whole_environment():
 # `regente init`: o comando que precisa RETORNAR
 # ===========================================================================
 
-def test_init_never_blocks_waiting_for_an_answer(tmp_path):
-    """Sem `--perguntar`, o comando nao le a entrada e nao trava.
+def test_init_asks_by_default(tmp_path):
+    """`regente init` PERGUNTA os nomes. Perguntar e o padrao.
 
-    A versao anterior decidia isso olhando `sys.stdin.isatty()`, e essa base se
-    mostrou ruim: no Git Bash do Windows, `< /dev/null` responde que E terminal
-    e um cano responde que NAO e -- entao ora o comando ficava esperando uma
-    tecla que nunca vinha, ora descartava em silencio respostas enviadas.
+    Escolher os tres nomes e o unico momento barato de faze-lo: o id do
+    workspace e derivado deles, e renomear depois cria outro workspace, vazio.
+    """
+    rc, saida = _regente("init", cwd=tmp_path)
+    assert rc == 0, saida
+    for pergunta in ("Nome da organizacao", "Nome do cliente",
+                     "Nome do workspace"):
+        assert pergunta in saida, f"o comando nao perguntou: {pergunta}"
+
+
+def test_init_does_not_block_when_nobody_is_there_to_answer(tmp_path):
+    """Perguntar por padrao NAO pode travar um script, e nao trava.
+
+    Perguntar LE a entrada, e uma entrada fechada -- o caso de todo CI --
+    levanta `EOFError` na primeira leitura: o padrao vale e o comando retorna.
+    Ficar esperando so acontece com um terminal de verdade, onde esperar e o
+    comportamento certo.
 
     O `timeout` do subprocesso e o teste: se ele estourar, o comando bloqueou.
     """
     rc, saida = _regente("init", cwd=tmp_path)
     assert rc == 0, saida
-    assert "usando os nomes padrao" in saida, (
-        "o comando escolheu nomes por conta propria e nao contou quais")
+    assert "my-org" in saida, "o padrao nao valeu quando ninguem respondeu"
 
 
-def test_init_never_leaves_a_server_running(tmp_path):
-    """`init` sozinho NAO abre a Mission Control.
+def test_init_never_leaves_a_server_running_when_nobody_answered(tmp_path):
+    """Sem resposta, a tela NAO abre.
 
-    `cmd_ui` sobe um servidor e nao retorna nunca. Abrir a tela por padrao
-    travou a suite inteira uma vez, num `regente init` de subprocesso servindo
-    HTTP -- sem erro e sem pista. Abrir passou a exigir `--ui`, ou uma resposta
-    em `--perguntar`.
+    `cmd_ui` sobe um servidor e nao retorna nunca. Abrir sem alguem ter pedido
+    travou esta suite inteira uma vez, num `regente init` de subprocesso
+    servindo HTTP -- sem erro e sem pista.
+
+    A diferenca esta entre NAO RESPONDER e responder: `EOFError` e nao.
     """
     rc, saida = _regente("init", cwd=tmp_path)
     assert rc == 0, saida
     assert "proximo: regente ui" in saida, (
         "o comando deveria dizer o proximo passo em vez de tomar o terminal")
+
+
+def test_init_silencioso_asks_nothing_and_says_what_it_used(tmp_path):
+    """`--silencioso` e a porta de quem esta num script.
+
+    Escolher nomes por alguem e nao contar produz um workspace com um nome que
+    ninguem reconhece -- e renomear depois cria outro.
+    """
+    rc, saida = _regente("init", "--silencioso", cwd=tmp_path)
+    assert rc == 0, saida
+    assert "Nome da organizacao" not in saida, "o silencioso perguntou"
+    assert "usando os nomes padrao" in saida, (
+        "o comando escolheu nomes por conta propria e nao contou quais")
 
 
 def test_init_writes_the_names_it_was_given(tmp_path):
@@ -352,7 +378,7 @@ def test_init_twice_does_not_disturb_the_access_already_granted(tmp_path):
     A porta do `bootstrap` fecha depois da primeira concessao, e o comando
     precisa tratar essa recusa como "ja esta pronto", e nao como falha.
     """
-    assert _regente("init", cwd=tmp_path)[0] == 0
-    rc, saida = _regente("init", "--force", cwd=tmp_path)
+    assert _regente("init", "--silencioso", cwd=tmp_path)[0] == 0
+    rc, saida = _regente("init", "--force", "--silencioso", cwd=tmp_path)
     assert rc == 0, saida
     assert "ja tem dono" in saida

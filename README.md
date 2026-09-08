@@ -199,7 +199,7 @@ Se aparecer `regente 0.1.0`, está pronto.
 Numa pasta vazia:
 
 ```bash
-regente init --perguntar
+regente init
 ```
 
 Ele pergunta três nomes e configura tudo:
@@ -218,8 +218,13 @@ criado tasks/ -- descreva trabalho em YAML aqui
 criado workspace silverguard / scamchecker
 voce e o dono: os-account:S-1-5-21-...
 a Mission Control tambem: dev-token:silverguard
-  Abrir a Mission Control agora? [s/N]: s
+  Abrir a Mission Control agora? [S/n]:
+
+abrindo a Mission Control...
+Mission Control em http://127.0.0.1:8787/
 ```
+
+Enter abre a tela — é o fim do caminho, e não mais um comando.
 
 **Escolha os nomes agora, e não depois.** O identificador do workspace é
 derivado dos três — renomear no `regente.yaml` mais tarde faz o Regente
@@ -230,13 +235,17 @@ sem nenhum aviso.
 sistema operacional; a Mission Control autentica por um token local. O `init`
 concede às duas — antes era preciso descobrir sozinho um segundo comando.
 
-Sem `--perguntar`, o comando não lê a entrada e não abre nada: ele usa os
-padrões, imprime quais foram, e retorna. É o que serve para script e CI:
+**Em script ou CI**, use `--silencioso`: ele não pergunta, não abre nada, usa
+os padrões e imprime quais foram.
 
 ```bash
+regente init --silencioso
 regente init --organizacao silverguard --cliente silverguard --workspace scamchecker
-regente init --ui        # configura e já abre a tela
 ```
+
+Esquecer o `--silencioso` num CI também não trava: perguntar lê a entrada, e uma
+entrada fechada devolve o padrão na primeira leitura. Ficar esperando só
+acontece num terminal de verdade, onde esperar é o certo.
 
 ### 2b. O que ficou na pasta
 
@@ -246,7 +255,7 @@ própria — não a do código-fonte, para o trabalho não se misturar com o mot
 ```bash
 mkdir meu-regente
 cd meu-regente
-regente init --perguntar
+regente init
 ```
 
 Ficam três coisas, além do banco em `.regente/`:
