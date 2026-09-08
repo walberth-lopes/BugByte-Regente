@@ -8,15 +8,25 @@ version = "0.1.0"
 description = "Sistema operacional para agentes de engenharia de software."
 readme = "README.md"
 requires-python = ">=3.13"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Walberth Lopes" }]
+keywords = ["agentes", "automacao", "engenharia-de-software", "jira", "ci"]
+# Havia aqui `Private :: Do Not Upload` -- uma trava deliberada, porque nenhum
+# classificador comecado por `Private ::` existe no indice e o servidor recusa o
+# upload. Ela saiu com a decisao de publicar.
+#
+# A trava agora e outra, e esta em `[[tool.uv.index]]` mais abaixo: o alvo de
+# publicacao aponta para o TestPyPI, e nao para o PyPI. Um `uv publish` distraido
+# sobe para o indice descartavel, e nao queima a versao 0.1.0 no indice real.
 classifiers = [
-    # `Private :: Do Not Upload` e uma trava deliberada: nenhum classificador
-    # comecado por `Private ::` existe no PyPI, e o servidor recusa o upload.
-    # Ela sai no dia em que houver uma decisao de publicar, e nao antes.
-    "Private :: Do Not Upload",
+    "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3.13",
     "Environment :: Console",
     "Intended Audience :: Developers",
+    "Natural Language :: Portuguese (Brazilian)",
     "Topic :: Software Development :: Build Tools",
+    "Topic :: Software Development :: Quality Assurance",
 ]
 # UMA dependencia, e ela e um leitor de YAML.
 #
@@ -43,6 +53,20 @@ Repositorio = "https://github.com/walberth-lopes/BugByte-Regente"
 
 [project.scripts]
 regente = "regente.cli:main"
+
+# ONDE O `uv publish` PUBLICA.
+#
+# Enquanto a decisao for ensaiar, o alvo e o TestPyPI -- um indice descartavel,
+# onde uma versao errada nao custa nada. No PyPI de verdade uma versao publicada
+# NAO pode ser substituida: `0.1.0` seria queimado para sempre.
+#
+# Publicar no indice real e uma decisao, e ela tem de parecer uma: exige trocar
+# este bloco, e nao esquecer um argumento.
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
 
 [tool.hatch.build.targets.wheel]
 # `regente/` inteiro, e isso inclui `app/ui/` -- a Mission Control ja construida.

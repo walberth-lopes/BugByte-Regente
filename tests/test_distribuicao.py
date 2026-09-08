@@ -210,3 +210,78 @@ def test_the_readme_tells_people_to_run_the_installer_that_exists():
         "a instalacao principal voltou a pedir ambiente virtual")
     assert "install.sh" in principal and "install.ps1" in principal, (
         "a instalacao principal deixou de mostrar o comando de um passo")
+
+
+# ===========================================================================
+# A LICENCA E O ALVO DA PUBLICACAO
+# ===========================================================================
+
+def test_the_package_carries_a_licence():
+    """Publicar sem licenca e publicar algo que ninguem pode usar.
+
+    Sem licenca, o padrao legal e "todos os direitos reservados": o codigo fica
+    visivel e legalmente intocavel. E a licenca vai anexada A VERSAO -- corrigir
+    depois exige publicar outra, porque uma versao no indice nao se substitui.
+    """
+    projeto = _pyproject()["project"]
+    assert projeto.get("license"), "o pacote nao declara licenca"
+    arquivo = RAIZ / "LICENSE"
+    assert arquivo.is_file(), "a licenca e declarada e o arquivo nao existe"
+    assert "LICENSE" in projeto.get("license-files", []), (
+        "o arquivo da licenca nao viaja no pacote")
+
+
+def test_the_licence_file_is_the_one_the_metadata_declares():
+    """O texto e a declaracao precisam ser a MESMA licenca.
+
+    Declarar Apache-2.0 e distribuir o texto da MIT nao produz erro nenhum: o
+    indice mostra uma coisa, o arquivo diz outra, e quem for usar descobre a
+    divergencia no pior momento possivel.
+    """
+    declarada = _pyproject()["project"]["license"]
+    texto = (RAIZ / "LICENSE").read_text(encoding="utf-8")
+    marcas = {
+        "Apache-2.0": "Apache License",
+        "MIT": "MIT License",
+        "AGPL-3.0": "GNU AFFERO GENERAL PUBLIC LICENSE",
+        "GPL-3.0": "GNU GENERAL PUBLIC LICENSE",
+        "BSD-3-Clause": "Redistribution and use in source and binary forms",
+    }
+    marca = marcas.get(declarada)
+    assert marca, (
+        f"licenca '{declarada}' declarada e nao reconhecida aqui; acrescente a "
+        f"marca dela a este teste para a guarda continuar valendo")
+    assert marca in texto, (
+        f"o pyproject declara {declarada} e o arquivo LICENSE nao e essa licenca")
+
+
+def test_nothing_blocks_the_upload_by_accident():
+    """`Private :: Do Not Upload` recusa o upload em qualquer indice.
+
+    Ele era a trava de quando nao havia decisao de publicar. Deixa-lo depois da
+    decisao produz uma falha no meio do upload, com uma mensagem sobre
+    classificadores que nao explica nada.
+    """
+    classificadores = _pyproject()["project"].get("classifiers", [])
+    privados = [c for c in classificadores if c.startswith("Private ::")]
+    assert not privados, (
+        "sobrou um classificador que o indice recusa: " + ", ".join(privados))
+
+
+def test_publishing_defaults_to_the_disposable_index():
+    """Uma versao publicada no PyPI real NAO pode ser substituida.
+
+    Enquanto a decisao for ensaiar, o alvo precisa ser o TestPyPI -- e por
+    configuracao, e nao por lembrar de um argumento na hora. `uv publish` sem
+    alvo vai para o indice real, e um comando distraido queima a versao para
+    sempre.
+
+    No dia de publicar de verdade, esta guarda falha, e falhar e o ponto: subir
+    para o indice real passa a exigir uma alteracao deliberada aqui.
+    """
+    indices = _pyproject().get("tool", {}).get("uv", {}).get("index", [])
+    alvos = [i.get("publish-url", "") for i in indices]
+    assert alvos, "nenhum alvo de publicacao declarado"
+    assert all("test.pypi.org" in a for a in alvos), (
+        "ha alvo de publicacao apontando para o indice real: "
+        + ", ".join(a for a in alvos if "test.pypi.org" not in a))

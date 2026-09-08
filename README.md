@@ -857,3 +857,29 @@ pytest
 
 Inclui o teste de fronteira, que lê o código-fonte e falha se o domínio importar
 I/O ou se um nome de ferramenta vazar para o núcleo.
+
+## Licença
+
+[Apache-2.0](LICENSE). Você pode usar, modificar e distribuir o Regente,
+inclusive comercialmente, mantendo o aviso de licença. A Apache traz também uma
+concessão explícita de patente — é por isso que ela, e não a MIT.
+
+## Publicar uma versão
+
+O pacote é publicado hoje no **TestPyPI**, que é descartável: uma versão errada
+lá não custa nada. No índice real, uma versão publicada **não pode ser
+substituída**.
+
+```bash
+uv build
+uv publish --index testpypi
+```
+
+O alvo está fixo em `pyproject.toml` (`[[tool.uv.index]]`), e não passado na
+linha de comando — um argumento esquecido mandaria o pacote para o índice real.
+Publicar de verdade exige alterar aquele bloco, e `tests/test_distribuicao.py`
+falha quando isso acontece, para a mudança ser deliberada.
+
+A credencial é sua e não fica no repositório: crie um token em
+<https://test.pypi.org/manage/account/token/> e exporte
+`UV_PUBLISH_TOKEN` na sessão em que for publicar.
