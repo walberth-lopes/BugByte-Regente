@@ -78,25 +78,118 @@ def _load_config(args) -> Config:
 
 # ---- comandos ------------------------------------------------------------
 
+#: O que um nome pode ter.
+#:
+#: Ele nao e enfeite: junto com a organizacao e o cliente, ele DERIVA o id do
+#: workspace. Um espaco a mais no fim produziria um id diferente do que a pessoa
+#: pensa ter digitado -- e um workspace novo, vazio, sem nenhuma pista.
+_NOME_VALIDO = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{0,48}$")
+
+
+def _pergunte(rotulo: str, padrao: str) -> str:
+    """Pergunta um nome, e aceita o padrao quando ninguem responde.
+
+    Entrada fechada levanta `EOFError`, e ai o padrao vale -- e por isso isto
+    nunca fica esperando uma tecla que nao vem.
+    """
+    while True:
+        try:
+            dito = input(f"  {rotulo} [{padrao}]: ").strip()
+        except (EOFError, OSError):
+            print(padrao)
+            return padrao
+        escolhido = dito or padrao
+        if _NOME_VALIDO.match(escolhido):
+            return escolhido
+        print("    use letras, numeros, espaco, ponto, hifen ou sublinhado "
+              "(ate 49 caracteres)")
+
+
+def _confirme(pergunta: str) -> bool:
+    """Sim ou nao, com NAO como resposta de quem nao respondeu.
+
+    Abrir a Mission Control prende o terminal ate alguem interromper. Isso e o
+    que a pessoa quer quando pediu; e uma armadilha quando ninguem pediu. Um
+    padrao negativo torna impossivel um script ficar preso servindo HTTP -- que
+    foi exatamente o que travou a suite inteira quando a tela abria sozinha.
+    """
+    try:
+        return input(f"  {pergunta} [s/N]: ").strip().lower() in ("s", "sim", "y")
+    except (EOFError, OSError):
+        print("n")
+        return False
+
+
 def cmd_init(args) -> int:
-    """Cria uma pasta de trabalho que REALMENTE sobe.
+    """Cria uma pasta de trabalho que REALMENTE sobe -- e ja utilizavel.
 
     Ate o marco 6 este comando escrevia um `regente.yaml` apontando para
     `../policies/default.yaml` -- um caminho que so resolve dentro da arvore do
-    codigo-fonte. Quem seguia o tutorial (`mkdir meu-regente; cd; regente init`)
-    recebia, no comando seguinte, um `ValueError` cru na cara.
+    codigo-fonte. Quem seguia o tutorial recebia, no comando seguinte, um
+    `ValueError` cru na cara.
 
-    O arquivo de policies e escrito junto, no mesmo diretorio. Uma configuracao
-    que nao sobe nao e configuracao inicial.
+    Depois disso ele passou a escrever um arquivo que sobe, e sobrou o atrito
+    seguinte: o arquivo nascia com `my-org / first-client / main`, e quem
+    quisesse o proprio nome tinha de editar YAML -- ANTES do primeiro ciclo,
+    porque o id do workspace e derivado dos tres nomes e renomear depois cria
+    outro workspace, vazio, sem aviso. Depois disso ainda faltavam dois
+    comandos de acesso para a tela sair do lugar.
+
+    Agora o comando PERGUNTA os nomes, cria o workspace, concede o acesso e
+    abre a Mission Control. O que ele NAO faz e inventar autoridade: as duas
+    concessoes passam pelo `AccessService`, com a mesma auditoria de sempre.
     """
+    import sys
+
     destination = Path(args.config)
     recursos = Path(__file__).parent / "resources"
     if destination.exists() and not args.force:
         print(f"{destination} ja existe. Use --force para sobrescrever.")
         return EXIT_CONFLICT
-    destination.write_text(
-        (recursos / "regente.yaml.example").read_text(encoding="utf-8"),
-        encoding="utf-8")
+
+    # QUEM DECIDE SE HA PERGUNTAS E UM ARGUMENTO, e nao o ambiente.
+    #
+    # A versao anterior olhava `sys.stdin.isatty()`, e isso se mostrou uma base
+    # ruim: no Git Bash do Windows, `< /dev/null` responde que E um terminal, e
+    # um cano responde que NAO e -- entao ora o comando travava esperando uma
+    # tecla, ora descartava em silencio respostas que alguem tinha enviado.
+    #
+    # Agora e explicito. Sem `--perguntar`, o comando nunca le a entrada, nunca
+    # bloqueia, e IMPRIME os nomes que usou.
+    perguntar = args.perguntar and not (
+        args.organizacao or args.cliente or args.workspace)
+
+    if perguntar:
+        print()
+        print("  Regente -- configuracao inicial")
+        print("  Enter aceita o valor entre colchetes.")
+        print()
+        organizacao = _pergunte("Nome da organizacao", "my-org")
+        # O cliente costuma ser a propria organizacao em quem esta comecando: o
+        # padrao segue o que a pessoa acabou de dizer, e nao um nome de exemplo.
+        cliente = _pergunte("Nome do cliente", organizacao)
+        workspace = _pergunte("Nome do workspace", "main")
+        print()
+    else:
+        organizacao = args.organizacao or "my-org"
+        cliente = args.cliente or organizacao
+        workspace = args.workspace or "main"
+        # Dito em voz alta. Um comando que escolhe nomes por voce e nao conta
+        # produz um workspace com um nome que ninguem reconhece -- e renomear
+        # depois cria OUTRO workspace, porque o id e derivado dos tres nomes.
+        if not (args.organizacao or args.cliente or args.workspace):
+            print(f"usando os nomes padrao: {organizacao} / {cliente} / "
+                  f"{workspace}")
+            print("  (para escolher: regente init --perguntar, ou "
+                  "--organizacao X --cliente Y --workspace Z)")
+
+    modelo = (recursos / "regente.yaml.example").read_text(encoding="utf-8")
+    for chave, valor in (("organization", organizacao), ("client", cliente),
+                         ("workspace", workspace)):
+        modelo = __import__("re").sub(
+            rf"^{chave}: .*$", f"{chave}: {valor}", modelo, count=1,
+            flags=__import__("re").M)
+    destination.write_text(modelo, encoding="utf-8")
 
     policies = destination.parent / "policies.yaml"
     if not policies.exists() or args.force:
@@ -105,11 +198,102 @@ def cmd_init(args) -> int:
             encoding="utf-8")
     tasks = destination.parent / "tasks"
     tasks.mkdir(exist_ok=True)
+
     print(f"criado {destination}")
     print(f"criado {policies} -- o que o motor pode fazer, e o que nao pode")
     print(f"criado {tasks}/ -- descreva trabalho em YAML aqui")
-    print("proximo: regente doctor")
-    return EXIT_OK
+
+    concedido = _abrir_o_workspace(args, cliente, workspace)
+    if concedido != EXIT_OK:
+        return concedido
+
+    # ABRIR A TELA E UMA RESPOSTA, e nao um palpite sobre o ambiente.
+    #
+    # `cmd_ui` sobe um servidor e NAO RETORNA. Isso e o que a pessoa quer quando
+    # pediu, e uma armadilha quando ninguem pediu: a suite inteira parou uma vez
+    # num `regente init` de subprocesso servindo HTTP na porta 8787, sem erro e
+    # sem pista.
+    #
+    # `--ui` abre; `--perguntar` pergunta; qualquer outro caminho so diz o
+    # proximo comando. Nao ha combinacao em que um script fique preso.
+    abrir = args.ui or (perguntar and _confirme("Abrir a Mission Control agora?"))
+    if not abrir:
+        print()
+        print("proximo: regente ui")
+        return EXIT_OK
+
+    print()
+    print("abrindo a Mission Control...")
+    return cmd_ui(args)
+
+
+def _abrir_o_workspace(args, cliente: str, workspace: str) -> int:
+    """Cria o workspace e concede o acesso a quem esta rodando o comando.
+
+    DUAS concessoes, e nao uma, porque sao duas identidades. O terminal
+    autentica pela conta do sistema operacional; a Mission Control desta versao
+    autentica por um token local nomeado pelo cliente. Conceder so a primeira
+    era o que fazia a tela abrir autenticada e sem poder fazer nada -- e o que
+    obrigava a um segundo comando que ninguem tinha como adivinhar.
+
+    Isto nao afrouxa nada. As duas passam pelo `AccessService`, com policy e
+    auditoria; e quem roda `regente init` ja controla o banco e o arquivo de
+    configuracao, entao nao ha autoridade nova sendo criada aqui -- so a que
+    existia deixando de ser trabalho manual.
+    """
+    from .core.access import PrincipalRef
+
+    cfg = _load_config(args)
+    motor = container.build(cfg)
+    try:
+        service = motor.access()
+        eu = motor.terminal_principal()
+        ws = motor.workspace.id
+        print(f"criado workspace {cliente} / {workspace}")
+
+        inicial = service.bootstrap(eu, ws, note="regente init")
+        if not inicial.accepted:
+            # CONFLICT aqui significa que a pasta ja tinha dono. Nao e erro do
+            # comando, e refazer o `init` nao deve tirar acesso de ninguem.
+            if inicial.refusal.value == "CONFLICT":
+                print("este workspace ja tem dono; nada foi alterado no acesso")
+                return EXIT_OK
+            print(f"{inicial.refusal.value}: {inicial.reason}", file=sys.stderr)
+            return _exit_for(inicial.refusal)
+        print(f"voce e o dono: {inicial.target}")
+
+        # RELER a identidade, e nao reusar a de cima.
+        #
+        # As capacidades de um principal sao um RETRATO do momento em que ele
+        # foi lido -- e o de cima foi lido antes da concessao existir. Reusa-lo
+        # fazia a segunda concessao ser recusada com `NOT_FOUND`, que e como o
+        # motor diz "voce nao pode conceder aqui" sem confirmar o que existe.
+        eu = motor.terminal_principal()
+
+        # A identidade que a Mission Control usa nesta maquina.
+        from dataclasses import fields
+
+        from .adapters.identity.dev_token import DevTokenIdentity
+
+        # `DevTokenIdentity.name` num dataclass com `slots` devolve o descritor
+        # do slot, e nao o valor -- foi o que imprimiu
+        # `<member 'name' of 'DevTokenIdentity' objects>` na cara de quem rodou.
+        # O padrao do campo e o valor de verdade, e le-lo nao constroi nada.
+        provedor = next(c.default for c in fields(DevTokenIdentity)
+                        if c.name == "name")
+        da_tela = f"{provedor}:{cfg.client}"
+        segunda = service.grant(eu, ws, PrincipalRef.parse(da_tela), "owner",
+                                note="Mission Control desta maquina")
+        if segunda.accepted:
+            print(f"a Mission Control tambem: {da_tela}")
+        else:
+            # Nao e fatal: o workspace ja e utilizavel pelo terminal, e dizer o
+            # comando exato e melhor que falhar tudo por causa da segunda.
+            print(f"a tela ainda nao tem acesso ({segunda.refusal.value}). "
+                  f"Conceda com: regente access conceder {da_tela} --papel owner")
+        return EXIT_OK
+    finally:
+        motor.close()
 
 
 def cmd_doctor(args) -> int:
@@ -988,6 +1172,30 @@ def _versao_instalada() -> str:
         return "desenvolvimento (rodando do repositorio)"
 
 
+def _argumentos_da_ui(p: "argparse.ArgumentParser") -> None:
+    """Os argumentos que `cmd_ui` LE, num lugar so.
+
+    `init` termina abrindo a Mission Control, entao ele chama `cmd_ui` -- e
+    `cmd_ui` le `args.host`, `args.port` e mais quatro. Declarar essa lista duas
+    vezes seria pedir para as duas divergirem, e a divergencia entre o que o
+    parser define e o que o handler le ja atravessou esta suite tres vezes: e
+    exatamente a classe de defeito que `test_cli.py` passou a guardar no marco 6.
+    """
+    p.add_argument("--host", default="127.0.0.1",
+                   help="loopback por padrao: esta versao nao autentica ninguem")
+    p.add_argument("--port", type=int, default=8787)
+    p.add_argument("--all-workspaces", action="store_true",
+                   help="mostra todo workspace do banco, nao so o configurado")
+    p.add_argument("--read-only", action="store_true",
+                   help="nao concede autoridade de decisao a esta sessao")
+    p.add_argument("--as-operator", default="",
+                   help="como esta sessao assina na auditoria; o default vem "
+                        "da configuracao, nunca do navegador")
+    p.add_argument("--i-know-this-is-not-authenticated", action="store_true",
+                   help="permite escutar fora do loopback; o provedor de "
+                        "identidade de desenvolvimento ainda recusa autenticar")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """O parser inteiro, montado e devolvido sem rodar nada.
 
@@ -1010,8 +1218,26 @@ def build_parser() -> argparse.ArgumentParser:
                     version=f"regente {_versao_instalada()}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("init", help="cria a configuracao inicial")
+    p = sub.add_parser(
+        "init",
+        help="cria a configuracao, concede o acesso e abre a Mission Control")
     p.add_argument("--force", action="store_true")
+    # Os tres nomes derivam o id do workspace. Passa-los por argumento e o que
+    # torna o comando usavel num script sem ninguem para responder as perguntas.
+    p.add_argument("--organizacao", default="")
+    p.add_argument("--cliente", default="")
+    p.add_argument("--workspace", default="")
+    # Perguntar e ABRIR A TELA sao os dois comportamentos que prendem o
+    # terminal. Os dois sao opt-in, e por isso `regente init` num script nunca
+    # trava -- ele escolhe os padroes, imprime quais foram, e retorna.
+    p.add_argument("--perguntar", action="store_true",
+                   help="pergunta os nomes e oferece abrir a Mission Control")
+    p.add_argument("--ui", action="store_true",
+                   help="abre a Mission Control ao terminar")
+    # `init` termina abrindo a tela, entao ele precisa dos mesmos argumentos que
+    # `ui` le. Sem isto, `cmd_ui` estouraria num `args.X` que o parser do `init`
+    # nunca definiu -- a classe de defeito que o marco 6 fechou.
+    _argumentos_da_ui(p)
     p.set_defaults(fn=cmd_init)
 
     p = sub.add_parser("doctor", help="prova que o motor sobe")
@@ -1135,19 +1361,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("ui", help="Mission Control: o estado do motor numa tela")
     p.add_argument("--config", default="regente.yaml")
-    p.add_argument("--host", default="127.0.0.1",
-                   help="loopback por padrao: esta versao nao autentica ninguem")
-    p.add_argument("--port", type=int, default=8787)
-    p.add_argument("--all-workspaces", action="store_true",
-                   help="mostra todo workspace do banco, nao so o configurado")
-    p.add_argument("--read-only", action="store_true",
-                   help="nao concede autoridade de decisao a esta sessao")
-    p.add_argument("--as-operator", default="",
-                   help="como esta sessao assina na auditoria; o default vem "
-                        "da configuracao, nunca do navegador")
-    p.add_argument("--i-know-this-is-not-authenticated", action="store_true",
-                   help="permite escutar fora do loopback; o provedor de "
-                        "identidade de desenvolvimento ainda recusa autenticar")
+    _argumentos_da_ui(p)
     p.set_defaults(fn=cmd_ui)
 
     return ap

@@ -26,6 +26,20 @@ from regente.core.settings import (OVERRIDABLE, Overlay, Source, describe,
 from regente.engine.settings import SettingsService, validate
 from regente.engine.store_sqlite import SqliteStore
 
+
+def _args_de_init():
+    """Os argumentos de `regente init` como o PARSER os monta.
+
+    Havia aqui um `type("A", (), {"config": ..., "force": False})()` escrito a
+    mao. Todo argumento novo do parser quebrava esses testes -- ou, pior,
+    passava despercebido. Montar pelo parser de verdade nao envelhece, e
+    exercita exatamente os defaults que uma pessoa recebe.
+    """
+    from regente.cli import build_parser
+
+    return build_parser().parse_args(["init"])
+
+
 T0 = datetime(2026, 9, 11, 9, 0, tzinfo=timezone.utc)
 ALICE = PrincipalRef("os-account", "S-1-5-21-1")
 
@@ -239,7 +253,7 @@ def test_the_overlay_reaches_the_engine(tmp_path, monkeypatch):
     from regente.cli import cmd_init
 
     monkeypatch.chdir(tmp_path)
-    cmd_init(type("A", (), {"config": "regente.yaml", "force": False})())
+    cmd_init(_args_de_init())
     cfg = appconfig.load("regente.yaml")
     motor = build(cfg)
     ws = motor.workspace.id
@@ -261,7 +275,7 @@ def test_an_overlaid_provider_does_not_erase_the_others(tmp_path, monkeypatch):
     from regente.cli import cmd_init
 
     monkeypatch.chdir(tmp_path)
-    cmd_init(type("A", (), {"config": "regente.yaml", "force": False})())
+    cmd_init(_args_de_init())
     motor = build(appconfig.load("regente.yaml"))
     ws = motor.workspace.id
     antes = set(appconfig.load("regente.yaml").providers)
@@ -289,7 +303,7 @@ def test_a_corrupt_overlay_falls_back_to_the_file_instead_of_dying(
     from regente.cli import cmd_init
 
     monkeypatch.chdir(tmp_path)
-    cmd_init(type("A", (), {"config": "regente.yaml", "force": False})())
+    cmd_init(_args_de_init())
     motor = build(appconfig.load("regente.yaml"))
     motor.store.save_setting(motor.workspace.id, "selection",
                              [{"field": "inexistente", "match": "contains",
@@ -368,7 +382,7 @@ def _bancada(tmp_path, monkeypatch):
     from regente.engine.readmodel import ReadModel
 
     monkeypatch.chdir(tmp_path)
-    cmd_init(type("A", (), {"config": "regente.yaml", "force": False})())
+    cmd_init(_args_de_init())
     cfg = appconfig.load("regente.yaml")
     motor = build(cfg)
     locais = {"filesystem", "directory", "script", "console", "clone"}

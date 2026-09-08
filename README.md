@@ -194,28 +194,70 @@ Se aparecer `regente 0.1.0`, está pronto.
 > `Set-ExecutionPolicy -Scope Process RemoteSigned` nessa mesma janela e tente
 > outra vez.
 
-### 2. Criar uma pasta de trabalho
+### 2. Criar seu espaço de trabalho
 
-O Regente roda dentro de uma pasta que tem um `regente.yaml`. Crie uma nova —
-não use a pasta do código-fonte, para o trabalho não se misturar com o motor:
+Numa pasta vazia:
+
+```bash
+regente init --perguntar
+```
+
+Ele pergunta três nomes e configura tudo:
+
+```
+  Regente -- configuracao inicial
+  Enter aceita o valor entre colchetes.
+
+  Nome da organizacao [my-org]: silverguard
+  Nome do cliente [silverguard]: silverguard
+  Nome do workspace [main]: scamchecker
+
+criado regente.yaml
+criado policies.yaml -- o que o motor pode fazer, e o que nao pode
+criado tasks/ -- descreva trabalho em YAML aqui
+criado workspace silverguard / scamchecker
+voce e o dono: os-account:S-1-5-21-...
+a Mission Control tambem: dev-token:silverguard
+  Abrir a Mission Control agora? [s/N]: s
+```
+
+**Escolha os nomes agora, e não depois.** O identificador do workspace é
+derivado dos três — renomear no `regente.yaml` mais tarde faz o Regente
+enxergar um workspace **diferente**, vazio, e o histórico anterior fica órfão
+sem nenhum aviso.
+
+**Duas identidades, duas concessões.** O terminal autentica pela sua conta do
+sistema operacional; a Mission Control autentica por um token local. O `init`
+concede às duas — antes era preciso descobrir sozinho um segundo comando.
+
+Sem `--perguntar`, o comando não lê a entrada e não abre nada: ele usa os
+padrões, imprime quais foram, e retorna. É o que serve para script e CI:
+
+```bash
+regente init --organizacao silverguard --cliente silverguard --workspace scamchecker
+regente init --ui        # configura e já abre a tela
+```
+
+### 2b. O que ficou na pasta
+
+O Regente roda dentro de uma pasta que tem um `regente.yaml`. Use uma pasta
+própria — não a do código-fonte, para o trabalho não se misturar com o motor:
 
 ```bash
 mkdir meu-regente
 cd meu-regente
-regente init
+regente init --perguntar
 ```
 
-Isso cria três coisas:
+Ficam três coisas, além do banco em `.regente/`:
 
 | arquivo | o que é |
 |---|---|
-| `regente.yaml` | onde ficam os providers, os limites e o modo |
+| `regente.yaml` | quem são os providers, os limites e o modo |
 | `policies.yaml` | o que o motor pode fazer, e o que não pode |
 | `tasks/` | onde você descreve o trabalho, em YAML |
 
-O ambiente continua ativo depois do `cd` — é a janela do terminal que está
-ativada, não a pasta. Daqui em diante todos os comandos rodam **dentro de
-`meu-regente`**.
+Daqui em diante todos os comandos rodam **dentro dessa pasta**.
 
 ### 3. Ver se o motor sobe
 

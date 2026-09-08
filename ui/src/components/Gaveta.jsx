@@ -37,13 +37,27 @@ export default function Gaveta({
   const caixa = useRef(null);
   const anterior = useRef(null);
 
+  // `aoFechar` num ref, e nao na lista de dependencias.
+  //
+  // Quem chama passa `aoFechar={() => setEditando(null)}` -- uma funcao NOVA a
+  // cada render. Com ela na lista, o efeito abaixo se desmontava e remontava a
+  // cada releitura da pagina (de cinco em cinco segundos), e remontar significa
+  // levar o foco de volta para o primeiro campo. O sintoma era exatamente esse:
+  // a pessoa digitava e o foco sumia sozinho, e um `select` aberto se fechava.
+  //
+  // O ref mantem o efeito estavel e a funcao sempre atual.
+  const fechar = useRef(aoFechar);
+  fechar.current = aoFechar;
+
+  // 1. AO ABRIR: guarda de onde veio o foco, leva o foco para dentro, e trava a
+  //    rolagem da pagina. Depende SO de `aberta` -- e isto e o ponto.
   useEffect(() => {
     if (!aberta) return;
 
     anterior.current = document.activeElement;
-    // A página atrás não rola junto: duas barras de rolagem fazem a pessoa
-    // rolar a errada.
     const rolagem = document.body.style.overflow;
+    // A pagina atras nao rola junto: duas barras de rolagem fazem a pessoa
+    // rolar a errada.
     document.body.style.overflow = "hidden";
 
     const primeiro = caixa.current?.querySelector(
@@ -51,10 +65,23 @@ export default function Gaveta({
     );
     (primeiro || caixa.current)?.focus({ preventScroll: true });
 
+    return () => {
+      document.body.style.overflow = rolagem;
+      // Devolver o foco de onde ele veio: sem isso, fechar a gaveta joga quem
+      // navega por teclado de volta para o topo do documento.
+      anterior.current?.focus?.({ preventScroll: true });
+    };
+  }, [aberta]);
+
+  // 2. ENQUANTO ABERTA: Escape fecha, e o Tab nao escapa. O ouvinte e montado
+  //    uma vez e le `fechar.current`, entao ele nao se reinstala a cada render.
+  useEffect(() => {
+    if (!aberta) return;
+
     function tecla(e) {
       if (e.key === "Escape") {
         e.preventDefault();
-        aoFechar();
+        fechar.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -77,14 +104,8 @@ export default function Gaveta({
     }
 
     window.addEventListener("keydown", tecla, true);
-    return () => {
-      window.removeEventListener("keydown", tecla, true);
-      document.body.style.overflow = rolagem;
-      // Devolver o foco de onde ele veio: sem isso, fechar a gaveta joga quem
-      // navega por teclado de volta para o topo do documento.
-      anterior.current?.focus?.({ preventScroll: true });
-    };
-  }, [aberta, aoFechar]);
+    return () => window.removeEventListener("keydown", tecla, true);
+  }, [aberta]);
 
   if (!aberta) return null;
 
@@ -96,7 +117,7 @@ export default function Gaveta({
   // sem erro no console e sem nada que aponte a causa. Foi exatamente o que a
   // animacao de entrada da pagina fez com este painel no telefone.
   return createPortal(
-    <div className="gaveta-fundo" onMouseDown={aoFechar}>
+    <div className="gaveta-fundo" onMouseDown={() => fechar.current()}>
       <aside
         className={`gaveta${larga ? " larga" : ""}`}
         role="dialog"

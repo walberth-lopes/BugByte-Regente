@@ -271,3 +271,88 @@ def test_the_cli_never_prints_a_whole_environment():
             assert "environ" not in texto, f"linha {no.lineno}: {texto[:70]}"
             assert ".env" not in texto or "environment" in texto, \
                 f"linha {no.lineno}: {texto[:70]}"
+
+
+# ===========================================================================
+# `regente init`: o comando que precisa RETORNAR
+# ===========================================================================
+
+def test_init_never_blocks_waiting_for_an_answer(tmp_path):
+    """Sem `--perguntar`, o comando nao le a entrada e nao trava.
+
+    A versao anterior decidia isso olhando `sys.stdin.isatty()`, e essa base se
+    mostrou ruim: no Git Bash do Windows, `< /dev/null` responde que E terminal
+    e um cano responde que NAO e -- entao ora o comando ficava esperando uma
+    tecla que nunca vinha, ora descartava em silencio respostas enviadas.
+
+    O `timeout` do subprocesso e o teste: se ele estourar, o comando bloqueou.
+    """
+    rc, saida = _regente("init", cwd=tmp_path)
+    assert rc == 0, saida
+    assert "usando os nomes padrao" in saida, (
+        "o comando escolheu nomes por conta propria e nao contou quais")
+
+
+def test_init_never_leaves_a_server_running(tmp_path):
+    """`init` sozinho NAO abre a Mission Control.
+
+    `cmd_ui` sobe um servidor e nao retorna nunca. Abrir a tela por padrao
+    travou a suite inteira uma vez, num `regente init` de subprocesso servindo
+    HTTP -- sem erro e sem pista. Abrir passou a exigir `--ui`, ou uma resposta
+    em `--perguntar`.
+    """
+    rc, saida = _regente("init", cwd=tmp_path)
+    assert rc == 0, saida
+    assert "proximo: regente ui" in saida, (
+        "o comando deveria dizer o proximo passo em vez de tomar o terminal")
+
+
+def test_init_writes_the_names_it_was_given(tmp_path):
+    """Os tres nomes DERIVAM o id do workspace, e por isso importam.
+
+    Renomear depois cria outro workspace, vazio, sem aviso -- entao escolher no
+    `init` e o unico momento barato.
+    """
+    rc, saida = _regente("init", "--organizacao", "acme", "--cliente", "acme",
+                         "--workspace", "api", cwd=tmp_path)
+    assert rc == 0, saida
+    escrito = (tmp_path / "regente.yaml").read_text(encoding="utf-8")
+    assert "organization: acme" in escrito
+    assert "client: acme" in escrito
+    assert "workspace: api" in escrito
+
+
+def test_init_leaves_the_workspace_usable_by_both_identities(tmp_path):
+    """Uma pessoa que roda `init` nao deveria precisar de mais dois comandos.
+
+    O terminal autentica pela conta do sistema; a Mission Control autentica por
+    um token local nomeado pelo cliente. Conceder so a primeira era o que fazia
+    a tela abrir autenticada e sem poder fazer nada -- e obrigava a um segundo
+    comando que ninguem tinha como adivinhar.
+
+    As duas concessoes passam pelo `AccessService`, com policy e auditoria: o
+    que muda e deixarem de ser trabalho manual, e nao a barreira.
+    """
+    rc, saida = _regente("init", "--organizacao", "acme", "--cliente", "acme",
+                         "--workspace", "api", cwd=tmp_path)
+    assert rc == 0, saida
+    assert "voce e o dono" in saida
+    assert "dev-token:acme" in saida, (
+        "a identidade da tela ficou sem acesso; a Mission Control abriria "
+        "autenticada e impotente")
+
+    rc, listado = _regente("access", "listar", cwd=tmp_path)
+    assert rc == 0, listado
+    assert "os-account:" in listado and "dev-token:acme" in listado
+
+
+def test_init_twice_does_not_disturb_the_access_already_granted(tmp_path):
+    """Refazer o `init` nao pode tirar acesso de ninguem.
+
+    A porta do `bootstrap` fecha depois da primeira concessao, e o comando
+    precisa tratar essa recusa como "ja esta pronto", e nao como falha.
+    """
+    assert _regente("init", cwd=tmp_path)[0] == 0
+    rc, saida = _regente("init", "--force", cwd=tmp_path)
+    assert rc == 0, saida
+    assert "ja tem dono" in saida

@@ -80,12 +80,20 @@ export function Confirmar({ aberto, titulo, impacto, rotuloOk, aoConfirmar, aoCa
     if (aberto) ref.current?.focus();
   }, [aberto]);
 
+  // O mesmo cuidado da gaveta: `aoCancelar` e uma funcao nova a cada render de
+  // quem chama, e depender dela reinstalaria o ouvinte a cada releitura da
+  // pagina. Aqui isso nao roubava foco, mas o padrao vale para os dois -- e um
+  // efeito que se remonta sem motivo e o proximo lugar onde alguem poe algo que
+  // rouba.
+  const cancelar = useRef(aoCancelar);
+  cancelar.current = aoCancelar;
+
   useEffect(() => {
     if (!aberto) return;
-    const ao = (e) => e.key === "Escape" && aoCancelar();
+    const ao = (e) => e.key === "Escape" && cancelar.current();
     window.addEventListener("keydown", ao);
     return () => window.removeEventListener("keydown", ao);
-  }, [aberto, aoCancelar]);
+  }, [aberto]);
 
   if (!aberto) return null;
   // Tambem no `body`, e pelo mesmo motivo da gaveta: sobreposicao nao pode
