@@ -333,3 +333,19 @@ code.mono { color: var(--ink-dim); }
 .chip.warn { color: var(--warn, #e0af68); }
 .chip.bad  { color: var(--bad, #f7768e); }
 .chip.dim  { color: var(--dim, #7d8590); }
+
+/* ---- configuracao -------------------------------------------------------
+   O editor e uma caixa de JSON de proposito: os formatos ja tem validacao no
+   motor, com mensagens que dizem o que existe. Um formulario campo-a-campo
+   seria uma SEGUNDA definicao do formato, e as duas divergiriam -- a que
+   divergisse aceitaria o que o motor recusa, ou o contrario. */
+.cfg-box {
+  width: 100%; box-sizing: border-box; font-size: 12px; line-height: 1.5;
+  background: var(--panel2, #1d2431); color: inherit;
+  border: 1px solid var(--line, #384152); border-radius: 6px; padding: 10px;
+  resize: vertical;
+}
+.steps { margin: 0; padding-left: 18px; display: grid; gap: 8px; }
+.steps li { line-height: 1.7; }
+.steps .chip { margin-right: 8px; }
+.cfg-erro { margin-top: 8px; }

@@ -558,6 +558,89 @@ def cmd_engine(args) -> int:
         motor.close()
 
 
+def cmd_config(args) -> int:
+    """Le e escreve a configuracao do workspace -- o MESMO servico da tela.
+
+    Existe para a CLI continuar oficial: tudo o que a Mission Control configura
+    tem de ser configuravel daqui, e pelo mesmo caminho. Duas implementacoes da
+    mesma escrita divergem, e a que diverge e a que esquece uma barreira.
+    """
+    import json as _json
+
+    from .app.config import load_policies
+    from .core.policy import PolicyEngine
+    from .core.settings import OVERRIDABLE, describe, effective
+    from .engine.settings import SettingsService
+
+    cfg = _load_config(args)
+    motor = container.build(cfg)
+    try:
+        servico = SettingsService(
+            store=motor.store,
+            policy=PolicyEngine.from_config(load_policies(cfg.policies)),
+            organization=cfg.organization, client=cfg.client,
+            workspace_name=cfg.workspace,
+            environment=(cfg.projects[0].default_environment
+                         if cfg.projects else "staging"))
+        ws = motor.workspace.id
+
+        if args.acao == "mostrar":
+            overlay = servico.overlay(ws)
+            do_arquivo = _config_do_arquivo(cfg)
+            for chave in OVERRIDABLE:
+                campo = effective(chave, do_arquivo.get(chave), overlay)
+                print(f"{chave}")
+                print(f"  fonte  : {campo.source.value}"
+                      + ("  (CONFLITO com o arquivo)" if campo.conflicts else ""))
+                print(f"  {describe(campo, chave)}")
+                if args.verbose and campo.value is not None:
+                    for linha in _json.dumps(campo.value, indent=2,
+                                             ensure_ascii=False).splitlines():
+                        print(f"    {linha}")
+                print()
+            return EXIT_OK
+
+        who = motor.terminal_principal()
+        if args.acao == "remover":
+            saida = servico.clear(who, ws, args.chave)
+        else:                                                  # definir
+            origem = Path(args.de).read_text(encoding="utf-8") if args.de else args.valor
+            if not origem:
+                print("informe --valor '<json>' ou --de arquivo.json",
+                      file=sys.stderr)
+                return EXIT_INVALID_ARGUMENT
+            try:
+                valor = _json.loads(origem)
+            except ValueError as e:
+                print(f"INVALID_ARGUMENT: isto nao e JSON valido: {e}",
+                      file=sys.stderr)
+                return EXIT_INVALID_ARGUMENT
+            saida = servico.put(who, ws, args.chave, valor)
+
+        if not saida.accepted:
+            print(f"{saida.refusal}: {saida.reason}", file=sys.stderr)
+            return _exit_for(saida.refusal)
+        print(f"{args.chave}: {saida.detail}")
+        return EXIT_OK
+    finally:
+        motor.close()
+
+
+def _config_do_arquivo(cfg) -> dict:
+    """O que o ARQUIVO diz nas chaves sobreponiveis. Espelha o da API."""
+    provedores = {k: {"name": v.name, **dict(v.options)}
+                  for k, v in cfg.providers.items()}
+    tasks = cfg.providers.get("tasks")
+    return {
+        "providers": provedores,
+        "status_map": dict(tasks.options.get("status_map") or {}) if tasks else {},
+        "selection": [
+            {"name": r.name, "field": r.field_name, "match": r.match.value,
+             "value": r.value, "effect": r.effect.value, "delta": r.delta}
+            for r in cfg.selection.rules],
+    }
+
+
 def cmd_ui(args) -> int:
     """Sobe a Mission Control sobre o estado deste workspace.
 
@@ -651,9 +734,26 @@ def cmd_ui(args) -> int:
         environment=(cfg.projects[0].default_environment
                      if cfg.projects else "staging"))
 
+    from .engine.settings import SettingsService
+
+    settings = SettingsService(
+        store=store, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
+        organization=cfg.organization, client=cfg.client,
+        workspace_name=cfg.workspace,
+        environment=(cfg.projects[0].default_environment
+                     if cfg.projects else "staging"))
+
+    # A SONDA vem da composicao, e nao da API. Escolher qual usar exigiria a
+    # API saber o que e um Jira -- a recusa do marco 15 continua valendo, e o
+    # que muda e que agora alguem entrega a sonda pronta.
+    from .adapters.probe import probe_for as _probe
+    from .adapters.registry import needs_credential as _needs_credential
+
     httpd = serve(read, host=args.host, port=args.port, identity=identity,
                   decisions=decisions, access=access, credentials=credentials,
-                  operations=operations,
+                  operations=operations, settings=settings, config=cfg,
+                  probe_for=lambda provider: _probe(provider, cfg),
+                  needs_credential=_needs_credential,
                   session_token=identity.token,
                   read_only=args.read_only)
     where = f"http://{args.host}:{args.port}/"
@@ -989,6 +1089,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ciclos", type=int, default=None,
                    help="para depois de N ciclos (diagnostico)")
     p.set_defaults(fn=cmd_run)
+
+    p = sub.add_parser("config",
+                       help="configuracao do workspace: providers, status, prioridade")
+    p.add_argument("acao", choices=["mostrar", "definir", "remover"])
+    p.add_argument("chave", nargs="?", default="",
+                   help="providers | status_map | selection")
+    p.add_argument("--valor", default="", help="o JSON a gravar")
+    p.add_argument("--de", default="", help="arquivo com o JSON a gravar")
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="mostra tambem o valor efetivo de cada chave")
+    p.set_defaults(fn=cmd_config)
 
     p = sub.add_parser("engine", help="liga, pausa, retoma e para o processamento")
     p.add_argument("acao", choices=["estado", "iniciar", "pausar", "retomar",

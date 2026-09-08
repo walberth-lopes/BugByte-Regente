@@ -43,6 +43,13 @@ a cada chamada. O motor virou principal de servico com concessao propria --
 abrir excecao para o processo automatico seria devolver a segunda autoridade, e
 seria a mais facil de justificar.
 
+O marco de configuracao tirou o YAML do caminho de quem so quer usar. A tela
+passou a configurar provider, mapeamento de status e regras de prioridade,
+mostrar a prontidao real de cada provider, testar credencial contra o provedor,
+e prever a fila -- reavaliando com as regras de agora, e explicando cada
+posicao. O arquivo continua sendo a base, e a procedencia de cada valor fica
+visivel.
+
 O marco de operacao respondeu a pergunta que faltava: uma pessoa consegue ligar
 o Regente e deixa-lo trabalhando? Ate ele, o motor so avancava quando alguem
 digitava `regente tick`. Agora ha `regente run` continuo, estado de

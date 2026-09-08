@@ -85,6 +85,22 @@ async function post(path, body) {
   return { ok: r.ok, status: r.status, payload: payload || {} };
 }
 
+async function del(path) {
+  const r = await fetch(path, { method: "DELETE", headers: headers() });
+  let payload = null;
+  try { payload = await r.json(); } catch { /* corpo nao-JSON */ }
+  return { ok: r.ok, status: r.status, payload: payload || {} };
+}
+
+/** O que o SERVIDOR disse sobre uma recusa. Nunca uma frase inventada aqui.
+ *
+ * A tela nao reclassifica: ela mostra o motivo do motor. Uma segunda redacao
+ * aqui descreveria o mesmo estado de outro jeito, e as duas divergiriam. */
+function motivo(r, padrao) {
+  return (r.payload && r.payload.detail) || padrao ||
+         `a operacao foi recusada (${r.status})`;
+}
+
 const ws = () => state.workspace;
 
 /** O que o SERVIDOR disse que esta identidade pode aqui. Nunca uma deducao. */
@@ -292,20 +308,26 @@ async function setIntent(intent, botao) {
   const antes = botao.textContent;
   botao.disabled = true;
   botao.textContent = "…";
-  try {
-    await post(api("/operation/intent"), { intent });
-    await render();
-  } catch (e) {
+  // `post` NAO lanca -- devolve `{ok, status, payload}`. A versao anterior
+  // deste bloco usava try/catch, entao TODA recusa (404 por falta de
+  // capacidade, 403 por policy) reenderizava em silencio: a pessoa clicava,
+  // nada acontecia, e a tela nao dizia por que. Foi um defeito meu, do marco
+  // anterior, encontrado ao escrever a pagina de configuracao ao lado.
+  const r = await post(api("/operation/intent"), { intent });
+  if (!r.ok) {
     botao.disabled = false;
     botao.textContent = antes;
     const alvo = botao.closest(".op-panel");
     if (alvo) {
+      alvo.querySelectorAll(".recusa").forEach((n) => n.remove());
       const aviso = document.createElement("div");
-      aviso.className = "op-hint bad";
-      aviso.textContent = "recusado: " + e.message;
+      aviso.className = "op-hint bad recusa";
+      aviso.textContent = `${r.status} · ${motivo(r)}`;
       alvo.appendChild(aviso);
     }
+    return;
   }
+  await render();
 }
 
 // Delegacao: o painel e reescrito a cada leitura, e um listener por botao
@@ -316,6 +338,242 @@ document.addEventListener("click", (ev) => {
 });
 
 const pages = {};
+
+// ===========================================================================
+// CONFIGURACAO -- o que antes so existia no regente.yaml
+// ===========================================================================
+
+/** Rotulo humano de cada estado de conexao, e o que fazer com ele. */
+const CONEXAO = {
+  PRONTO: ["ok", "pronto", ""],
+  SEM_CREDENCIAL: ["warn", "sem credencial",
+    "registre uma credencial para este provider abaixo"],
+  REVOGADA: ["bad", "credencial revogada",
+    "a credencial foi revogada; registre outra"],
+  EXPIRADA: ["bad", "credencial expirada", "renove a credencial"],
+  NAO_CONFIGURADO: ["dim", "nao configurado",
+    "este provider nao esta declarado neste workspace"],
+};
+
+pages.config = async () => {
+  const [con, cfg, ops] = await Promise.all([
+    get(api("/connections")), get(api("/settings")), get(api("/operation")),
+  ]);
+
+  // ---- onboarding: o que falta, sem esconder bloqueio -------------------
+  const tasks = con.connections.find((c) => c.role === "tasks") || {};
+  const runner = con.connections.find((c) => c.role === "runner") || {};
+  const temMapa = cfg.fields.status_map.source !== "ausente";
+  const temRegra = cfg.fields.selection.source !== "ausente";
+
+  // Cada passo diz o que fazer, e um passo BLOQUEADO diz por que -- e melhor
+  // que um botao Iniciar que simplesmente nao funciona.
+  const passos = [
+    ["Conectar tasks", tasks.state === "PRONTO" ? "CONCLUIDO"
+      : tasks.state === "NAO_CONFIGURADO" ? "PENDENTE" : "ATENCAO",
+      tasks.state === "PRONTO" ? `${esc(tasks.adapter)} pronto`
+        : (CONEXAO[tasks.state] || [])[2] || "declare um provider de tasks"],
+    ["Mapear status", temMapa ? "CONCLUIDO" : "PENDENTE",
+      temMapa ? "definido" : "opcional: sem isto valem os nomes que o adapter ja conhece"],
+    ["Definir prioridade", temRegra ? "CONCLUIDO" : "PENDENTE",
+      temRegra ? "regras definidas" : "opcional: sem regra, vale a prioridade da origem"],
+    ["Conectar agente", runner.state === "PRONTO" ? "CONCLUIDO" : "BLOQUEADO",
+      runner.state === "PRONTO" ? `${esc(runner.adapter)} pronto`
+        : "nenhuma credencial de modelo esta configurada neste ambiente"],
+    ["Iniciar processamento",
+      ops.phase === "RUNNING" ? "CONCLUIDO"
+        : ops.phase === "DEGRADED" ? "ATENCAO" : "PENDENTE",
+      esc(ops.explain || "")],
+  ];
+
+  const marca = { CONCLUIDO: "ok", PENDENTE: "dim", BLOQUEADO: "bad",
+                  ATENCAO: "warn" };
+
+  const onboarding = `
+    <div class="panel">
+      <h2 style="margin-top:0">configure seu Regente</h2>
+      <ol class="steps">${passos.map(([nome, estado, nota]) => `
+        <li><span class="chip ${marca[estado]}">${estado}</span>
+          <strong>${esc(nome)}</strong>
+          <span class="dim">${nota}</span></li>`).join("")}
+      </ol>
+    </div>`;
+
+  // ---- conexoes: estado REAL, nunca "conectado" por ter configuracao ----
+  const conexoes = `
+    <h2>conexoes</h2>
+    <div class="panel"><table class="grid"><thead><tr>
+      <th>papel</th><th>adapter</th><th>estado</th><th>credencial</th><th></th>
+    </tr></thead><tbody>${con.connections.map((c) => {
+      const [cls, rotulo, dica] = CONEXAO[c.state] || ["dim", c.state, ""];
+      return `<tr>
+        <td class="key">${esc(c.role)}</td>
+        <td>${c.adapter ? `<code class="mono">${esc(c.adapter)}</code>`
+                        : `<span class="dim">—</span>`}</td>
+        <td><span class="chip ${cls}">${esc(rotulo)}</span>
+            ${dica ? `<br><span class="dim">${esc(dica)}</span>` : ""}</td>
+        <td class="dim">${c.needs_credential
+          ? `${c.live_credentials} viva(s) de ${c.credentials}`
+          : "nao precisa"}</td>
+        <td>${c.needs_credential && podeAqui("workspace.credential.list")
+          ? `<button class="choice testar-con" data-role="${esc(c.role)}"
+                     ${c.live_credentials ? "" : "disabled"}>testar</button>`
+          : ""}</td>
+      </tr>`;
+    }).join("")}</tbody></table>
+    <div id="teste-resultado"></div></div>`;
+
+  // ---- procedencia ------------------------------------------------------
+  const proc = (chave) => {
+    const f = cfg.fields[chave];
+    const cls = f.conflicts ? "bad" : f.source === "tela" ? "warn" : "dim";
+    return `<div class="op-hint ${f.conflicts ? "bad" : ""}">
+      <span class="chip ${cls}">${esc(f.source)}</span> ${esc(f.explain)}
+      ${f.overridden && podeAqui("workspace.settings.write")
+        ? `<button class="choice limpar-cfg" data-key="${chave}"
+                   style="margin-left:8px">devolver ao arquivo</button>` : ""}
+    </div>`;
+  };
+
+  const pode = podeAqui("workspace.settings.write");
+  const editor = (chave, titulo, ajuda, valor) => `
+    <h2>${titulo}</h2>
+    <div class="panel">
+      ${proc(chave)}
+      <p class="sub">${ajuda}</p>
+      <textarea id="cfg-${chave}" rows="10" class="mono cfg-box"
+        ${pode ? "" : "readonly"}>${esc(JSON.stringify(valor ?? (chave === "selection" ? [] : {}), null, 2))}</textarea>
+      ${pode ? `<div class="choices" style="margin-top:8px">
+        <button class="choice salvar-cfg" data-key="${chave}">salvar</button>
+      </div>` : `<p class="sub">voce nao tem <code>workspace.settings.write</code>
+        neste workspace.</p>`}
+    </div>`;
+
+  // ---- previa da fila ---------------------------------------------------
+  let previa = "";
+  try {
+    const q = await get(api("/queue"));
+    const linha = (t, fora) => `<tr>
+      <td class="key">${esc(t.key)}</td>
+      <td>${esc(t.title)}</td>
+      <td class="dim">${esc(t.external_status) || "—"}</td>
+      <td class="dim">${esc(t.internal_state)}</td>
+      <td><strong>${fora ? "—" : t.priority}</strong></td>
+      <td class="dim">${fora ? "fora por <em>" + esc(t.excluded_by) + "</em>"
+        : (t.why.map(esc).join("; ") || "prioridade da origem")}</td>
+    </tr>`;
+    previa = `
+      <h2>previa da fila</h2>
+      <div class="panel">
+        <p class="sub">com a configuracao atual, e nesta ordem, sobre as
+          ${q.discovered} task(s) ja descobertas. <strong>nada e executado
+          aqui</strong> — e leitura.</p>
+        ${q.queue.length || q.excluded.length ? `<table class="grid"><thead><tr>
+          <th>task</th><th>titulo</th><th>status externo</th><th>estado</th>
+          <th>prioridade</th><th>por que</th></tr></thead><tbody>
+          ${q.queue.map((t) => linha(t, false)).join("")}
+          ${q.excluded.map((t) => linha(t, true)).join("")}
+        </tbody></table>` : `<p class="empty">nenhuma task descoberta ainda —
+          o motor precisa rodar ao menos um ciclo para ler o board</p>`}
+      </div>`;
+  } catch (e) {
+    previa = `<h2>previa da fila</h2><div class="panel err">
+      nao foi possivel ler a fila: ${esc(e.message)}</div>`;
+  }
+
+  return onboarding + conexoes
+    + editor("providers", "providers", `um objeto por papel, com
+        <code>name</code> e as opcoes do adapter. exemplo:
+        <code>{"tasks": {"name": "jira", "site": "https://x.atlassian.net",
+        "jql": "project = ABC"}}</code>`, cfg.fields.providers.value)
+    + editor("status_map", "mapeamento de status", `o que os status do SEU
+        board significam. baldes: <code>available, analise, andamento, revisao,
+        validacao, done, ignorado</code>. um status que ficar de fora continua
+        <code>UNKNOWN</code> e a task nao e pega — de proposito.`,
+        cfg.fields.status_map.value)
+    + editor("selection", "elegibilidade e prioridade", `lista de regras.
+        <code>delta</code> negativo roda ANTES. <code>effect</code>:
+        <code>priority</code> (padrao), <code>require</code>,
+        <code>exclude</code>. campos: title, key, project, status, labels,
+        priority, assignee, type, components.`, cfg.fields.selection.value)
+    + previa;
+};
+
+/** Salva uma sobreposicao. A tela nao decide se pode -- ela pergunta. */
+async function salvarConfig(chave, botao) {
+  const caixa = document.getElementById("cfg-" + chave);
+  let valor;
+  try {
+    valor = JSON.parse(caixa.value);
+  } catch (e) {
+    return avisar(botao, "isto nao e JSON valido: " + e.message);
+  }
+  botao.disabled = true;
+  const r = await post(api("/settings/" + chave), { value: valor });
+  if (!r.ok) {
+    botao.disabled = false;
+    // A mensagem vem do MOTOR -- ela diz qual campo ou qual balde nao existe.
+    return avisar(botao, motivo(r));
+  }
+  await render();
+}
+
+function avisar(botao, texto) {
+  const alvo = botao.closest(".panel");
+  if (!alvo) return;
+  alvo.querySelectorAll(".cfg-erro").forEach((n) => n.remove());
+  const n = document.createElement("div");
+  n.className = "op-hint bad cfg-erro";
+  n.textContent = texto;
+  alvo.appendChild(n);
+}
+
+document.addEventListener("click", async (ev) => {
+  const salvar = ev.target.closest(".salvar-cfg");
+  if (salvar) return salvarConfig(salvar.dataset.key, salvar);
+
+  const limpar = ev.target.closest(".limpar-cfg");
+  if (limpar) {
+    limpar.disabled = true;
+    const r = await del(api("/settings/" + limpar.dataset.key));
+    if (!r.ok) { limpar.disabled = false; avisar(limpar, motivo(r)); return; }
+    await render();
+    return;
+  }
+
+  const testar = ev.target.closest(".testar-con");
+  if (testar) {
+    const alvo = document.getElementById("teste-resultado");
+    testar.disabled = true;
+    alvo.innerHTML = `<div class="op-hint">provando contra o provedor…</div>`;
+    // Quatro fatos separados, e nenhum deles o segredo. Reduzir a
+    // "erro de conexao" apagaria a diferenca entre "a credencial nao serve"
+    // e "nao deu para perguntar".
+    const r = await post(api("/credentials/x/test"), {
+      provider: testar.dataset.role,
+      use: USO_POR_PAPEL[testar.dataset.role] || "repo.read" });
+    if (!r.ok) {
+      alvo.innerHTML = `<div class="op-hint bad">${esc(motivo(r))}</div>`;
+    } else {
+      const d = r.payload;
+      alvo.innerHTML = `<div class="op-hint ${d.usable ? "" : "bad"}">
+        <strong>${d.usable ? "utilizavel" : "nao utilizavel"}</strong><br>
+        autorizado pelo Regente: ${d.authorized} ·
+        resposta do provedor: ${esc(d.reach)} ·
+        capacidade suportada: ${d.capability_supported}<br>
+        <span class="dim">${esc(d.detail)}</span></div>`;
+    }
+    testar.disabled = false;
+  }
+});
+
+//: Que uso provar para cada papel. Sem isto o teste perguntaria sempre a mesma
+//: coisa, e uma credencial de tasks seria reprovada por nao saber empurrar.
+const USO_POR_PAPEL = {
+  tasks: "task.read", repository: "repo.read", repository_write: "repo.pr",
+  cicd: "ci.read", runner: "agent.run",
+};
+
 
 pages.overview = async () => {
   const [o, tasks, op] = await Promise.all([
@@ -886,6 +1144,7 @@ const NAV = [
   ["runs", "runs", "#/runs"],
   ["deliveries", "entregas", "#/deliveries"],
   ["events", "eventos", "#/events"],
+  ["config", "configuracao", "#/config"],
   ["access", "acesso", "#/access"],
   ["credentials", "credenciais", "#/credentials"],
   ["health", "saude", "#/health"],

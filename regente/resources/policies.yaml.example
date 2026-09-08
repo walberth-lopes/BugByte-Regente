@@ -140,3 +140,13 @@ rules:
     effect: ALLOW
     match: {action: "workspace.engine.control"}
     reason: "quem esta de plantao precisa poder pausar sem matar processo"
+
+  # ---- configurar o workspace --------------------------------------------
+  # Apontar o motor: provider, mapeamento de status, regras de prioridade.
+  # Permite que a acao seja avaliada; nao configura nada. Separada de operar de
+  # proposito -- quem pausa o motor numa emergencia nao precisa, por tabela, do
+  # direito de apontar o Regente para outro board.
+  - name: human_configures_the_workspace
+    effect: ALLOW
+    match: {action: "workspace.settings.write"}
+    reason: "sem isto a tela nao configura nada e o YAML volta a ser obrigatorio"

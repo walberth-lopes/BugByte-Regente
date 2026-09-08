@@ -58,12 +58,18 @@ class Ability(str, Enum):
     #: o motor de um cliente -- e quem opera o motor nao ganha o de assinar
     #: decisoes em nome de alguem.
     ENGINE_CONTROL = "workspace.engine.control"
+    #: Apontar o motor: qual provider, quais status significam o que, quais
+    #: regras de prioridade. Separada de operar: quem liga e desliga o
+    #: processamento nao deveria, por tabela, poder apontar o motor para outro
+    #: board -- as duas coisas parecem vizinhas e tem consequencias diferentes.
+    SETTINGS_WRITE = "workspace.settings.write"
 
 
 #: O conjunto de quem administra acesso. Nomeado porque "administrador" e uma
 #: palavra que cada pessoa entende de um jeito, e porque um papel precisa ser
 #: uma ENTRADA para a policy, nunca um atalho que a substitua.
-ADMIN = frozenset({Ability.GRANT, Ability.REVOKE, Ability.LIST})
+ADMIN = frozenset({Ability.GRANT, Ability.REVOKE, Ability.LIST,
+                   Ability.SETTINGS_WRITE})
 
 #: Quem cuida das credenciais do workspace. Separado de `ADMIN` de proposito:
 #: administrar pessoas e administrar segredos sao trabalhos diferentes, e juntar

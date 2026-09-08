@@ -181,6 +181,20 @@ class Api:
     #: processo daria a uma pagina web o poder de criar processos na maquina de
     #: alguem, que e a autoridade paralela que os marcos 13 a 16 eliminaram.
     operations: "OperationService | None" = None
+    #: Configuracao do workspace: provider, mapeamento de status, prioridade.
+    #: Sem servico, a rota recusa em vez de fingir que nao existe.
+    settings: "SettingsService | None" = None
+    #: Como provar uma credencial contra o provedor. Vem da COMPOSICAO, e nao
+    #: daqui: escolher a sonda exigiria a API saber o que e um Jira, e o marco
+    #: 15 recusou a rota justamente por isso. Agora a composicao entrega, do
+    #: mesmo jeito que entrega os servicos.
+    probe_for: object | None = None
+    #: A configuracao efetiva, para a tela mostrar procedencia. So leitura.
+    config: object | None = None
+    #: `(nome_do_adapter) -> precisa de credencial?`. Vem da composicao: saber
+    #: que um provider de arquivos nao alcanca nada fora da maquina e
+    #: conhecimento de fornecedor, e a API nao pode te-lo.
+    needs_credential: object | None = None
     #: Sessao declarada somente-leitura pela composicao.
     #:
     #: NAO substitui nenhuma barreira: e uma recusa ADICIONAL, antes das do
@@ -220,6 +234,10 @@ class Api:
                     and parts[:2] == ["api", "workspaces"]
                     and parts[3:] == ["operation", "intent"]):
                 return self._operation_write(parts[2], body, who)
+            if (len(parts) == 5 and parts[:2] == ["api", "workspaces"]
+                    and parts[3] == "settings"):
+                return self._settings_write(method, parts[2], parts[4],
+                                            body, who)
             return _error(405, "read_only",
                           "esta API e somente leitura; autoridade de escrita "
                           "pertence ao motor e ao humano, nao a uma tela")
@@ -279,6 +297,15 @@ class Api:
         if head == "health" and not tail:
             view = self.read.health(workspace_id)
             return Response(200, view.as_dict()) if view else _not_found("workspace")
+
+        if head == "settings" and not tail:
+            return self._settings_read(workspace_id, who)
+
+        if head == "connections" and not tail:
+            return self._connections(workspace_id, who)
+
+        if head == "queue" and not tail:
+            return self._queue_preview(workspace_id, who)
 
         if head == "operation" and not tail:
             # "o servidor HTTP esta vivo" e "o motor esta processando" sao
@@ -400,6 +427,147 @@ class Api:
                           saida.refusal.lower(), saida.reason)
         return Response(200, {"intent": saida.intent.value,
                               "detail": saida.detail})
+
+    def _settings_write(self, method: str, workspace_id: str, key: str,
+                        body: dict | None, who: Principal) -> Response:
+        """`POST .../settings/{chave}` grava; `DELETE` devolve ao arquivo."""
+        if self.settings is None:
+            return _error(501, "sem_servico",
+                          "esta composicao nao configura workspaces")
+        if not who.may_read(workspace_id):
+            return _not_found("workspace")
+
+        if method == "DELETE":
+            saida = self.settings.clear(who, workspace_id, key)
+        else:
+            if not isinstance(body, dict) or "value" not in body:
+                return _error(400, "invalid_body",
+                              "corpo precisa ser {\"value\": ...}")
+            saida = self.settings.put(who, workspace_id, key, body["value"])
+
+        if not saida.accepted:
+            return _error(SETTINGS_STATUS.get(saida.refusal, 400),
+                          saida.refusal.lower(), saida.reason)
+        return Response(200, {"key": saida.key, "detail": saida.detail})
+
+    def _settings_read(self, workspace_id: str, who: Principal) -> Response:
+        """A configuracao efetiva, campo a campo, COM a procedencia.
+
+        A procedencia nao e enfeite: sem ela alguem edita o `regente.yaml`, nada
+        muda, e a conclusao razoavel e que o Regente esta quebrado.
+        """
+        from ..core.settings import OVERRIDABLE, Source, describe, effective
+
+        overlay = (self.settings.overlay(workspace_id)
+                   if self.settings is not None else None)
+        do_arquivo = _file_values(self.config)
+
+        campos = {}
+        for chave in OVERRIDABLE:
+            campo = effective(chave, do_arquivo.get(chave), overlay)
+            campos[chave] = {
+                "value": campo.value,
+                "source": campo.source.value,
+                "overridden": campo.overridden,
+                "conflicts": campo.conflicts,
+                "shadowed": campo.shadowed,
+                "explain": describe(campo, chave),
+            }
+        return Response(200, {
+            "fields": campos,
+            "editable": self.settings is not None,
+            "changed_by": overlay.changed_by if overlay else "",
+            "changed_at": overlay.changed_at if overlay else None})
+
+    def _connections(self, workspace_id: str, who: Principal) -> Response:
+        """Prontidao por provider, vinda dos servicos REAIS.
+
+        Nunca "conectado" porque existe configuracao. Um provider configurado e
+        sem credencial e um provider que nao funciona, e dizer o contrario faria
+        a pessoa procurar o problema no lugar errado.
+        """
+        from ..core.credential import Status, Use
+
+        do_arquivo = _file_values(self.config)
+        overlay = (self.settings.overlay(workspace_id)
+                   if self.settings is not None else None)
+        from ..core.settings import effective
+
+        configurados = effective("providers", do_arquivo.get("providers"),
+                                 overlay).value or {}
+
+        credenciais = []
+        if self.credentials is not None:
+            saida = self.credentials.listing(who, workspace_id)
+            if isinstance(saida, list):
+                credenciais = saida
+
+        agora = self.read.clock()
+        conexoes = []
+        for papel, pede_por_papel in PROVIDER_ROLES:
+            conf = configurados.get(papel)
+            nome = (conf.get("name") if isinstance(conf, dict)
+                    else getattr(conf, "name", None))
+            # O ADAPTER decide, e nao o papel: um provider de tasks em arquivo
+            # nao alcanca nada fora da maquina. Sem isto a tela cobraria uma
+            # credencial que nao existe, e mandaria a pessoa procurar problema
+            # onde nao ha.
+            precisa = (pede_por_papel and bool(nome)
+                       and (self.needs_credential(nome)
+                            if self.needs_credential is not None else True))
+            deste = [c for c in credenciais if c.provider == papel]
+            viva = [c for c in deste if c.status(agora) is Status.ACTIVE]
+            conexoes.append({
+                "role": papel,
+                "adapter": nome or "",
+                "needs_credential": precisa,
+                "state": _connection_state(nome, precisa, deste, viva, agora),
+                "credentials": len(deste),
+                "live_credentials": len(viva),
+                "capabilities": sorted({u.value for c in viva
+                                        for u in c.capabilities}),
+            })
+        return Response(200, {"connections": conexoes})
+
+    def _queue_preview(self, workspace_id: str, who: Principal) -> Response:
+        """O que o motor escolheria AGORA, e por que. Nao executa nada.
+
+        Le do estado ja descoberto; nao chama provider e nao despacha. Uma
+        previa que executasse trabalho para se mostrar seria a pior forma de
+        explicar uma configuracao.
+        """
+        # Reavalia com as regras de AGORA, e nao com o veredito do ultimo tick.
+        #
+        # Mostrar o veredito guardado faria editar uma regra e nao ver nada
+        # mudar -- que e a confusao exata que esta pagina existe para evitar. A
+        # base e a prioridade DA ORIGEM, para os deltas nao se comporem.
+        from ..core.selection import Selectable
+        from ..core.settings import effective
+
+        regras = _selection_of(self.config, self.settings, workspace_id)
+        linhas = []
+        for t in self.read.tasks(workspace_id, None):
+            v = regras.evaluate(
+                Selectable(title=t.title, key=t.key, project=t.project,
+                           status=t.external_status, labels=list(t.labels),
+                           priority=t.origin_priority),
+                base_priority=t.origin_priority)
+            linhas.append({
+                "key": t.key, "title": t.title,
+                "external_status": t.external_status,
+                "internal_state": t.state.name,
+                "eligible": v.eligible, "priority": v.priority,
+                "why": list(v.reasons), "excluded_by": v.excluded_by,
+                "applied": t.priority == v.priority and t.eligible == v.eligible,
+            })
+        # A MESMA ordem do scheduler: prioridade, depois chave. Uma previa que
+        # ordenasse diferente do motor seria pior que nenhuma.
+        elegiveis = sorted((l for l in linhas if l["eligible"]),
+                           key=lambda l: (l["priority"], l["key"]))
+        fora = sorted((l for l in linhas if not l["eligible"]),
+                      key=lambda l: l["key"])
+        return Response(200, {"queue": elegiveis, "excluded": fora,
+                              "discovered": len(linhas)})
 
     def _decide(self, parts: list[str], body: dict | None,
                 who: Principal) -> Response:
@@ -558,10 +726,32 @@ class Api:
                                         if isinstance(body, dict) else ""))
 
         if len(parts) == 6 and parts[5] == "test":
-            return _error(501, "no_probe",
-                          "o teste de conexao roda pelo terminal: "
-                          "`regente credentials testar`. A sonda pertence a "
-                          "composicao, e a API nao escolhe qual usar")
+            # A sonda continua sendo da COMPOSICAO -- a API nao escolhe qual
+            # usar, ela recebe uma pronta. Sem sonda entregue, a recusa do marco
+            # 15 continua valendo palavra por palavra.
+            if self.probe_for is None:
+                return _error(501, "no_probe",
+                              "esta composicao nao entregou sonda; o teste roda "
+                              "pelo terminal: `regente credentials testar`")
+            from ..core.credential import Use
+
+            provider = str((body or {}).get("provider") or "")
+            try:
+                uso = Use(str((body or {}).get("use") or ""))
+            except ValueError:
+                return _error(400, "invalid_argument",
+                              f"uso invalido; use um de "
+                              f"{', '.join(u.value for u in Use)}")
+            r = self.credentials.test_connection(
+                who, workspace_id, provider, uso, self.probe_for(provider))
+            # Quatro fatos separados, e nenhum deles o segredo. Reduzir a
+            # "erro de conexao" apagaria a diferenca entre "a credencial nao
+            # serve" e "nao deu para perguntar".
+            return Response(200, {
+                "authorized": r.authorized, "reach": r.reach.value,
+                "capability_supported": r.capability_supported,
+                "usable": r.usable, "detail": r.detail,
+                "refusal": r.refusal.value if r.refusal else ""})
 
         if len(parts) != 4 or not isinstance(body, dict):
             return _error(400, "invalid_body", "corpo precisa ser um objeto JSON")
@@ -677,6 +867,83 @@ class Api:
             data = data.replace(b"{{SESSION_TOKEN}}",
                                 self.session_token.encode("utf-8"))
         return Response(200, content_type=kind, body=data)
+
+
+#: Os papeis de provider que a tela mostra, e se cada um precisa de credencial.
+#: `workspace_provider` e local -- uma pasta ou um clone -- e por isso nao pede
+#: credencial nenhuma; dizer que pede faria a tela cobrar o que nao existe.
+PROVIDER_ROLES: tuple[tuple[str, bool], ...] = (
+    ("tasks", True), ("repository", True), ("repository_write", True),
+    ("cicd", True), ("runner", True), ("workspace_provider", False),
+)
+
+#: Como cada recusa do servico de configuracao vira HTTP.
+SETTINGS_STATUS: dict[str, int] = {
+    "UNAUTHENTICATED": 401, "NOT_FOUND": 404,
+    "POLICY_DENIED": 403, "INVALID": 400,
+}
+
+
+def _selection_of(config, settings, workspace_id):
+    """As regras EFETIVAS: arquivo, com o que a tela sobrepos.
+
+    A mesma composicao que `apply_overlay` faz para o motor. Se a previa lesse
+    so o arquivo, ela mostraria uma ordem e o tick produziria outra.
+    """
+    from ..core.selection import Selection, rules_from
+    from ..core.settings import effective
+
+    overlay = settings.overlay(workspace_id) if settings is not None else None
+    do_arquivo = _file_values(config).get("selection")
+    campo = effective("selection", do_arquivo, overlay)
+    if not campo.value:
+        return Selection()
+    try:
+        return rules_from(campo.value)
+    except ValueError:
+        # Regras invalidas nao derrubam a previa: ela mostra a ordem sem elas,
+        # e o editor acima ja recusou o que nao presta na hora de salvar.
+        return Selection()
+
+
+def _file_values(config) -> dict:
+    """O que o ARQUIVO diz, nas chaves sobreponiveis. Vazio sem config."""
+    if config is None:
+        return {}
+    provedores = {
+        k: {"name": v.name, **dict(v.options)}
+        for k, v in (getattr(config, "providers", {}) or {}).items()}
+    tasks = (getattr(config, "providers", {}) or {}).get("tasks")
+    return {
+        "providers": provedores,
+        "status_map": dict(tasks.options.get("status_map") or {}) if tasks else {},
+        "selection": [
+            {"name": r.name, "field": r.field_name, "match": r.match.value,
+             "value": r.value, "effect": r.effect.value, "delta": r.delta}
+            for r in getattr(getattr(config, "selection", None), "rules", ())],
+    }
+
+
+def _connection_state(nome, precisa, deste, viva, agora) -> str:
+    """O estado de um provider. Nunca "conectado" por existir configuracao."""
+    from ..core.credential import Status
+
+    if not nome:
+        return "NAO_CONFIGURADO"
+    if not precisa:
+        return "PRONTO"
+    if not deste:
+        return "SEM_CREDENCIAL"
+    if viva:
+        # PRONTO nao e "conectado": e "ha credencial viva com capacidade".
+        # Provar contra o provedor exige o teste de conexao, e ele e outra
+        # pergunta -- a tela mostra as duas separadas.
+        return "PRONTO"
+    if any(c.status(agora) is Status.REVOKED for c in deste):
+        return "REVOGADA"
+    if any(c.status(agora) is Status.EXPIRED for c in deste):
+        return "EXPIRADA"
+    return "SEM_CREDENCIAL"
 
 
 #: Como cada recusa do servico de operacao vira HTTP. Tabela de traducao, e
@@ -857,6 +1124,10 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
           access: AccessService | None = None,
           credentials: CredentialService | None = None,
           operations: "OperationService | None" = None,
+          settings: "SettingsService | None" = None,
+          probe_for: object | None = None,
+          config: object | None = None,
+          needs_credential: object | None = None,
           session_token: str = "",
           read_only: bool = False) -> ThreadingHTTPServer:
     """Sobe o servidor. Loopback por padrao, e isso continua sendo uma decisao.
@@ -869,6 +1140,8 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
     mimetypes.init()
     api = Api(read=read, decisions=decisions, access=access,
               credentials=credentials, operations=operations,
+              settings=settings, probe_for=probe_for, config=config,
+              needs_credential=needs_credential,
               read_only=read_only, session_token=session_token,
               identity_note=(identity.describe() if identity is not None
                              else "sem provedor de identidade"),

@@ -8,7 +8,7 @@ isso o Core Engine nunca precisa saber de onde elas vieram.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ..adapters import conventions, registry
 from ..core import ids
@@ -34,7 +34,7 @@ from ..ports.repository import RepositoryProvider
 from ..ports.tasks import TaskProvider
 from ..ports.agent import AgentRunner
 from ..ports.workspace import WorkspaceProvider
-from .config import Config, load_policies
+from .config import AdapterConf, Config, load_policies
 
 
 def _stable_id(prefixo: str, *partes: str) -> str:
@@ -273,10 +273,72 @@ class Engine:
         return head != base_sha
 
 
+def apply_overlay(cfg: Config, store) -> Config:
+    """A configuracao EFETIVA: arquivo, com o que a tela sobrepos.
+
+    Aplicada aqui e em nenhum outro lugar. Se cada superficie aplicasse a
+    sobreposicao por conta propria, a tela e o tick leriam configuracoes
+    diferentes -- e a que divergisse seria a que roda de madrugada.
+
+    Uma sobreposicao invalida e IGNORADA, com o arquivo valendo no lugar dela.
+    Ela ja foi validada quando gravada (`SettingsService.validate`), entao
+    chegar aqui quebrada significa que alguem editou o banco por fora -- e nesse
+    caso derrubar o motor seria transformar uma linha ruim numa parada total.
+    """
+    from ..core.settings import effective
+    from ..core.selection import rules_from
+    from ..ports.tasks import status_map_from
+
+    overlay = store.settings(_stable_id(ids.WORKSPACE, cfg.organization,
+                                        cfg.client, cfg.workspace))
+    if not overlay.values:
+        return cfg
+
+    mudancas: dict = {}
+
+    provedores = effective("providers", None, overlay)
+    if provedores.overridden and isinstance(provedores.value, dict):
+        try:
+            novos = {k: AdapterConf.de(v, f"providers.{k}")
+                     for k, v in provedores.value.items()}
+            # A sobreposicao ACRESCENTA e substitui por chave; nao apaga o que o
+            # arquivo declarou. Trocar o dicionario inteiro faria configurar um
+            # provider pela tela remover os outros em silencio.
+            mudancas["providers"] = {**cfg.providers, **novos}
+        except ValueError:
+            pass
+
+    mapa = effective("status_map", None, overlay)
+    if mapa.overridden and isinstance(mapa.value, dict):
+        try:
+            status_map_from(mapa.value)
+            base = mudancas.get("providers", cfg.providers)
+            tasks = base.get("tasks")
+            if tasks is not None:
+                mudancas["providers"] = {
+                    **base,
+                    "tasks": AdapterConf(
+                        name=tasks.name,
+                        options={**tasks.options, "status_map": mapa.value})}
+        except ValueError:
+            pass
+
+    regras = effective("selection", None, overlay)
+    if regras.overridden and isinstance(regras.value, list):
+        try:
+            mudancas["selection"] = rules_from(regras.value)
+        except ValueError:
+            pass
+
+    return replace(cfg, **mudancas) if mudancas else cfg
+
+
 def build(cfg: Config) -> Engine:
     cfg.root.mkdir(parents=True, exist_ok=True)
     store = SqliteStore(cfg.banco)
     store.migrate()
+    # O que a tela configurou vale a partir daqui -- inclusive para o tick.
+    cfg = apply_overlay(cfg, store)
 
     org_id = _stable_id(ids.ORG, cfg.organization)
     client_id = _stable_id(ids.CLIENT, cfg.organization, cfg.client)

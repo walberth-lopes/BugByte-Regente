@@ -17,6 +17,29 @@ from typing import Any, Callable
 
 from ..ports import Capability, Port
 
+#: Adapters que NAO alcancam nada fora desta maquina, e portanto nao precisam
+#: de credencial nenhuma.
+#:
+#: Declarado aqui porque saber isso e conhecimento de fornecedor, e fornecedor
+#: mora nesta camada. A tela pergunta; ela nao adivinha pelo nome do papel --
+#: cobrar credencial de um provider de arquivos e o mesmo erro de dizer
+#: "conectado" para quem so tem configuracao, invertido.
+LOCAL_ADAPTERS: frozenset[str] = frozenset({
+    "filesystem", "directory", "clone", "worktree", "git-local", "script",
+    "deterministic-agent", "console",
+})
+
+
+def needs_credential(adapter_name: str) -> bool:
+    """Este adapter precisa de credencial para funcionar?
+
+    Desconhecido responde SIM. Um adapter novo que alcance a rede e seja tratado
+    como local apareceria como pronto sem credencial -- e a pessoa so descobriria
+    no primeiro tick.
+    """
+    return bool(adapter_name) and adapter_name not in LOCAL_ADAPTERS
+
+
 Fabrica = Callable[[dict[str, Any]], Port]
 _REGISTRO: dict[tuple[Capability, str], Fabrica] = {}
 

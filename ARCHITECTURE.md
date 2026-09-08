@@ -784,6 +784,35 @@ que esquece do allowlist.
 a mesma checagem e nao sao a mesma pergunta -- e a segunda exigiria credencial
 de um comando de saude, que e o caminho mais curto para extrair material.
 
+### Configuracao: o arquivo e a base, a tela sobrepoe
+
+Uma pagina web nao reescreve um `regente.yaml` -- comentarios se perdem, edicoes
+simultaneas se atropelam, e um erro de escrita deixa o motor sem subir. Um
+arquivo de configuracao versionado tem dono, e nao e um processo HTTP.
+
+```
+regente.yaml  ->  base           banco  ->  sobreposicao
+                     efetiva = base + sobreposicao
+```
+
+**A procedencia e obrigatoria.** Duas fontes sem ela produzem o pior modo de
+falha possivel: alguem edita o arquivo, nada muda, e conclui que o Regente esta
+quebrado. Toda leitura diz, campo a campo, de onde o valor veio -- e o caso de
+conflito diz literalmente que editar o arquivo nao adianta enquanto a
+sobreposicao existir.
+
+**O que pode ser sobreposto e lista fechada.** Aceitar qualquer chave viraria um
+segundo formato de configuracao, sem validacao e sem revisao, e o primeiro uso
+seria sobrepor `policies` pela tela.
+
+**Toda escrita e validada com o codigo que o motor usa para LER.** Uma segunda
+validacao divergiria da leitura, e a que diverge aceita o que quebra depois --
+longe de quem escreveu.
+
+**Configurar nao e operar.** `workspace.settings.write` e capacidade propria:
+quem pausa o motor numa emergencia nao precisa, por tabela, do direito de
+aponta-lo para outro board.
+
 ### Intencao e execucao sao coisas diferentes
 
 O motor sempre soube dizer onde cada task esta. Nunca soube dizer se ELE esta

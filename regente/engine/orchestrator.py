@@ -513,10 +513,30 @@ class Orchestrator:
         before = task.data.get("situacao_externa")
         current_status = e.status.value
         task.title = e.title
-        task.priority = e.priority
+
+        # As regras do workspace sao reaplicadas AQUI, e nao so na descoberta.
+        #
+        # Ate o marco de configuracao esta linha era `task.priority = e.priority`
+        # -- a regra valia na criacao e era desfeita no tick seguinte. A ordem
+        # voltava sozinha para a da origem, sem nada nos eventos, e a unica
+        # pista era a prioridade nao bater com o motivo gravado ao lado dela.
+        #
+        # Reaplicar tambem e o que faz uma regra EDITADA pela tela valer sem
+        # redescobrir o board: o proximo tick reavalia o que ja existe.
+        veredito = self._selection_of(e)
+        task.priority = veredito.priority
         task.data.update({"situacao_externa": current_status,
                            "estado_externo": e.external_status,
-                           "rotulos": list(e.labels)})
+                           "rotulos": list(e.labels),
+                           "elegivel": veredito.eligible,
+                           "selecao": list(veredito.reasons),
+                           "excluida_por": veredito.excluded_by,
+
+                           # A prioridade que a ORIGEM deu, ao lado da efetiva. Sem ela,
+                           # reavaliar as regras sobre a prioridade ja ajustada comporia
+                           # os deltas a cada passagem, e a previa da tela mostraria uma
+                           # ordem que o motor nunca produziria.
+                           "prioridade_origem": e.priority})
         task.updated_at = self.clock()
         self.store.save_task(task)
         if before and before != current_status:
@@ -543,7 +563,8 @@ class Orchestrator:
                    # primeiro?".
                    "elegivel": veredito.eligible,
                    "selecao": list(veredito.reasons),
-                   "excluida_por": veredito.excluded_by})
+                   "excluida_por": veredito.excluded_by,
+                   "prioridade_origem": e.priority})
         try:
             self.store.save_task(t)
         except AlreadyExists:

@@ -433,6 +433,9 @@ não aparecem — e a tela diz qual comando resolve.
 
 ### 13. Escolher o que roda primeiro
 
+> Tudo desta seção e da próxima também é configurável **pela tela**, sem editar
+> arquivo — veja o passo 15. O YAML continua valendo como base versionável.
+
 Por padrão a ordem é a prioridade que veio do board, com a chave como desempate
 estável. Você pode somar regras suas no `regente.yaml`:
 
@@ -503,6 +506,84 @@ Depois registre a credencial (passo 10) e prove:
 regente credentials testar --provider tasks --uso task.read
 ```
 
+### 15. Configurar tudo pela tela
+
+A partir daqui você **não precisa mais editar YAML**. Abra a Mission Control e
+vá em **configuração**:
+
+```bash
+regente ui
+```
+
+A página começa com um checklist do que falta:
+
+```
+CONCLUIDO   Conectar tasks          filesystem pronto
+PENDENTE    Mapear status           opcional: sem isto valem os nomes que o adapter conhece
+PENDENTE    Definir prioridade      opcional: sem regra, vale a prioridade da origem
+BLOQUEADO   Conectar agente         nenhuma credencial de modelo está configurada
+PENDENTE    Iniciar processamento   ninguém pediu para rodar
+```
+
+`BLOQUEADO` aparece de propósito. É melhor do que um botão `Iniciar` que
+simplesmente não funciona.
+
+Abaixo, **conexões** mostra o estado real de cada provider — e nunca diz
+"conectado" só porque existe configuração:
+
+| estado | quer dizer |
+|---|---|
+| `pronto` | há credencial viva com capacidade (ou o adapter não precisa de uma) |
+| `sem credencial` | configurado, e não funciona |
+| `credencial revogada` / `expirada` | funcionava, e parou |
+| `não configurado` | não está declarado neste workspace |
+
+O botão `testar` prova a credencial contra o provedor de verdade e devolve
+**quatro fatos separados**: autorizado pelo Regente, resposta do provedor,
+capacidade suportada, utilizável. Não existe "erro de conexão" — "a credencial
+não serve" e "não deu para perguntar" mandam você fazer coisas diferentes.
+
+### 16. De onde veio cada configuração
+
+O `regente.yaml` continua sendo a base. A tela grava uma **sobreposição**, e
+cada bloco diz de onde o valor está vindo:
+
+```
+arquivo   'providers' vem do regente.yaml
+tela      'selection' foi definido pela tela
+tela      'status_map' foi definido PELA TELA e substitui o que está no
+          regente.yaml. Editar o arquivo não muda nada enquanto esta
+          sobreposição existir — remova-a para o arquivo voltar a valer
+```
+
+A terceira linha é a que importa. Sem ela você editaria o arquivo, nada
+aconteceria, e a conclusão razoável seria que o Regente está quebrado. O botão
+`devolver ao arquivo` remove a sobreposição daquele bloco.
+
+Tudo isso também funciona pelo terminal, pelo mesmo serviço:
+
+```bash
+regente config mostrar -v
+regente config definir selection --de minhas-regras.json
+regente config remover status_map
+```
+
+### 17. Prévia da fila
+
+Antes de ligar o motor, a página mostra o que ele escolheria — **reavaliando com
+as regras de agora**, não com o veredito do último ciclo:
+
+```
+TASK    TÍTULO                        STATUS   ESTADO   PRIORIDADE  POR QUE
+SG-1    [FAXINA SC] limpar o rodapé   TO DO    READY    0           faxina primeiro: -100
+SG-2    Automatizar chaves-pix        TO DO    READY    100         prioridade da origem
+FORA    SG-3                                                        fora por "nada de morto"
+```
+
+Nada é executado aqui — é leitura. E uma task excluída por regra **continua
+aparecendo**, com o nome da regra que a excluiu: trabalho que some sem
+explicação é como um board perde tarefas sem ninguém perceber.
+
 ### O que esperar
 
 O Regente diz não com frequência, e quase sempre a resposta certa é olhar o
@@ -532,6 +613,7 @@ Tudo também funciona como `python -m regente ...` e `uv run regente ...`.
 | `tick` | um ciclo: recupera, descobre, analisa, planeja, despacha, colhe |
 | `run` | ciclos contínuos: obedece a intenção gravada, sobrevive a falha, sai limpo |
 | `engine` | `estado`, `iniciar`, `pausar`, `retomar`, `parar` — grava intenção, não cria processo |
+| `config` | `mostrar`, `definir`, `remover` — a mesma configuração que a tela edita |
 | `status` | as quatro perguntas: o que roda, o que precisa de você, o que travou, o que terminou |
 | `plan` | o que o scheduler faria agora — sem executar |
 | `needs-me` | a fila de decisões humanas, com briefing |

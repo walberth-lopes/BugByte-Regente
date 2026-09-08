@@ -570,6 +570,11 @@ GLOBAL_BY_DESIGN = {
     # resto, porque a guarda so vale enquanto ninguem acrescenta em silencio.
     ("api.py", "DENIAL_STATUS"), ("api.py", "REFUSAL_STATUS"),
     ("api.py", "CREDENTIAL_STATUS"), ("api.py", "OPERATION_STATUS"),
+    ("api.py", "SETTINGS_STATUS"),
+    # Os papeis de provider que a tela mostra, e se cada um pede credencial.
+    # Vocabulario, nao estado: nada de tenant, sem escrita depois da
+    # importacao. Quem configura CADA workspace e a sobreposicao dele.
+    ("api.py", "PROVIDER_ROLES"),
     # A mesma ideia na outra superficie: como cada recusa do motor vira codigo
     # de saida do processo. Traducao, nao estado -- e a CLI TRADUZ o veredito
     # do motor em vez de classificar por conta propria, que seria uma segunda

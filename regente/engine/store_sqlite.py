@@ -32,6 +32,7 @@ from ..core.errors import AlreadyExists, CorruptedState
 from ..core.access import Ability, AccessGrant, PrincipalRef
 from ..core.credential import Credential, SecretRef, uses_from
 from ..core.operation import Heartbeat, Intent, Operation
+from ..core.settings import Overlay
 from ..core.model import (ActionRecord, Approval, ApprovalState, Dependency, Event,
                           ExternalRef, Lease, Option, Project, Repository, Run,
                           RunState, Task, Workspace, now)
@@ -174,6 +175,18 @@ CREATE INDEX IF NOT EXISTS ix_deliveries_task ON deliveries(workspace_id, task_k
 -- Revogar NAO apaga: preenche `revoked_at`. Uma concessao apagada leva junto a
 -- prova de que existiu, e "nunca teve acesso" e "teve e perdeu" sao fatos
 -- diferentes para quem investiga.
+-- A sobreposicao de configuracao escrita pela tela (ou pelo terminal, pelo
+-- mesmo servico). O `regente.yaml` continua sendo a base; isto vence naquilo
+-- que cobre, e a PROCEDENCIA e mostrada em toda leitura -- sem isso, alguem
+-- edita o arquivo, nada muda, e conclui que o Regente esta quebrado.
+CREATE TABLE IF NOT EXISTS workspace_settings (
+  workspace_id TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  changed_by TEXT NOT NULL DEFAULT '',
+  changed_at TEXT,
+  PRIMARY KEY (workspace_id, key));
+
 -- O que uma PESSOA pediu ao processamento. Sobrevive ao processo, e e por isso
 -- que parar e voltar funciona entre reinicios.
 CREATE TABLE IF NOT EXISTS operation (
@@ -246,7 +259,7 @@ CREATE TABLE IF NOT EXISTS counters (
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "12"
+SCHEMA_VERSION = "13"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -544,6 +557,26 @@ def _v11_to_v12(c: sqlite3.Connection) -> None:
                    detail TEXT NOT NULL DEFAULT '')""")
 
 
+def _v12_to_v13(c: sqlite3.Connection) -> None:
+    """A sobreposicao de configuracao que a tela edita. VAZIA.
+
+    Vazia de proposito: o `regente.yaml` continua sendo a base, e migrar um
+    banco nao pode mudar a configuracao de ninguem. A sobreposicao so passa a
+    existir quando alguem escreve por ela.
+
+    Uma linha por (workspace, chave): assim remover UMA sobreposicao -- e voltar
+    a valer o arquivo naquele ponto -- e apagar uma linha, e nao reescrever um
+    documento inteiro correndo o risco de levar junto o que ninguem pediu.
+    """
+    c.execute("""CREATE TABLE IF NOT EXISTS workspace_settings (
+                   workspace_id TEXT NOT NULL,
+                   key TEXT NOT NULL,
+                   value TEXT NOT NULL,
+                   changed_by TEXT NOT NULL DEFAULT '',
+                   changed_at TEXT,
+                   PRIMARY KEY (workspace_id, key))""")
+
+
 MIGRATIONS: dict[str, tuple[str, Any]] = {
     "1": ("2", _v1_to_v2),
     "2": ("3", _v2_to_v3),
@@ -556,6 +589,7 @@ MIGRATIONS: dict[str, tuple[str, Any]] = {
     "9": ("10", _v9_to_v10),
     "10": ("11", _v10_to_v11),
     "11": ("12", _v11_to_v12),
+    "12": ("13", _v12_to_v13),
 }
 
 
@@ -930,6 +964,42 @@ class SqliteStore(Store):
             "SELECT * FROM credentials WHERE workspace_id=? AND id=?",
             (workspace_id, credential_id)).fetchone()
         return self._credential_row(r) if r else None
+
+    # ---- sobreposicao de configuracao -----------------------------------
+
+    def settings(self, workspace_id: str) -> Overlay:
+        """A sobreposicao deste workspace. Ausente e um dicionario vazio."""
+        linhas = self._con.execute(
+            "SELECT * FROM workspace_settings WHERE workspace_id=?",
+            (workspace_id,)).fetchall()
+        if not linhas:
+            return Overlay(workspace_id=workspace_id)
+        ultima = max(linhas, key=lambda r: r["changed_at"] or "")
+        return Overlay(
+            workspace_id=workspace_id,
+            values={r["key"]: json.loads(r["value"]) for r in linhas},
+            changed_by=ultima["changed_by"] or "",
+            changed_at=_dt(ultima["changed_at"]))
+
+    def save_setting(self, workspace_id: str, key: str, value: Any,
+                     changed_by: str, when: datetime | None = None) -> None:
+        self._con.execute(
+            """INSERT INTO workspace_settings
+                 (workspace_id, key, value, changed_by, changed_at)
+               VALUES (?,?,?,?,?)
+               ON CONFLICT(workspace_id, key) DO UPDATE SET
+                 value=excluded.value, changed_by=excluded.changed_by,
+                 changed_at=excluded.changed_at""",
+            (workspace_id, key, _j(value), changed_by, _iso(when or now())))
+        self._con.commit()
+
+    def clear_setting(self, workspace_id: str, key: str) -> bool:
+        """Remove UMA sobreposicao. O arquivo volta a valer naquele ponto."""
+        cur = self._con.execute(
+            "DELETE FROM workspace_settings WHERE workspace_id=? AND key=?",
+            (workspace_id, key))
+        self._con.commit()
+        return cur.rowcount > 0
 
     # ---- operacao: o que pediram, e quem esta trabalhando ---------------
 

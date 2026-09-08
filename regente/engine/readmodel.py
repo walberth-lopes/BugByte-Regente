@@ -214,6 +214,21 @@ class TaskCard(View):
     updated_at: datetime | None
     needs_human: bool
     blocked: bool
+    #: A avaliacao das regras do workspace, com o MOTIVO.
+    #:
+    #: Uma ordem que ninguem consegue explicar e uma ordem em que ninguem
+    #: confia, e a primeira pergunta de quem ve o board reordenado e "por que
+    #: essa primeiro?". Sem estes tres campos a previa mostrava a ordem certa e
+    #: nao dizia nada sobre ela.
+    eligible: bool = True
+    why: tuple[str, ...] = ()
+    excluded_by: str = ""
+    external_status: str = ""
+    #: A prioridade que a ORIGEM deu, antes das regras do workspace. Guardada
+    #: para a previa poder reavaliar com as regras de AGORA sem compor deltas.
+    origin_priority: int = 100
+    labels: tuple[str, ...] = ()
+    project: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,7 +565,15 @@ class ReadModel:
             repository=str(task.data.get("repository") or ""),
             created_at=task.created_at, updated_at=task.updated_at,
             needs_human=task.state is TaskState.WAITING_HUMAN,
-            blocked=task.state is TaskState.BLOCKED)
+            blocked=task.state is TaskState.BLOCKED,
+            eligible=task.data.get("elegivel") is not False,
+            why=tuple(task.data.get("selecao") or ()),
+            excluded_by=str(task.data.get("excluida_por") or ""),
+            external_status=str(task.data.get("estado_externo") or ""),
+            origin_priority=int(task.data.get("prioridade_origem",
+                                              task.priority)),
+            labels=tuple(task.data.get("rotulos") or ()),
+            project=str(task.project_id or ""))
 
     def _state_of(self, task: Task) -> StateView:
         """Estado com dono e proximo passo, derivados da maquina de estados.

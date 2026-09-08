@@ -17,6 +17,149 @@ them good at proving guards and worthless at proving integration.
 
 ---
 
+## Milestone Configuracao — a tela vira o ponto de configuracao
+
+O marco anterior tirou o `regente tick` das maos da pessoa. Sobrou o atrito
+maior: **ainda era preciso editar `regente.yaml` e usar o terminal** para
+conectar um provider e registrar uma credencial.
+
+### A decisao, e as duas saidas que foram recusadas
+
+**(a) A tela reescreve o `regente.yaml`.** Um processo HTTP editando um arquivo
+que a pessoa tambem edita: comentarios se perdem, edicoes simultaneas se
+atropelam, e um erro de escrita deixa o motor sem subir. Um arquivo de
+configuracao versionado tem dono, e nao e uma pagina web.
+
+**(b) Tudo migra para o banco.** Quebra todo workspace existente e troca uma
+configuracao legivel e versionavel por linhas opacas.
+
+**(c) O banco guarda o que a TELA edita; o arquivo continua sendo a base.**
+
+```
+regente.yaml  ->  base, versionavel, dono humano
+banco         ->  sobreposicao (tela E terminal, pelo mesmo servico)
+efetiva       ->  base + sobreposicao, com a PROCEDENCIA visivel
+```
+
+**A procedencia nao e enfeite.** Sem ela alguem edita o arquivo, nada muda, e a
+conclusao razoavel e "o Regente esta quebrado". A frase do caso perigoso e
+literal:
+
+> `status_map` foi definido PELA TELA e substitui o que esta no regente.yaml.
+> Editar o arquivo nao muda nada enquanto esta sobreposicao existir -- remova-a
+> para o arquivo voltar a valer.
+
+E o que pode ser sobreposto e **lista fechada** (`providers`, `status_map`,
+`selection`). Aceitar qualquer chave viraria um segundo formato de
+configuracao sem validacao, e o primeiro uso seria sobrepor `policies` pela
+tela -- exatamente a autoridade que a tela nao tem.
+
+### Configurar nao e operar
+
+```
+workspace.settings.write      capacidade nova, propria
+```
+
+Quem pausa o motor numa emergencia nao precisa, por tabela, do direito de
+apontar o Regente para outro board. As duas coisas parecem vizinhas e tem
+consequencias diferentes.
+
+### Prontidao vem dos servicos, nunca da configuracao
+
+| estado | quer dizer |
+|---|---|
+| `PRONTO` | ha credencial viva com capacidade, **ou** o adapter nao precisa de uma |
+| `SEM_CREDENCIAL` | configurado, e nao funciona |
+| `REVOGADA` / `EXPIRADA` | funcionava, e parou |
+| `NAO_CONFIGURADO` | nao esta declarado neste workspace |
+
+Nunca "conectado" por existir configuracao. E o erro invertido tambem foi
+fechado: **quem sabe se um adapter precisa de credencial e a camada de
+adapters**, nao o papel -- um provider de tasks em arquivo nao alcanca nada
+fora da maquina, e cobrar credencial dele mandaria a pessoa procurar problema
+onde nao ha.
+
+### A previa reavalia com as regras de AGORA
+
+Mostrar o veredito guardado faria editar uma regra e nao ver nada mudar -- a
+confusao exata que a pagina existe para evitar. A previa aplica a `Selection`
+efetiva sobre a **prioridade da origem**, e diz em `applied` se o motor ja
+concorda. Nada e executado: e leitura.
+
+### Defeitos encontrados
+
+| # | Defeito | Como apareceu |
+|---|---|---|
+| 1 | **`_refresh` desfazia a regra a cada tick.** A prioridade voltava para a da origem, sem nada nos eventos; a unica pista era o motivo gravado ao lado nao bater com o numero. | configurando uma regra pela tela e rodando dois ciclos |
+| 2 | **`setIntent` engolia recusas.** `post()` nao lanca, e o `try/catch` do marco anterior nunca disparava: clicar em Iniciar sem capacidade nao dizia nada. Defeito meu, do marco anterior. | escrevendo a pagina ao lado |
+| 3 | **`cmd_config` lia `args.verbose` que o parser nao definia.** Quinta ocorrencia da classe -- e a primeira que o guard escrito no marco 6 pegou **antes de sair**. | o proprio teste de fiacao |
+| 4 | **A prontidao cobrava credencial de adapter local.** `tasks: filesystem` aparecia como `SEM_CREDENCIAL`. | lendo `/connections` de verdade |
+
+### Exercitado de verdade
+
+API real, navegador real, num workspace criado por `regente init`:
+
+```
+POST /settings/providers   sem capacidade  -> 404 NOT_FOUND
+(concedido `owner`)
+POST /settings/providers   {"tasks":{"name":"jira",...}}  -> 200
+POST /settings/status_map  balde inventado -> 400 "nao e um estado que o motor
+                                                   entenda. Use um de: ..."
+POST /settings/selection   campo inexistente -> 400 "regra fala do campo
+                                'sprint', que nao existe. Campos disponiveis: ..."
+GET  /connections          tasks jira -> SEM_CREDENCIAL
+GET  /settings             providers: fonte=tela, conflito=True,
+                                      sombreado=filesystem
+GET  /queue                SG-1 prio=0 (faxina primeiro: -100)
+                           SG-2 prio=100 (prioridade da origem)
+                           FORA SG-3 (nada de morto)
+```
+
+No navegador, a pagina inteira renderizou: onboarding com `BLOQUEADO` no
+agente, conexoes, os tres editores com procedencia, e a previa. Editar a regra
+na caixa e clicar em salvar mudou a fila.
+
+E a CLI le o que a tela escreveu, pelo mesmo servico: `regente config mostrar -v`.
+
+### Sweep de mutacao
+
+16 mutantes. **10 capturados na primeira rodada, 6 escaparam -- e nenhum dos
+seis era ruido.** Todos os seis eram coisas que eu havia provado A MAO, pelo
+navegador e pelo HTTP real, e nao converti em teste:
+
+```
+10. a sobreposicao nao chega ao motor      (o teste chamava apply_overlay direto)
+12. a rota deixa de checar escopo          (nenhum teste tocava a rota)
+13. a previa usa o veredito velho          (nenhum teste tocava /queue)
+14. prontidao vira PRONTO por configuracao (nenhum teste tocava /connections)
+15. a regra e desfeita a cada refresh      (corrigido, e nao testado)
+16. a prioridade de origem some            (idem)
+```
+
+Prova manual nao protege ninguem do proximo commit.
+
+Sete testes escritos, e remutados: **15/16**. A decima sexta ainda escapava, e
+o motivo era o meu teste: eu criava a task com `priority` e `prioridade_origem`
+IGUAIS, e nesse caso ler uma ou a outra da no mesmo. Reescrito com as duas
+diferentes -- uma task ja ajustada num ciclo anterior -- ficou vermelho.
+
+**Resultado final: 16/16.**
+
+### Limitacoes
+
+**O editor e uma caixa de JSON, e nao um formulario campo-a-campo.** Os
+formatos ja tem validacao no motor, com mensagens que listam o que existe; um
+formulario seria uma SEGUNDA definicao do formato, e a que divergisse aceitaria
+o que o motor recusa. E JSON pede alguma familiaridade -- e a parte do fluxo que
+menos serve a quem nunca viu um.
+
+**Listar os status que o board REALMENTE tem exige credencial.** Sem ela a tela
+mostra os baldes e o que ja esta mapeado, e nao os nomes vindos do Jira.
+
+**Os dois bloqueios externos continuam** e nao foram contornados.
+
+---
+
 ## Milestone Operacao — o motor continua sozinho, e alguem consegue liga-lo
 
 Os marcos anteriores provaram que o motor **pode** agir com autoridade. Este
