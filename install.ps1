@@ -1,0 +1,98 @@
+# Instalador do Regente para Windows.
+#
+#   irm https://raw.githubusercontent.com/walberth-lopes/BugByte-Regente/main/install.ps1 | iex
+#
+# O gemeo do `install.sh`, e o raciocinio e o mesmo: criar um ambiente virtual e
+# ativa-lo e um ritual de quem desenvolve em Python. Quem quer USAR a ferramenta
+# espera o que o `gcloud` faz -- baixa, instala, e o comando existe em qualquer
+# terminal novo.
+#
+# `uv tool install` cria um ambiente isolado para a ferramenta e poe um atalho
+# num diretorio do PATH. Sem Python na maquina, o uv baixa um: a unica
+# dependencia real deste script e ele mesmo.
+
+$ErrorActionPreference = 'Stop'
+
+$repo = if ($env:REGENTE_REPO) { $env:REGENTE_REPO } else { 'https://github.com/walberth-lopes/BugByte-Regente' }
+$ref  = if ($env:REGENTE_REF)  { $env:REGENTE_REF }  else { 'main' }
+# `REGENTE_FROM` permite instalar do PyPI (`regente`), de uma pasta local, ou de
+# outro repositorio -- sem editar este arquivo.
+$from = if ($env:REGENTE_FROM) { $env:REGENTE_FROM } else { "git+$repo@$ref" }
+
+function Diga($t) { Write-Host $t }
+function Morra($t) { Write-Host ""; Write-Host "Erro: $t" -ForegroundColor Red; exit 1 }
+
+Diga ""
+Diga "  Regente - instalacao"
+Diga "  --------------------"
+Diga ""
+
+# ---------------------------------------------------------------- 1. o uv
+if (Get-Command uv -ErrorAction SilentlyContinue) {
+    Diga "  [1/3] uv ja instalado ($(uv --version))"
+} else {
+    Diga "  [1/3] Instalando o uv (o gerenciador que isola a ferramenta)..."
+    try {
+        Invoke-RestMethod https://astral.sh/uv/install.ps1 | Invoke-Expression
+    } catch {
+        Morra "nao consegui instalar o uv. Instale-o manualmente:
+       irm https://astral.sh/uv/install.ps1 | iex"
+    }
+    # O instalador do uv poe o binario aqui, e o PATH desta sessao ainda nao
+    # sabe disso.
+    foreach ($d in @("$env:USERPROFILE\.local\bin", "$env:USERPROFILE\.cargo\bin")) {
+        if (Test-Path (Join-Path $d 'uv.exe')) { $env:PATH = "$d;$env:PATH" }
+    }
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+        Morra "o uv foi instalado e nao esta no PATH desta sessao.
+       Abra um terminal novo e rode este script de novo."
+    }
+}
+
+# ------------------------------------------------------------ 2. o Regente
+Diga "  [2/3] Instalando o Regente a partir de $from..."
+# `--force` reinstala por cima de uma versao anterior sem perguntar: quem roda o
+# instalador de novo esta pedindo a versao nova.
+#
+# Um detalhe que ja mordeu de verdade neste projeto: no Windows, um `regente.exe`
+# EM EXECUCAO nao pode ser sobrescrito -- a instalacao falha com "Access is
+# denied". Por isso o aviso vem antes, e nao depois do erro.
+$rodando = Get-Process -Name 'regente' -ErrorAction SilentlyContinue
+if ($rodando) {
+    Morra "ha um Regente em execucao (pid $($rodando.Id -join ', ')).
+       O Windows nao deixa substituir um executavel aberto.
+       Feche o `regente ui` ou o `regente run` e rode este script de novo."
+}
+uv tool install --force $from
+if ($LASTEXITCODE -ne 0) { Morra "a instalacao falhou. A saida do uv acima diz o motivo." }
+
+# --------------------------------------------------------------- 3. o PATH
+# A etapa que quase todo instalador esquece, e a que produz o
+# "'regente' is not recognized" na cara de quem seguiu tudo certo.
+Diga "  [3/3] Colocando o Regente no PATH..."
+uv tool update-shell 2>&1 | Out-Null
+
+$bin = try { uv tool dir --bin 2>$null } catch { "$env:USERPROFILE\.local\bin" }
+if ($bin) { $env:PATH = "$bin;$env:PATH" }
+
+Diga ""
+if (Get-Command regente -ErrorAction SilentlyContinue) {
+    Diga "  Pronto. $(regente --version)"
+} else {
+    Diga "  Pronto - o Regente foi instalado em $bin."
+}
+Diga ""
+Diga "  IMPORTANTE: um terminal que ja estava aberto nao conhece o PATH novo."
+Diga "  Abra um terminal NOVO (PowerShell ou Prompt) e confira:"
+Diga ""
+Diga "      regente --version"
+Diga ""
+Diga "  Depois, numa pasta vazia:"
+Diga ""
+Diga "      regente init"
+Diga "      regente access inicial"
+Diga "      regente ui"
+Diga ""
+Diga "  Para atualizar depois:   uv tool upgrade regente"
+Diga "  Para desinstalar:        uv tool uninstall regente"
+Diga ""

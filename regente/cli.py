@@ -974,6 +974,20 @@ def cmd_rules(args) -> int:
 
 # ---- entrada -------------------------------------------------------------
 
+def _versao_instalada() -> str:
+    """A versao deste pacote, perguntada a quem o instalou.
+
+    `desenvolvimento` quando o pacote nao esta instalado -- rodar direto do
+    repositorio e legitimo, e dizer isso e mais util que inventar um numero.
+    """
+    from importlib import metadata
+
+    try:
+        return metadata.version("regente")
+    except metadata.PackageNotFoundError:
+        return "desenvolvimento (rodando do repositorio)"
+
+
 def build_parser() -> argparse.ArgumentParser:
     """O parser inteiro, montado e devolvido sem rodar nada.
 
@@ -986,6 +1000,14 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="regente",
                                  description="Sistema operacional para agentes de engenharia.")
     ap.add_argument("-c", "--config", default=DEFAULT_CONFIG_FILE)
+    # A versao vem do PACOTE INSTALADO, e nao de uma constante escrita aqui.
+    #
+    # Uma constante e uma segunda fonte: ela envelhece a cada `version =` no
+    # pyproject que ninguem lembra de copiar, e o que ela informa e sempre a
+    # versao do codigo-fonte, e nunca a do que a pessoa de fato instalou. Quem
+    # sobe um bug quer saber qual build esta na maquina.
+    ap.add_argument("--version", action="version",
+                    version=f"regente {_versao_instalada()}")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("init", help="cria a configuracao inicial")

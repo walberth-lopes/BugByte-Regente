@@ -6,23 +6,50 @@ build-backend = "hatchling.build"
 name = "regente"
 version = "0.1.0"
 description = "Sistema operacional para agentes de engenharia de software."
+readme = "README.md"
 requires-python = ">=3.13"
-classifiers = ["Private :: Do Not Upload"]
+classifiers = [
+    # `Private :: Do Not Upload` e uma trava deliberada: nenhum classificador
+    # comecado por `Private ::` existe no PyPI, e o servidor recusa o upload.
+    # Ela sai no dia em que houver uma decisao de publicar, e nao antes.
+    "Private :: Do Not Upload",
+    "Programming Language :: Python :: 3.13",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Build Tools",
+]
+# UMA dependencia, e ela e um leitor de YAML.
+#
+# Isto nao e minimalismo por esporte: o Regente e instalado como FERRAMENTA, num
+# ambiente isolado, na maquina de quem so quer usa-lo. Cada dependencia a mais e
+# um download a mais, uma superficie a mais, e uma chance a mais de o
+# `uv tool install` falhar por um motivo que nao tem nada a ver com o produto.
+#
+# A Mission Control NAO precisa de framework web: ela e servida pelo
+# `http.server` da biblioteca padrao, e a tela ja vai construida dentro do
+# pacote. Houve aqui um extra `ui = [fastapi, uvicorn]` e um `llm = [anthropic]`
+# que NENHUM modulo importava -- dependencia declarada e nao usada e uma mentira
+# no pacote, e essa em particular ensinava que a tela precisa de um servidor de
+# aplicacao para subir.
 dependencies = [
     "PyYAML>=6.0.2",
 ]
 
 [project.optional-dependencies]
-# O motor nao depende de UI nem de LLM para rodar um tick. Extras carregam so
-# quem precisa: o Core Engine tem de subir num ambiente sem FastAPI e sem SDK.
-ui = ["fastapi>=0.115", "uvicorn>=0.30"]
-llm = ["anthropic>=0.40"]
 dev = ["pytest>=8.3"]
+
+[project.urls]
+Repositorio = "https://github.com/walberth-lopes/BugByte-Regente"
 
 [project.scripts]
 regente = "regente.cli:main"
 
 [tool.hatch.build.targets.wheel]
+# `regente/` inteiro, e isso inclui `app/ui/` -- a Mission Control ja construida.
+#
+# O build da tela vai VERSIONADO no repositorio de proposito: construir na
+# instalacao faria `uv tool install regente` exigir Node na maquina de quem so
+# quer abrir a interface.
 packages = ["regente"]
 
 [tool.pytest.ini_options]

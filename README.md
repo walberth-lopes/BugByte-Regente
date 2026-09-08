@@ -62,6 +62,69 @@ querer.
 
 ## Instalar
 
+Um comando. Você não precisa saber Python, nem criar ambiente virtual, nem
+ativar nada.
+
+**Linux e macOS**
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/walberth-lopes/BugByte-Regente/main/install.sh | sh
+```
+
+**Windows** (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/walberth-lopes/BugByte-Regente/main/install.ps1 | iex
+```
+
+Depois **abra um terminal novo** e confira:
+
+```bash
+regente --version
+```
+
+> Um terminal que já estava aberto quando você instalou não conhece o PATH novo.
+> Isso não é um problema do Regente — é como o PATH funciona em todos os
+> sistemas. Abrir uma janela nova resolve.
+
+### O que o instalador faz
+
+1. Instala o [uv](https://docs.astral.sh/uv/) se ele ainda não existir. O uv é
+   um binário único, e é ele que baixa um Python caso a máquina não tenha
+   nenhum — por isso o Regente não pede que você instale Python antes.
+2. Roda `uv tool install`, que cria um ambiente **isolado** só para o Regente.
+   As dependências dele não se misturam com nada seu, e nada seu quebra o dele.
+3. Coloca o atalho `regente` num diretório do PATH, para o comando existir em
+   qualquer terminal — como o `git` ou o `gcloud`.
+
+Nada é instalado no seu Python do sistema, e nada precisa de administrador.
+
+### Atualizar e desinstalar
+
+```bash
+uv tool upgrade regente
+uv tool uninstall regente
+```
+
+### O Regente usa outros programas da sua máquina
+
+Ele não os instala, e diz claramente quando falta algum. `regente doctor`
+confere tudo e nomeia o que não encontrou.
+
+| Programa | Para quê | Quando é preciso |
+|---|---|---|
+| `git` | clonar, commitar e enviar mudanças | ao publicar trabalho |
+| `gh` | abrir pull requests e ler o CI do GitHub | ao usar o GitHub |
+| um agente | escrever as mudanças (Claude Code, Codex CLI, ou um programa seu) | ao executar tasks |
+
+Para só olhar o Regente funcionando, nenhum deles é necessário: o board pode ser
+uma pasta de arquivos YAML, e o agente pode ser um script.
+
+### Se você vai mexer no código do Regente
+
+Aí sim vale o ambiente de desenvolvimento, porque você quer as mudanças valendo
+sem reinstalar:
+
 ```bash
 git clone https://github.com/walberth-lopes/BugByte-Regente.git Regente
 cd Regente
@@ -75,8 +138,12 @@ Ative o ambiente — `.venv\Scripts\Activate.ps1` no PowerShell,
 uv pip install -e ".[dev]"
 ```
 
-Sem ativar, `regente` não existe no PATH. O tutorial abaixo detalha isso, com a
-linha certa para cada terminal.
+Sem ativar, `regente` não existe no PATH desse terminal. O tutorial abaixo
+detalha isso, com a linha certa para cada janela.
+
+> No Windows, `uv pip install -e` falha com *Access is denied* se houver um
+> `regente ui` ou `regente run` em execução: o sistema não deixa substituir um
+> executável aberto. Feche-os antes.
 
 ## Tutorial: do zero até a primeira decisão
 
@@ -89,60 +156,43 @@ ninguém.
 
 ### 1. Instalar
 
-Você precisa de [Python 3.13](https://www.python.org/downloads/), do
-[git](https://git-scm.com/downloads) e do
-[uv](https://docs.astral.sh/uv/getting-started/installation/). Instale os três
-antes de continuar; o resto é o Regente.
+Um comando, e você não precisa instalar Python antes — o instalador cuida
+disso.
 
-Baixe o código e entre na pasta:
+**Linux e macOS**
 
 ```bash
-git clone https://github.com/walberth-lopes/BugByte-Regente.git Regente
-cd Regente
+curl -LsSf https://raw.githubusercontent.com/walberth-lopes/BugByte-Regente/main/install.sh | sh
 ```
 
-Crie o ambiente isolado do projeto e **ative-o**:
+**Windows** (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/walberth-lopes/BugByte-Regente/main/install.ps1 | iex
+```
+
+**Abra um terminal novo** e confira:
 
 ```bash
-uv venv --python 3.13
+regente --version
 ```
 
-A ativação é diferente em cada terminal. Use a linha do seu:
-
-| terminal | comando |
-|---|---|
-| PowerShell (Windows) | `.\.venv\Scripts\Activate.ps1` |
-| Prompt de comando (Windows) | `.\.venv\Scripts\activate.bat` |
-| Git Bash (Windows) | `source .venv/Scripts/activate` |
-| Linux / macOS | `source .venv/bin/activate` |
-
-O prompt passa a começar com `(Regente)`. Agora instale:
-
-```bash
-uv pip install -e ".[dev]"
-```
-
-Confira que funcionou:
-
-```bash
-regente --help
-```
-
-Se aparecer a lista de comandos, está pronto.
+Se aparecer `regente 0.1.0`, está pronto.
 
 > **`'regente' is not recognized` / `command not found`?**
-> O ambiente não está ativo. Isso é normal: a ativação vale **só para a janela
-> de terminal em que você a rodou** — abriu outra, ative de novo. Rode a linha
-> de ativação da tabela acima e tente outra vez.
 >
-> Se preferir não ativar nada, todo comando deste tutorial também funciona
-> prefixado com `uv run`, a partir da pasta do projeto:
-> `uv run regente --help`. E `python -m regente --help` funciona sempre que o
-> pacote estiver instalado, ativado ou não.
+> Quase sempre é isto: você está no **mesmo terminal** que já estava aberto
+> antes da instalação. Um terminal só lê o PATH quando abre — o que foi
+> acrescentado depois ele não conhece. Abra uma janela nova e tente de novo.
 >
-> No PowerShell, se a ativação for barrada por política de execução, rode
+> Se em uma janela nova ainda não funcionar, o atalho existe mas não está no
+> PATH. Rode `uv tool update-shell` e abra outra janela; se preferir resolver na
+> hora, `uv tool dir --bin` mostra a pasta, e você pode chamar o comando pelo
+> caminho completo.
+>
+> No PowerShell, se algum passo for barrado por política de execução, rode
 > `Set-ExecutionPolicy -Scope Process RemoteSigned` nessa mesma janela e tente
-> de novo.
+> outra vez.
 
 ### 2. Criar uma pasta de trabalho
 
