@@ -117,7 +117,7 @@ def _bancada(tmp_path: Path, provedor: ProvedorFake | None = None,
         service=ResourceService(
             store=store, policy=POLICY,
             organization="acme", client="acme", workspace_name="main",
-            discovery_for=lambda _: p, clock=lambda: T0))
+            discovery_for=lambda _prov, _ator=None: p, clock=lambda: T0))
 
 
 def _quem(workspace: str, *abilities: Ability, sujeito: str = "os:1") -> Principal:
@@ -517,7 +517,7 @@ def test_two_workspaces_in_the_SAME_database_never_read_each_other(tmp_path):
 
     servico = ResourceService(
         store=store, policy=POLICY, organization="acme", client="acme",
-        workspace_name="main", discovery_for=lambda _: None, clock=lambda: T0)
+        workspace_name="main", discovery_for=lambda _prov, _ator=None: None, clock=lambda: T0)
 
     # O MESMO recurso, escolhido nos dois. Um `org/backend` no mesmo provedor e
     # dois recursos diferentes quando os clientes sao dois.
@@ -673,6 +673,44 @@ def test_policy_denial_stops_discovery(tmp_path):
     assert b.provedor.chamadas == 0, "o provedor foi consultado apesar do DENY"
 
 
+def test_every_credential_capability_is_an_action_the_shipped_policy_knows():
+    """Uma capacidade que a policy nunca ouviu falar nao existe na pratica.
+
+    Este teste existe por causa de um defeito que passou pela suite inteira e
+    pela varredura de mutacao: `repo.discover` foi criada como capacidade de
+    credencial e NUNCA foi declarada na policy. Toda a descoberta contra um
+    provedor real recusava com "nenhuma regra permite 'repo.discover'" -- e
+    nenhum teste via, porque o provedor de teste nao resolve credencial.
+
+    O guard e geral: para cada valor de `Use`, a policy enviada precisa
+    permitir a acao de mesmo nome, e o teto de autonomia dela nao pode ser o
+    maximo por desconhecimento.
+    """
+    from regente.core.credential import Use
+    from regente.core.policy import (Action, AutonomyLevel, Effect,
+                                     PolicyContext, required_level)
+
+    mudos, altos = [], []
+    for u in Use:
+        d = POLICY.decide(PolicyContext(
+            action=Action(kind=u.value, resource="x", environment="staging"),
+            organization="o", client="c", workspace="w", agent="a",
+            autonomy=AutonomyLevel.L4))
+        if d.effect is not Effect.ALLOW:
+            mudos.append(f"{u.value} -> {d.effect.value}")
+        if u.value not in ("task.write", "repo.push", "repo.pr", "agent.run"):
+            # As de leitura precisam de teto declarado: sem entrada em
+            # REQUIRED_LEVEL o teto cai em L4, e mostrar uma lista passaria a
+            # pedir aprovacao humana num workspace comum.
+            if required_level(u.value) is not AutonomyLevel.L0:
+                altos.append(f"{u.value} -> {required_level(u.value).name}")
+
+    assert not mudos, ("capacidades que a policy enviada nao permite: "
+                       + ", ".join(mudos))
+    assert not altos, ("capacidades de leitura sem teto declarado: "
+                       + ", ".join(altos))
+
+
 def test_the_shipped_policy_lets_a_new_workspace_discover_and_choose(tmp_path):
     """O arquivo que a pessoa recebe precisa declarar as duas acoes.
 
@@ -753,6 +791,33 @@ def test_two_providers_with_different_trees_both_fit(tmp_path):
         assert r.ref.scoped_to("wks_A").startswith("wks_A/")
 
 
+def test_the_discovery_port_is_built_for_WHOEVER_asked(tmp_path):
+    """Quem descobre e a pessoa que clicou, e nao o motor agindo por ela.
+
+    Este teste existe por causa de um defeito real. A porta de descoberta era
+    construida UMA VEZ na composicao, com a identidade de servico do motor.
+    Resultado: conectar o GitHub funcionava e descobrir recusava, porque quem
+    chegava ao broker nao era quem tinha autoridade.
+
+    E o erro apontava para os dois lados. Se o motor TIVESSE concessao, uma
+    pessoa sem `workspace.credential.use` faria o motor usar credencial por ela
+    -- um emprestimo de autoridade, que e o contorno que tudo aqui recusa.
+    """
+    pedidos = []
+
+    def fabrica(provedor, ator=None):
+        pedidos.append((provedor, ator.subject if ator else None))
+        return ProvedorFake(itens=[_repo("org/a")])
+
+    b = _bancada(tmp_path)
+    b.service.discovery_for = fabrica
+    quem = _dono(b.workspace, sujeito="os:pessoa")
+    b.service.discover(quem, b.workspace, "fake", "repository")
+
+    assert pedidos == [("fake", "os:pessoa")], (
+        "a porta foi construida sem saber quem estava pedindo")
+
+
 def test_a_provider_that_discovers_nothing_says_so(tmp_path):
     b = _bancada(tmp_path, ProvedorFake(tipos=()))
     achado = b.service.discover(_dono(b.workspace), b.workspace, "fake",
@@ -762,7 +827,7 @@ def test_a_provider_that_discovers_nothing_says_so(tmp_path):
 
 def test_a_workspace_with_no_discovery_port_is_not_an_empty_workspace(tmp_path):
     b = _bancada(tmp_path)
-    b.service.discovery_for = lambda _: None
+    b.service.discovery_for = lambda _prov, _ator=None: None
     achado = b.service.discover(_dono(b.workspace), b.workspace, "outro",
                                 "repository")
     assert achado.falha is Falha.NAO_SUPORTADO

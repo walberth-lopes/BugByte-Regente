@@ -600,6 +600,11 @@ GLOBAL_BY_DESIGN = {
     # tenant -- mas passa pela declaracao como todo o resto, porque a guarda so
     # vale enquanto ninguem acrescenta em silencio.
     ("access.py", "ROLES"),
+    # Os ajudantes que o Regente conhece sem ninguem declarar. Comandos FIXOS,
+    # no codigo: sem escrita depois da importacao e sem nada de tenant. Estar
+    # aqui e parte do desenho -- se a lista viesse de configuracao, quem
+    # escrevesse uma referencia escolheria o que o processo executa.
+    ("secrets.py", "HELPERS_EMBUTIDOS"),
     # Como uma recusa do caminho governado vira uma falha de dominio. Traducao,
     # nao estado: sem escrita depois da importacao, sem nada de tenant. Mora no
     # adapter de proposito -- quem conhece a excecao e quem a levanta, e o motor

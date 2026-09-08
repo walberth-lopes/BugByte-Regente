@@ -67,10 +67,10 @@ class Engine:
     #: Push, pull request and CI observation. `None` when the workspace has no
     #: workspace provider at all -- absent capability, not silent local action.
     delivery: RemoteDelivery | None = None
-    #: `{nome do provedor: porta de descoberta}`. Vazio quando nenhum dos
-    #: provedores configurados sabe listar o que a identidade alcanca -- que e
-    #: uma resposta legitima, e nao uma falha.
-    descobridores: dict = field(default_factory=dict)
+    #: `(provedor, ator) -> porta de descoberta | None`. Uma FABRICA: a porta
+    #: e construida com o broker de quem pediu, e nao com um ator congelado na
+    #: composicao.
+    descobridores: object = None
 
     def close(self) -> None:
         self.store.close()
@@ -131,7 +131,32 @@ class Engine:
             workspace_name=self.workspace.name,
             environment=(self.config.projects[0].default_environment
                          if self.config.projects else "staging"),
-            discovery_for=self.descobridores.get)
+            discovery_for=self.descobridores)
+
+    def connections(self) -> "ConnectService":
+        """Conectar um servico. UM caminho, para terminal e navegador.
+
+        Recebe os DOIS servicos governados prontos, e nao o store: assim nao
+        existe forma de conectar gravando por fora -- se `SettingsService` ou
+        `CredentialService` recusar, conectar recusa.
+        """
+        from ..engine.connect import ConnectService
+
+        return ConnectService(
+            settings=self.settings(), credentials=self.credentials(),
+            access=self.access(), conectores=registry.conectores(),
+            providers_do_arquivo=lambda: providers_efetivos(self.config))
+
+    def settings(self) -> "SettingsService":
+        """A configuracao do workspace. Montada aqui, como as irmas."""
+        from ..engine.settings import SettingsService
+
+        return SettingsService(
+            store=self.store, policy=self.policy or PolicyEngine.from_config([]),
+            organization=self.config.organization, client=self.config.client,
+            workspace_name=self.workspace.name,
+            environment=(self.config.projects[0].default_environment
+                         if self.config.projects else "staging"))
 
     def credentials(self) -> CredentialService:
         """O caminho governado ate um segredo. UM, para terminal e navegador.
@@ -465,8 +490,7 @@ def build(cfg: Config) -> Engine:
     # CAPACIDADE pedida a ela. Uma credencial sem `repo.discover` recusa a
     # descoberta e continua lendo o que o workspace escolheu, que e a resposta
     # certa: ela nunca foi autorizada a varrer a organizacao inteira.
-    descobridores = discovery_ports(cfg, store, ws, projects, repos=repos,
-                                    observe=observe)
+    descobridores = discovery_for(cfg, store, ws, projects, observe=observe)
 
     # ---- o corte: o motor so alcanca o que o workspace escolheu ----------
     #
@@ -520,14 +544,32 @@ def build(cfg: Config) -> Engine:
                   descobridores=descobridores)
 
 
-def discovery_ports(cfg: Config, store, ws, projects=(), repos=None,
-                    observe=None) -> dict[str, object]:
-    """As portas de descoberta deste workspace: `{provedor: porta}`.
+def providers_efetivos(cfg: Config, settings=None, workspace_id: str = "") -> dict:
+    """`{papel: {name, ...opcoes}}` -- o arquivo, com a tela por cima.
 
-    Publica e usada em DOIS lugares -- por `build()`, quando o motor sobe, e
-    pelo comando da tela, que nao monta o motor inteiro. Uma segunda montagem
-    escrita a mao no outro lugar divergiria, e a que divergisse seria a que
-    esquece de vincular o broker.
+    Normaliza as duas fontes numa forma so. `cfg.providers` guarda objetos de
+    configuracao; a sobreposicao guarda dicionarios crus. Quem consome os dois
+    sem normalizar acaba escrevendo `conf.name` num caso e `conf["name"]` no
+    outro -- e o segundo e sempre o que ninguem testou.
+    """
+    saida = {nome: dict(conf.options, name=conf.name)
+             for nome, conf in cfg.providers.items()}
+    if settings is not None and workspace_id:
+        sobreposto = settings.overlay(workspace_id).get("providers")
+        if isinstance(sobreposto, dict):
+            saida.update(sobreposto)
+    return saida
+
+
+def discovery_for(cfg: Config, store, ws, projects=(), observe=None,
+                  providers_agora=None):
+    """Devolve `(provedor, ator) -> porta de descoberta`, ou `None`.
+
+    Uma FABRICA, e nao um dicionario pronto, por causa do ator. A porta precisa
+    do broker vinculado a QUEM PEDIU: uma pessoa clicando "buscar" descobre com
+    a autoridade dela, e o tick da madrugada descobre com a do motor. Construir
+    as portas uma vez na composicao congelava um ator so -- e foi assim que a
+    primeira conexao real recusou, com o motor no lugar da pessoa.
 
     So entram provedores que ESTE workspace ja configurou. Uma lista propria
     aqui faria a tela oferecer integracoes que o motor nao tem como usar.
@@ -537,32 +579,70 @@ def discovery_ports(cfg: Config, store, ws, projects=(), repos=None,
     lendo o que o workspace escolheu -- ela nunca foi autorizada a varrer a
     organizacao inteira, e a recusa e a resposta certa.
     """
-    portas: dict[str, object] = {}
-    for chave in ("tasks", "repository"):
-        conf = cfg.providers.get(chave)
-        if conf is None or not registry.has(Capability.DISCOVERY, conf.name):
-            continue
-        extras: dict[str, object] = {
-            "credentials": _engine_broker(store, cfg, ws, chave, projects),
-            "observer": observe}
-        if chave == "repository":
-            if repos is None:
-                # Sem o provider de repositorio nao ha o que descobrir por ele.
-                # Construir um segundo aqui seria uma segunda configuracao
-                # falando com o mesmo lugar, e a que divergisse ninguem reviu.
+    agora = providers_agora or (lambda: providers_efetivos(cfg))
+
+    def porta(provider: str, actor=None):
+        # Lida A CADA PEDIDO. Um processo de tela fica de pe por horas, e quem
+        # conecta um servico nela espera ve-lo funcionando no clique seguinte
+        # -- e nao depois de reiniciar.
+        for chave, conf in agora().items():
+            if chave not in ("tasks", "repository"):
                 continue
-            extras["repos"] = repos
-        portas[conf.name] = registry.create(
-            Capability.DISCOVERY, conf.name, {**conf.options, **extras})
-    return portas
+            nome = str(conf.get("name") or "")
+            if nome != provider or not registry.has(Capability.DISCOVERY, nome):
+                continue
+            opcoes = {k: v for k, v in conf.items() if k != "name"}
+            broker = _engine_broker(store, cfg, ws, chave, projects,
+                                    principal=actor)
+            extras: dict[str, object] = {"credentials": broker,
+                                         "observer": observe}
+            if chave == "repository":
+                # O provider de LEITURA, montado com o mesmo ator. Ele e quem
+                # sabe falar com o fornecedor; a descoberta so pede a ele com
+                # outra capacidade.
+                extras["repos"] = registry.create(
+                    Capability.REPOSITORY, nome,
+                    {**opcoes, "credentials": broker, "observer": observe})
+            return registry.create(Capability.DISCOVERY, nome,
+                                   {**opcoes, **extras})
+        return None
+    return porta
 
 
-def _engine_broker(store, cfg, ws, key: str, projects):
-    """A porta do motor para um provider. UMA montagem, usada por todos.
+def discovery_trees(providers: dict) -> dict[str, tuple[str, ...]]:
+    """`{provedor: arvore}` -- o que a tela precisa para navegar por niveis.
 
-    O motor age como principal de servico: identidade propria, e o que uma
-    concessao gravada disser. A autoridade e LIDA do registro -- nunca
+    Recebe os providers EFETIVOS, e nao a configuracao: quem conecta um servico
+    pela tela precisa ver a arvore dele no clique seguinte.
+
+    Nao custa credencial nem rede: a arvore e uma propriedade do adapter, e nao
+    da conta de ninguem. Por isso ela pode ser lida sem ator.
+    """
+    arvores: dict[str, tuple[str, ...]] = {}
+    for chave, conf in (providers or {}).items():
+        if chave not in ("tasks", "repository"):
+            continue
+        nome = str(conf.get("name") or "")
+        if not registry.has(Capability.DISCOVERY, nome):
+            continue
+        opcoes = {k: v for k, v in conf.items() if k != "name"}
+        porta = registry.create(Capability.DISCOVERY, nome,
+                                {**opcoes, "credentials": None, "repos": None})
+        arvores[nome] = porta.discovers()
+    return arvores
+
+
+def _engine_broker(store, cfg, ws, key: str, projects, principal=None):
+    """A porta para um provider, vinculada a QUEM AGE. UMA montagem, para todos.
+
+    Sem `principal`, quem age e o motor: identidade propria de servico, e o que
+    uma concessao gravada disser. A autoridade e LIDA do registro -- nunca
     concedida aqui, por mais pratico que fosse.
+
+    COM `principal`, quem age e a pessoa que pediu. E o caso da tela e do
+    terminal: descobrir repositorios usa a autoridade de quem clicou, e nao a do
+    motor. Confundir os dois barra quem pode e, pior, deixa passar quem nao
+    pode -- usando o motor como emprestimo de autoridade.
     """
     from ..adapters.identity.engine_service import EngineServiceIdentity
     from ..adapters.secrets import ScopedSecrets
@@ -572,8 +652,9 @@ def _engine_broker(store, cfg, ws, key: str, projects):
     regras = PolicyEngine.from_config(load_policies(cfg.policies))
     ambiente = (projects[0].default_environment if projects else "staging")
 
-    provider = EngineServiceIdentity(workspace_id=ws.id)
-    quem = provider.principal(provider.authenticate(None))
+    if principal is None:
+        provider = EngineServiceIdentity(workspace_id=ws.id)
+        principal = provider.principal(provider.authenticate(None))
 
     servico = CredentialService(
         store=store, policy=regras,
@@ -584,7 +665,7 @@ def _engine_broker(store, cfg, ws, key: str, projects):
     acesso = AccessService(store=store, policy=regras,
                            organization=cfg.organization, client=cfg.client,
                            workspace_name=cfg.workspace)
-    return servico.broker(acesso.authorize(quem), ws.id, key)
+    return servico.broker(acesso.authorize(principal), ws.id, key)
 
 
 class _SemCredencial:
@@ -606,6 +687,60 @@ class _SemCredencial:
 
     def allows(self, use) -> bool:
         return False
+
+
+def acoes_que_o_motor_emite() -> tuple[str, ...]:
+    """Toda acao que ESTA versao consegue submeter a policy.
+
+    Lida dos enums, e nao de uma lista escrita a mao: uma lista a mao envelhece
+    no primeiro marco em que alguem esquecer de atualiza-la, e o sintoma seria
+    justamente o silencio que esta checagem existe para acabar.
+    """
+    from ..core.access import Ability
+    from ..core.credential import Use
+
+    acoes = {a.value for a in Ability} | {u.value for u in Use}
+    # As acoes de recurso sao formadas com o nome do provedor na frente. O
+    # curinga da policy enviada cobre todas; um provedor concreto serve de
+    # amostra para a checagem.
+    acoes.add("github.resource.discover")
+    return tuple(sorted(acoes))
+
+
+def _policy_em_dia(cfg: Config) -> tuple[str, bool, str]:
+    """Esta policy conhece tudo o que esta versao sabe fazer?
+
+    Uma acao sem NENHUMA regra que a mencione cai no DENY por omissao. Quem
+    esbarra nisso ve "nenhuma regra permite X" numa tela, sem nada dizendo que
+    o arquivo do workspace e mais antigo que o programa.
+    """
+    from ..core.policy import Action, AutonomyLevel, Effect, PolicyContext
+
+    try:
+        regras = PolicyEngine.from_config(load_policies(cfg.policies))
+    except Exception as e:                                # noqa: BLE001
+        return ("policy em dia", False, f"{type(e).__name__}: {e}"[:200])
+
+    mudas = []
+    for acao in acoes_que_o_motor_emite():
+        decisao = regras.decide(PolicyContext(
+            action=Action(kind=acao, resource="workspace", environment="staging"),
+            organization=cfg.organization, client=cfg.client,
+            workspace=cfg.workspace, agent="doctor",
+            autonomy=AutonomyLevel.L4))
+        # Sem regra que CASE -- e nao "negada". Uma policy que nega
+        # explicitamente esta em dia: alguem decidiu aquilo.
+        if not decisao.matched:
+            mudas.append(acao)
+
+    if not mudas:
+        return ("policy em dia", True,
+                f"conhece as {len(acoes_que_o_motor_emite())} acoes desta versao")
+    return ("policy em dia", False,
+            f"{cfg.policies} nao conhece {len(mudas)} acao(oes) desta versao: "
+            + ", ".join(mudas[:6])
+            + (f" (+{len(mudas) - 6})" if len(mudas) > 6 else "")
+            + ". Ponha em dia com: regente atualizar")
 
 
 def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
@@ -667,6 +802,7 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
         expect_prefix(f"provider {key}", prova)
 
     expect_prefix("policies", lambda: f"{len(load_policies(cfg.policies))} regra(s)")
+    output.append(_policy_em_dia(cfg))
 
     # Seis eixos, um por linha. Reportar "falta a variavel X" seria conselho
     # errado para quem autentica o agente de outra forma -- e a maioria dos

@@ -83,6 +83,11 @@ _SEVERIDADE = {Effect.ALLOW: 0, Effect.HUMAN_APPROVAL: 1, Effect.DENY: 2}
 #: Nivel minimo de autonomia que cada familia de acao exige. Chave e prefixo da
 #: acao, casada do mais especifico para o mais generico.
 REQUIRED_LEVEL: dict[str, AutonomyLevel] = {
+    # Listar o que a conta alcanca e leitura, e nasce no nivel mais baixo.
+    # Sem estas duas linhas o teto cai no maximo por desconhecimento, e um
+    # workspace em L1 pediria aprovacao humana para MOSTRAR uma lista.
+    "repo.discover": AutonomyLevel.L0,
+    "task.discover": AutonomyLevel.L0,
     "repo.read": AutonomyLevel.L0,
     "task.read": AutonomyLevel.L0,
     "cloud.read": AutonomyLevel.L0,

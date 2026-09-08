@@ -20,6 +20,11 @@ rules:
     effect: ALLOW
     match: {action: "task.read*"}
 
+  - name: discover_what_exists
+    effect: ALLOW
+    match: {action: "*.discover"}
+    reason: "listar o que a conta alcanca e como se escolhe o que usar"
+
   # ---- trabalho no proprio workspace -------------------------------------
   - name: write_in_own_area
     effect: ALLOW

@@ -369,6 +369,18 @@ def _discovery_jira(o: dict[str, Any]) -> Port:
         max_results=int(o.get("descoberta_limite", 100)))
 
 
+def conectores() -> dict[str, Port]:
+    """Os servicos que a pessoa pode conectar em um clique.
+
+    Construidos sem argumento nenhum, e de proposito: um conector nao recebe
+    credencial, nao recebe workspace e nao recebe configuracao -- ele so sabe
+    perguntar a ferramenta local o que falta, e PROPOR o que gravar. Quem grava
+    e o motor.
+    """
+    from .connectors import GitHubConector
+    return {"github": GitHubConector()}
+
+
 register(Capability.DISCOVERY, "github", _discovery_github)
 register(Capability.DISCOVERY, "jira", _discovery_jira)
 register(Capability.TASKS, "filesystem", _tasks_filesystem)

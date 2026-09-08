@@ -127,6 +127,18 @@ export const DONO = {
 // Integracoes: o que o provedor mostra, e o que este workspace usa
 // ---------------------------------------------------------------------------
 
+/**
+ * Conectou, e algo ficou faltando.
+ *
+ * Não é erro: a conexão está gravada. É o que a pessoa precisa saber para não
+ * descobrir sozinha, de madrugada, que o Regente parou de trabalhar.
+ */
+export const AVISO_DA_CONEXAO = {
+  motor_sem_acesso:
+    "Conectado. Mas o Regente ainda não pode usar esta conexão sozinho nos " +
+    "ciclos automáticos — peça a quem administra o acesso.",
+};
+
 /** Onde um recurso esta entre existir e ser usado (core/resource.py::Situacao). */
 export const SITUACAO = {
   DISPONIVEL: { texto: "Disponível", tone: "muted" },

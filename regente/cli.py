@@ -495,6 +495,166 @@ SAIDA_DA_FALHA = {
 }
 
 
+def _regras_faltando(cfg) -> list[tuple[str, str]]:
+    """As regras do modelo ENVIADO que faltam neste workspace: (nome, texto).
+
+    Compara por NOME de regra, e devolve o texto cru -- com os comentarios que
+    explicam por que cada uma existe. Uma regra colada sem a razao dela vira,
+    seis meses depois, uma linha que ninguem ousa remover porque ninguem sabe
+    para que serve.
+    """
+    import re
+    from pathlib import Path as _P
+
+    modelo = (_P(__file__).resolve().parent / "resources"
+              / "policies.yaml.example").read_text(encoding="utf-8")
+    atual = _P(cfg.policies).read_text(encoding="utf-8")
+    tenho = set(re.findall(r"^\s*- name:\s*(\S+)", atual, re.M))
+
+    # Cada bloco comeca num `  - name:` e vai ate o proximo. Os comentarios que
+    # vem ANTES da regra pertencem a ela, e por isso o corte olha para tras.
+    linhas = modelo.splitlines()
+    inicios = [i for i, l in enumerate(linhas)
+               if re.match(r"^\s*- name:", l)]
+
+    # O comeco de cada regra INCLUI os comentarios logo acima dela: e ali que
+    # esta escrito por que a regra existe, e uma regra colada sem a razao vira,
+    # seis meses depois, uma linha que ninguem ousa remover.
+    def com_comentarios(i: int) -> int:
+        comeco = i
+        while comeco > 0 and (linhas[comeco - 1].strip().startswith("#")
+                              or not linhas[comeco - 1].strip()):
+            comeco -= 1
+        while comeco < i and not linhas[comeco].strip():
+            comeco += 1
+        return comeco
+
+    limites = [com_comentarios(i) for i in inicios]
+    faltando = []
+    for n, i in enumerate(inicios):
+        nome = re.match(r"^\s*- name:\s*(\S+)", linhas[i]).group(1)
+        if nome in tenho:
+            continue
+        # O fim e onde a PROXIMA regra comeca a ser explicada, e nao a linha
+        # `- name:` dela: senao o bloco arrasta o cabecalho da secao seguinte, e
+        # quem cola recebe um comentario orfao falando de outra coisa.
+        fim = limites[n + 1] if n + 1 < len(limites) else len(linhas)
+        while fim > i and not linhas[fim - 1].strip():
+            fim -= 1
+        faltando.append((nome, "\n".join(linhas[limites[n]:fim])))
+    return faltando
+
+
+def cmd_atualizar(args) -> int:
+    """Poe a configuracao deste workspace em dia com a versao instalada.
+
+    O `policies.yaml` de um workspace e escrito uma vez, no `init`, e nunca
+    mais -- e deve ser assim: o arquivo e da pessoa, e atualizar um pacote nao
+    pode ampliar autoridade sozinho. O preco disso era uma linha de documentacao
+    por marco, e quem nao lesse ficava com uma tela recusando sem explicar.
+
+    Este comando paga o preco de outro jeito: ele MOSTRA o que falta, com a
+    razao de cada regra, e escreve so depois de um sim. Detectar vira automatico;
+    ampliar continua sendo uma decisao.
+    """
+    cfg = _load_config(args)
+    faltando = _regras_faltando(cfg)
+    if not faltando:
+        print(f"{cfg.policies} ja conhece tudo o que esta versao sabe fazer")
+        return 0
+
+    print(f"{cfg.policies} nao conhece {len(faltando)} regra(s) desta versao:")
+    print()
+    for nome, texto in faltando:
+        print(texto)
+        print()
+
+    if not args.aplicar:
+        print(f"para acrescentar: regente atualizar --aplicar")
+        return 0
+
+    from pathlib import Path
+
+    caminho = Path(cfg.policies)
+    atual = caminho.read_text(encoding="utf-8").rstrip()
+    bloco = "\n\n".join(texto for _, texto in faltando)
+    caminho.write_text(f"{atual}\n\n{bloco}\n", encoding="utf-8")
+    print(f"acrescentadas {len(faltando)} regra(s) a {cfg.policies}")
+    print("confira com: regente doctor")
+    return 0
+
+
+def cmd_conectar(args) -> int:
+    """Conecta um servico a este workspace. Um comando, e nao cinco.
+
+    O mesmo servico que o botao da tela usa. A CLI TRADUZ o veredito do motor
+    em codigo de saida; ela nao decide nada por conta propria.
+
+    Sem `--conta`, ele LISTA as contas que a identidade alcanca e para. Escolher
+    por padrao a primeira seria escolher a conta pessoal de quem tem cinco
+    organizacoes -- e ninguem confere o que ja veio pronto.
+    """
+    cfg = _load_config(args)
+    motor = container.build(cfg)
+    try:
+        service = motor.connections()
+        who = motor.terminal_principal()
+        workspace = motor.workspace.id
+
+        if args.acao == "listar" or not args.servico:
+            for c in service.listar(who, workspace):
+                marca = "[x]" if c["connected"] else "[ ]"
+                onde = f" ({c['current']})" if c["current"] else ""
+                print(f"  {marca} {c['connector']:10} {c['title']}{onde}")
+                print(f"        {c['step']['title']}")
+                if c["step"]["detail"]:
+                    print(f"        {c['step']['detail']}")
+                if c["step"]["command"]:
+                    print(f"        $ {c['step']['command']}")
+            return 0
+
+        if args.acao == "autorizar":
+            passo = service.autorizar(who, workspace, args.servico)
+            print(passo.get("title", ""))
+            if passo.get("detail"):
+                print(f"  {passo['detail']}")
+            if passo.get("command"):
+                print(f"  $ {passo['command']}")
+            return 0
+
+        if not args.conta:
+            contas = service.contas(who, workspace, args.servico)
+            if not contas:
+                print("nenhuma conta encontrada; autorize primeiro:")
+                print(f"  regente conectar {args.servico} --autorizar",
+                      file=sys.stderr)
+                return EXIT_BLOCKED
+            print("de qual conta?")
+            for c in contas:
+                print(f"  {c['id']:28} {c['kind']}")
+            print()
+            print(f"conecte com: regente conectar {args.servico} --conta <id>")
+            return 0
+
+        saida = service.conectar(who, workspace, args.servico, args.conta,
+                                 substituir=args.substituir)
+        if not saida.accepted:
+            print(f"{saida.refusal.value if saida.refusal else 'RECUSADO'}: "
+                  f"{saida.reason}", file=sys.stderr)
+            if saida.credential_id:
+                print(f"  para trocar: repita com --substituir",
+                      file=sys.stderr)
+            return _exit_for(saida.refusal)
+        print(saida.reason)
+        if saida.aviso:
+            print(f"  atencao: {saida.aviso_detalhe}", file=sys.stderr)
+        print(f"  veja o que veio: regente integracoes descobrir "
+              f"--provider {args.servico} --tipo repository")
+        return 0
+    finally:
+        motor.close()
+
+
 def cmd_integracoes(args) -> int:
     """Descobre o que os provedores alcancam e escolhe o que este workspace usa.
 
@@ -1076,42 +1236,47 @@ def cmd_ui(args) -> int:
     from .adapters.probe import probe_for as _probe
     from .adapters.registry import needs_credential as _needs_credential
 
-    # As PORTAS DE DESCOBERTA, pela mesma razao: a API nao sabe o que e um
-    # GitHub, e recebe o mapa pronto de quem compos. `discovery_ports` e a
-    # mesma funcao que o motor usa -- uma segunda montagem aqui divergiria, e a
-    # que divergisse seria a que esquece de vincular o broker.
-    from .app.container import _engine_broker, discovery_ports
+    # A FABRICA DE DESCOBERTA e o servico de CONEXOES, pela mesma razao: a API
+    # nao sabe o que e um GitHub, e recebe tudo pronto de quem compos.
+    #
+    # `discovery_for` e a MESMA funcao que o motor usa. E uma fabrica, e nao um
+    # mapa: a porta e construida com o broker de quem PEDIU. Uma pessoa clicando
+    # "buscar" descobre com a autoridade dela, e nao com a do motor.
+    from .app.container import (discovery_for, discovery_trees,
+                                providers_efetivos)
     from .core.model import Workspace
+    from .engine.connect import ConnectService
     from .engine.resources import ResourceService
 
-    ws_para_descoberta = Workspace(id=configured, client_id=_stable_id(
-        ids.CLIENT, cfg.organization, cfg.client), name=cfg.workspace,
-        root=str(cfg.root))
-    repos_para_descoberta = None
-    if "repository" in cfg.providers:
-        # Construido so para descobrir, e sem envelope de selecao: descobrir
-        # precisa enxergar TUDO o que a credencial alcanca, senao ninguem teria
-        # como escolher o que ainda nao escolheu.
-        from .adapters import registry as _reg
-        from .ports import Capability as _Cap
+    ws_da_tela = Workspace(
+        id=configured,
+        client_id=_stable_id(ids.CLIENT, cfg.organization, cfg.client),
+        name=cfg.workspace, root=str(cfg.root))
 
-        conf_repo = cfg.providers["repository"]
-        repos_para_descoberta = _reg.create(
-            _Cap.REPOSITORY, conf_repo.name,
-            {**conf_repo.options,
-             "credentials": _engine_broker(store, cfg, ws_para_descoberta,
-                                           "repository", cfg.projects or ())})
-
-    descobridores = discovery_ports(cfg, store, ws_para_descoberta,
-                                    cfg.projects or (),
-                                    repos=repos_para_descoberta)
     resources = ResourceService(
         store=store, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
         organization=cfg.organization, client=cfg.client,
         workspace_name=cfg.workspace,
         environment=(cfg.projects[0].default_environment
                      if cfg.projects else "staging"),
-        discovery_for=descobridores.get)
+        discovery_for=discovery_for(cfg, store, ws_da_tela,
+                                    cfg.projects or (),
+                                    providers_agora=lambda: providers_efetivos(
+                                        cfg, settings, configured)))
+
+    from .adapters.registry import conectores as _conectores
+    from .engine.settings import SettingsService
+
+    settings_para_conectar = SettingsService(
+        store=store, policy=PolicyEngine.from_config(load_policies(cfg.policies)),
+        organization=cfg.organization, client=cfg.client,
+        workspace_name=cfg.workspace,
+        environment=(cfg.projects[0].default_environment
+                     if cfg.projects else "staging"))
+    connections = ConnectService(
+        settings=settings_para_conectar, credentials=credentials,
+        access=access, conectores=_conectores(),
+        providers_do_arquivo=lambda: providers_efetivos(cfg))
 
     httpd = serve(read, host=args.host, port=args.port, identity=identity,
                   decisions=decisions, access=access, credentials=credentials,
@@ -1120,8 +1285,9 @@ def cmd_ui(args) -> int:
                   needs_credential=_needs_credential,
                   catalog=catalogo_de_provedores(),
                   resources=resources,
-                  discovery_trees={n: p.discovers()
-                                   for n, p in descobridores.items()},
+                  connections=connections,
+                  discovery_trees=lambda: discovery_trees(
+                      providers_efetivos(cfg, settings, configured)),
                   session_token=identity.token,
                   read_only=args.read_only)
     where = f"http://{args.host}:{args.port}/"
@@ -1503,6 +1669,29 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nota", default="")
     p.add_argument("--config", default="regente.yaml")
     p.set_defaults(fn=cmd_credentials)
+
+    p = sub.add_parser(
+        "atualizar",
+        help="poe a configuracao deste workspace em dia com a versao instalada")
+    p.add_argument("--aplicar", action="store_true",
+                   help="escreve as regras que faltam; sem isto, so mostra")
+    p.add_argument("--config", default="regente.yaml")
+    p.set_defaults(fn=cmd_atualizar)
+
+    p = sub.add_parser(
+        "conectar",
+        help="liga um servico (GitHub, board, agente) a este workspace")
+    p.add_argument("servico", nargs="?", default="",
+                   help="nome do servico; sem ele, lista o que da para conectar")
+    p.add_argument("--conta", default="",
+                   help="qual conta ou organizacao usar")
+    p.add_argument("--autorizar", dest="acao", action="store_const",
+                   const="autorizar", default="conectar",
+                   help="abre o navegador para autorizar, e nao grava nada")
+    p.add_argument("--substituir", action="store_true",
+                   help="revoga a credencial atual deste papel e registra outra")
+    p.add_argument("--config", default="regente.yaml")
+    p.set_defaults(fn=cmd_conectar)
 
     p = sub.add_parser(
         "integracoes",

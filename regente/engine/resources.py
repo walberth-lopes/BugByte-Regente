@@ -144,8 +144,13 @@ class ResourceService:
     client: str
     workspace_name: str
     environment: str = "staging"
-    #: `(provider) -> ResourceDiscovery | None`. Entregue pronta.
-    discovery_for: Callable[[str], Any] | None = None
+    #: `(provider, actor) -> ResourceDiscovery | None`. Entregue pronta.
+    #:
+    #: O ATOR entra na assinatura, e nao so o provedor. A porta e construida com
+    #: o broker vinculado a quem pediu -- quem descobre e a pessoa que clicou, e
+    #: nao o motor agindo em nome dela. Sem isso, um workspace onde o motor tem
+    #: concessao deixaria qualquer um usar credencial por tabela.
+    discovery_for: Callable[[str, Any], Any] | None = None
     clock: Callable[[], datetime] = now
 
     # ------------------------------------------------------------------
@@ -269,7 +274,8 @@ class ResourceService:
         que esquece de auditar.
         """
         agora = agora or self.clock()
-        porta = self.discovery_for(provider) if self.discovery_for else None
+        porta = (self.discovery_for(provider, actor)
+                 if self.discovery_for else None)
         if porta is None:
             return None
 

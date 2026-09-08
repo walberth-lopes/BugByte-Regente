@@ -45,6 +45,24 @@ class SecretOutOfScope(AdapterError):
     benigno: e a fronteira entre clientes sendo testada."""
 
 
+#: Ajudantes que o Regente conhece sem ninguem declarar nada.
+#:
+#: Existem para que CONECTAR seja um clique. Sem eles, ligar o GitHub pela tela
+#: exigiria editar `regente.yaml` a mao para declarar o comando -- e um passo
+#: manual no meio de um fluxo automatico e o passo que ninguem faz.
+#:
+#: A lista e FECHADA e mora no codigo, e nao na configuracao. E a mesma razao de
+#: `helper:` nunca ter aceitado uma linha de comando: quem escreve a referencia
+#: nao pode escolher o que o processo executa. Aqui nem a configuracao escolhe.
+#:
+#: Cada um destes le de onde a FERRAMENTA guarda -- chaveiro do sistema, sessao
+#: ja autenticada -- e escreve no stdout. O Regente nao guarda nada.
+HELPERS_EMBUTIDOS: dict[str, tuple[str, ...]] = {
+    # `gh` guarda o token no chaveiro do sistema operacional depois de
+    # `gh auth login`. Este comando o devolve, e so ele.
+    "gh": ("gh", "auth", "token"),
+}
+
 @dataclass(slots=True)
 class ScopedSecrets(SecretProvider):
     """Resolve `env:NOME` e `arquivo:CAMINHO`.
@@ -105,6 +123,19 @@ class ScopedSecrets(SecretProvider):
             f"esquema de referencia desconhecido: {esquema!r}. "
             f"Use env:, arquivo: ou helper:")
 
+    def _comando_do(self, nome: str) -> tuple[str, ...] | None:
+        """O comando de um ajudante. Embutido vence declaracao.
+
+        Um workspace que declarasse `gh: [curl, meu-site]` faria toda credencial
+        `helper:gh` sair de outro lugar -- e ninguem leria o YAML de novo depois
+        de conectar. O embutido ganhar nao e teimosia: e a diferenca entre um
+        nome que significa sempre a mesma coisa e um que significa o que o
+        arquivo disser hoje.
+        """
+        if nome in HELPERS_EMBUTIDOS:
+            return HELPERS_EMBUTIDOS[nome]
+        return self.helpers.get(nome)
+
     def _helper(self, nome: str) -> str:
         """Pergunta a um programa registrado. Nunca executa texto arbitrario.
 
@@ -117,11 +148,12 @@ class ScopedSecrets(SecretProvider):
         arquivo temporario -- os dois deixam rastro que o `stdout` de um
         subprocesso nao deixa.
         """
-        comando = self.helpers.get(nome)
+        comando = self._comando_do(nome)
         if not comando:
+            registrados = sorted(set(self.helpers) | set(HELPERS_EMBUTIDOS))
             raise SecretMissing(
                 f"ajudante de credencial {nome!r} nao esta registrado; "
-                f"registrados: {sorted(self.helpers) or 'nenhum'}")
+                f"registrados: {registrados or 'nenhum'}")
         try:
             saida = subprocess.run(
                 list(comando), capture_output=True, text=True, timeout=30,

@@ -1,20 +1,25 @@
-// Integrações: o que existe lá fora, e o que este workspace usa.
+// Integrações: conectar um serviço, e escolher o que ele traz.
 //
-// A tela inteira gira em torno de uma fronteira. Uma credencial que alcança 47
-// repositórios NÃO autoriza o Regente a trabalhar em 47 — ela autoriza
-// PERGUNTAR. Entre "o serviço tem" e "o Regente pode tocar" existe uma escolha
-// sua, e é ela que esta página coleta.
+// A tela inteira existe para uma frase: *chego, conecto o GitHub, escolho meus
+// repositórios, e o Regente trabalha.* Tudo o que estiver entre a pessoa e isso
+// é defeito.
 //
-// Por isso buscar é um botão, e não algo que acontece ao abrir a página:
-// perguntar custa uma ida ao serviço e fica registrado na atividade. E por isso
-// a lista do que está em uso aparece em cima, antes de qualquer busca — o que o
-// Regente usa hoje não depende de o serviço estar no ar agora.
+// A primeira versão desta página era uma ferramenta de administrador: escolha
+// um adapter, digite a organização, vá registrar uma credencial em outra aba,
+// volte, aperte "buscar". Cinco passos em três lugares para dizer "use o meu
+// GitHub" — e cada um deles era uma decisão que o Regente podia ter tomado
+// sozinho.
 //
-// A tela não conhece fornecedor. A árvore de cada um — conta › repositório,
-// projeto › board — vem do servidor; aqui só existem níveis com nomes.
+// Agora é um botão. Ele abre o navegador quando falta autorização, pergunta de
+// qual conta, e traz a lista. BUSCAR DEIXOU DE SER UM BOTÃO: conectar já mostra
+// o que existe, porque quem acabou de conectar quer ver, e não procurar.
+//
+// O que NÃO mudou é o que está por baixo: a configuração vai pelo mesmo serviço
+// que o terminal usa, a credencial é registrada pelo caminho governado, e a
+// escolha continua sendo humana e gravada com nome e data.
 
-import { useState } from "react";
-import { del, post } from "../api.js";
+import { useEffect, useRef, useState } from "react";
+import { del, get, post } from "../api.js";
 import { useRegente, useLeitura } from "../estado.jsx";
 import {
   Alerta,
@@ -29,6 +34,7 @@ import {
 } from "../ui.jsx";
 import { useFeedback } from "../components/Formulario.jsx";
 import {
+  AVISO_DA_CONEXAO,
   FALHA_DA_BUSCA,
   PAPEL_DO_RECURSO,
   SITUACAO,
@@ -36,56 +42,61 @@ import {
   tipoPlural,
 } from "../present.js";
 
+/** O ícone de cada serviço. Reconhecer o cartão num relance. */
+const ICONE = { github: "ramo", jira: "jira", clickup: "tasks" };
+
 export default function Integracoes() {
   const { api } = useRegente();
-  const leitura = useLeitura([api("/resources"), api("/resources/providers")]);
+  const leitura = useLeitura([
+    api("/connectors"),
+    api("/resources"),
+    api("/resources/providers"),
+  ]);
 
   return (
     <Leitura estado={leitura} oQue="as integrações">
-      {(escolhidos, provedores) => (
+      {(conectores, escolhidos, arvores) => (
         <Conteudo
+          conectores={conectores.connectors}
           escolhidos={escolhidos.resources}
           editavel={escolhidos.editable}
-          provedores={provedores.providers}
+          arvores={arvores.providers}
         />
       )}
     </Leitura>
   );
 }
 
-function Conteudo({ escolhidos, editavel, provedores }) {
+function Conteudo({ conectores, escolhidos, editavel, arvores }) {
   const { podeAqui } = useRegente();
   const pode = editavel && podeAqui("workspace.resource.select");
+  const arvoreDe = (p) => arvores.find((a) => a.provider === p)?.tree || [];
 
   return (
     <>
       <p className="muted">
-        Conectar um serviço dá ao Regente permissão para <strong>perguntar</strong>{" "}
-        o que existe nele. Só o que você escolher aqui passa a ser alcançável — o
-        resto continua invisível para o Regente, mesmo estando na mesma conta.
+        Conecte um serviço e escolha o que este workspace usa. Só o que você
+        escolher passa a ser alcançável pelo Regente — o resto continua invisível
+        para ele, mesmo estando na mesma conta.
       </p>
 
-      <EmUso escolhidos={escolhidos} pode={pode} />
-
-      {!provedores.length ? (
+      {!conectores.length ? (
         <Secao titulo="Serviços">
           <Vazio
             icone="conexao"
-            titulo="Nenhum serviço configurado sabe listar recursos"
-            texto={
-              "Integrações aparecem aqui depois que você conecta um serviço " +
-              "capaz de dizer o que a sua conta alcança."
-            }
-            acao={
-              <a className="btn btn-primary" href="#/config/providers">
-                Ir para Conexões
-              </a>
-            }
+            titulo="Nenhum serviço disponível para conectar"
+            texto="Esta instalação não trouxe conectores."
           />
         </Secao>
       ) : (
-        provedores.map((p) => (
-          <Provedor key={p.provider} provedor={p} pode={pode} />
+        conectores.map((c) => (
+          <Servico
+            key={c.connector}
+            servico={c}
+            arvore={arvoreDe(c.connector)}
+            escolhidos={escolhidos.filter((r) => r.provider === c.connector)}
+            pode={pode}
+          />
         ))
       )}
     </>
@@ -93,80 +104,399 @@ function Conteudo({ escolhidos, editavel, provedores }) {
 }
 
 // ---------------------------------------------------------------------------
-// O que este workspace usa hoje
+// Um serviço: conectar, e o que ele traz
 // ---------------------------------------------------------------------------
 
-function EmUso({ escolhidos, pode }) {
+function Servico({ servico, arvore, escolhidos, pode }) {
   const { api, recarregar } = useRegente();
   const [aviso, diga] = useFeedback();
-  const [saindo, setSaindo] = useState("");
+  const [contas, setContas] = useState(null);
+  const [indo, setIndo] = useState("");
+  const [passo, setPasso] = useState(servico.step);
+  const [conflito, setConflito] = useState(null);
+  const [achado, setAchado] = useState(null);
+
+  // O nível onde estão as coisas que se escolhem: a folha da árvore.
+  const folha = arvore[arvore.length - 1] || "";
+  const conectado = servico.connected;
+
+  // Ao abrir já conectado, a lista aparece sozinha. Quem conectou ontem não
+  // deveria precisar apertar nada hoje para ver o que tem.
+  const jaBuscou = useRef(false);
+  useEffect(() => {
+    if (!conectado || !folha || jaBuscou.current) return;
+    jaBuscou.current = true;
+    buscar();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conectado, folha]);
+
+  async function buscar() {
+    setIndo("buscando");
+    const r = await post(`${api("/resources")}/discover`, {
+      provider: servico.connector,
+      kind: folha,
+    });
+    setIndo("");
+    if (!r.ok) {
+      diga.erro(digaOErro(r));
+      return;
+    }
+    setAchado(r.payload);
+  }
+
+  async function autorizar() {
+    setIndo("autorizando");
+    const r = await post(
+      `${api("/connectors")}/${servico.connector}/autorizar`,
+      {},
+    );
+    setIndo("");
+    if (!r.ok) {
+      diga.erro(digaOErro(r));
+      return;
+    }
+    setPasso(r.payload);
+  }
+
+  async function verContas() {
+    setIndo("contas");
+    try {
+      const r = await get(`${api("/connectors")}/${servico.connector}/accounts`);
+      setContas(r.accounts || []);
+    } catch (e) {
+      diga.erro("Não deu para ler as contas deste serviço.");
+    }
+    setIndo("");
+  }
+
+  async function conectar(conta, substituir = false) {
+    setIndo(conta);
+    const r = await post(
+      `${api("/connectors")}/${servico.connector}/conectar`,
+      { account: conta, ...(substituir ? { replace: true } : {}) },
+    );
+    setIndo("");
+    if (!r.ok) {
+      // Uma credencial antiga no caminho não é um beco: a tela oferece trocar.
+      if (r.payload?.credential_id) {
+        setConflito({ conta, detalhe: r.payload.detail });
+        return;
+      }
+      diga.erro(digaOErro(r));
+      return;
+    }
+    setConflito(null);
+    setContas(null);
+    // A frase é DAQUI. O motor manda um código; quem escreve português é a
+    // tela, como em todo o resto do vocabulário.
+    if (r.payload.warning) {
+      diga.erro(
+        AVISO_DA_CONEXAO[r.payload.warning] ||
+          "Conectado, mas algo ficou faltando.",
+      );
+    } else {
+      diga.ok(`${servico.title} conectado. Escolha o que este workspace usa.`);
+    }
+    recarregar();
+  }
+
+  return (
+    <Secao
+      titulo={servico.title}
+      hint={conectado && servico.current ? servico.current : ""}
+      acao={
+        conectado ? (
+          <Botao variante="btn-sm" icone="editar" onClick={verContas}>
+            Trocar conta
+          </Botao>
+        ) : null
+      }
+    >
+      {aviso}
+
+      {!conectado && (
+        <Conectar
+          servico={servico}
+          passo={passo}
+          indo={indo}
+          contas={contas}
+          onAutorizar={autorizar}
+          onVerContas={verContas}
+          onConectar={conectar}
+          onRever={recarregar}
+        />
+      )}
+
+      {conectado && contas && (
+        <Contas
+          contas={contas}
+          atual={servico.current}
+          indo={indo}
+          onEscolher={(c) => conectar(c)}
+          onCancelar={() => setContas(null)}
+        />
+      )}
+
+      {conflito && (
+        <Alerta
+          tone="warn"
+          titulo="Já existe uma credencial para este papel"
+          detalhe={conflito.detalhe}
+          acao={
+            <Botao
+              variante="btn-primary btn-sm"
+              onClick={() => conectar(conflito.conta, true)}
+            >
+              Substituir e conectar
+            </Botao>
+          }
+        />
+      )}
+
+      {conectado && (
+        <Recursos
+          servico={servico}
+          folha={folha}
+          achado={achado}
+          buscando={indo === "buscando"}
+          escolhidos={escolhidos}
+          pode={pode}
+          onRebuscar={buscar}
+        />
+      )}
+    </Secao>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// O botão
+// ---------------------------------------------------------------------------
+
+function Conectar({
+  servico,
+  passo,
+  indo,
+  contas,
+  onAutorizar,
+  onVerContas,
+  onConectar,
+  onRever,
+}) {
+  if (contas) {
+    return (
+      <Contas
+        contas={contas}
+        indo={indo}
+        onEscolher={onConectar}
+        onCancelar={onRever}
+      />
+    );
+  }
+
+  if (passo.code === "instalar") {
+    return (
+      <>
+        <Vazio
+          icone={ICONE[servico.connector] || "conexao"}
+          titulo={passo.title}
+          texto={passo.detail}
+        />
+        {passo.command && <Comando texto={passo.command} />}
+      </>
+    );
+  }
+
+  if (passo.code === "autorizar") {
+    return (
+      <>
+        <p className="muted">{servico.description}</p>
+        <div className="toolbar">
+          <Botao
+            variante="btn-primary"
+            icone={ICONE[servico.connector] || "conexao"}
+            disabled={indo === "autorizando"}
+            onClick={onAutorizar}
+          >
+            {indo === "autorizando"
+              ? "Abrindo o navegador…"
+              : `Conectar ${servico.title}`}
+          </Botao>
+          <Botao variante="btn-sm" icone="atualizar" onClick={onRever}>
+            Já autorizei
+          </Botao>
+        </div>
+        <p className="muted">{passo.detail}</p>
+        {passo.command && <Comando texto={passo.command} />}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <p className="muted">{servico.description}</p>
+      <div className="toolbar">
+        <Botao
+          variante="btn-primary"
+          icone={ICONE[servico.connector] || "conexao"}
+          disabled={indo === "contas"}
+          onClick={onVerContas}
+        >
+          {indo === "contas" ? "Carregando…" : `Conectar ${servico.title}`}
+        </Botao>
+      </div>
+      {passo.detail && <p className="muted">{passo.detail}</p>}
+    </>
+  );
+}
+
+/** O mesmo, para quem prefere o terminal. Nunca obrigatório. */
+function Comando({ texto }) {
+  return (
+    <Tecnico titulo="Prefiro rodar no terminal">
+      <code>{texto}</code>
+    </Tecnico>
+  );
+}
+
+function Contas({ contas, atual, indo, onEscolher, onCancelar }) {
+  if (!contas.length) {
+    return (
+      <Vazio
+        icone="identidade"
+        titulo="Nenhuma conta encontrada"
+        texto="A autorização pode não ter concluído. Tente conectar de novo."
+      />
+    );
+  }
+  return (
+    <>
+      <Painel flush>
+        <Tabela
+          chave={(c) => c.id}
+          colunas={[
+            {
+              rot: "Conta",
+              corpo: (c) => (
+                <>
+                  <strong>{c.name}</strong>
+                  <div className="muted">
+                    {c.kind === "pessoal" ? "Sua conta" : "Organização"}
+                    {c.id === atual ? " · em uso" : ""}
+                  </div>
+                </>
+              ),
+            },
+            {
+              rot: "Usar",
+              oculto: true,
+              corpo: (c) => (
+                <Botao
+                  variante="btn-primary btn-sm"
+                  disabled={indo === c.id || c.id === atual}
+                  onClick={() => onEscolher(c.id)}
+                >
+                  {indo === c.id ? "Conectando…" : "Usar esta"}
+                </Botao>
+              ),
+            },
+          ]}
+          linhas={contas}
+        />
+      </Painel>
+      {onCancelar && (
+        <div className="toolbar">
+          <Botao variante="btn-sm" onClick={onCancelar}>
+            Cancelar
+          </Botao>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// O que o serviço traz, e o que este workspace usa
+// ---------------------------------------------------------------------------
+
+function Recursos({
+  servico,
+  folha,
+  achado,
+  buscando,
+  escolhidos,
+  pode,
+  onRebuscar,
+}) {
+  const { api, recarregar } = useRegente();
+  const [aviso, diga] = useFeedback();
+  const [marcados, setMarcados] = useState(() => new Set());
+  const [busca, setBusca] = useState("");
+
+  async function adicionar() {
+    const ids = [...marcados];
+    if (!ids.length) return;
+    const r = await post(`${api("/resources")}/select`, {
+      provider: servico.connector,
+      kind: folha,
+      ids,
+    });
+    if (!r.ok) {
+      diga.erro(digaOErro(r));
+      return;
+    }
+    diga.ok(
+      `${ids.length} ${ids.length === 1 ? "item passou" : "itens passaram"} a ` +
+        "fazer parte deste workspace.",
+    );
+    setMarcados(new Set());
+    recarregar();
+    onRebuscar();
+  }
 
   async function remover(r) {
-    setSaindo(r.ref);
-    const resposta = await del(`${api("/resources")}/${encodeURIComponent(r.ref)}`);
-    setSaindo("");
+    const resposta = await del(
+      `${api("/resources")}/${encodeURIComponent(r.ref)}`,
+    );
     if (!resposta.ok) {
       diga.erro(digaOErro(resposta));
       return;
     }
     diga.ok(`O Regente deixa de alcançar ${r.name} a partir de agora.`);
     recarregar();
+    onRebuscar();
   }
 
+  const filtro = busca.trim().toLowerCase();
+  const itens = (achado?.resources || []).filter((i) =>
+    filtro ? `${i.label} ${i.id}`.toLowerCase().includes(filtro) : true,
+  );
+  const marcaveis = itens.filter(
+    (i) => i.selectable && i.status !== "SELECIONADO",
+  );
+
   return (
-    <Secao
-      titulo="Em uso neste workspace"
-      hint={
-        escolhidos.length
-          ? `${escolhidos.length} ${escolhidos.length === 1 ? "recurso" : "recursos"}`
-          : ""
-      }
-    >
+    <>
       {aviso}
 
-      {!escolhidos.length ? (
-        <Vazio
-          icone="vazio"
-          titulo="O Regente ainda não usa nenhum recurso"
-          texto={
-            "Busque abaixo o que cada serviço alcança e escolha o que este " +
-            "workspace deve usar."
-          }
-        />
-      ) : (
+      {escolhidos.length > 0 && (
         <Painel flush>
           <Tabela
             chave={(r) => r.ref}
             colunas={[
-              { rot: "Recurso", corpo: (r) => <strong>{r.name}</strong> },
-              { rot: "Serviço", corpo: (r) => r.provider },
+              { rot: "Em uso", corpo: (r) => <strong>{r.name}</strong> },
               {
                 rot: "Para quê",
                 corpo: (r) => PAPEL_DO_RECURSO[r.role] || r.role,
               },
-              {
-                rot: "Escolhido por",
-                corpo: (r) => (
-                  <span className="muted">
-                    {r.selected_by || "—"}
-                    {r.selected_at
-                      ? ` · ${new Date(r.selected_at).toLocaleDateString("pt-BR")}`
-                      : ""}
-                  </span>
-                ),
-              },
               ...(pode
                 ? [
                     {
-                      // `oculto` mantém o título para leitor de tela e o tira
-                      // da tela. Um `<th />` vazio some para os dois.
                       rot: "Tirar do workspace",
                       oculto: true,
                       corpo: (r) => (
                         <Botao
                           variante="btn-danger btn-sm"
                           icone="remover"
-                          disabled={saindo === r.ref}
                           onClick={() => remover(r)}
                         >
                           Remover
@@ -180,225 +510,94 @@ function EmUso({ escolhidos, pode }) {
           />
         </Painel>
       )}
-    </Secao>
-  );
-}
 
-// ---------------------------------------------------------------------------
-// Um serviço, e a árvore dele
-// ---------------------------------------------------------------------------
-
-function Provedor({ provedor, pode }) {
-  const { api, recarregar } = useRegente();
-  const arvore = provedor.tree || [];
-  // Começa na FOLHA da árvore: é onde estão as coisas que se escolhem. Abrir no
-  // nível de navegação faria a primeira busca de todo mundo devolver uma linha
-  // que nem dá para selecionar.
-  const [nivel, setNivel] = useState(arvore[arvore.length - 1] || "");
-  const [pai, setPai] = useState(null);
-  const [achado, setAchado] = useState(null);
-  const [buscando, setBuscando] = useState(false);
-  const [busca, setBusca] = useState("");
-  const [marcados, setMarcados] = useState(() => new Set());
-  const [aviso, diga] = useFeedback();
-
-  async function buscar(tipo, novoPai) {
-    setBuscando(true);
-    setMarcados(new Set());
-    const resposta = await post(`${api("/resources")}/discover`, {
-      provider: provedor.provider,
-      kind: tipo,
-      parent: novoPai ? novoPai.ref : "",
-    });
-    setBuscando(false);
-    if (!resposta.ok) {
-      diga.erro(digaOErro(resposta));
-      setAchado(null);
-      return;
-    }
-    setAchado(resposta.payload);
-  }
-
-  function irPara(tipo, novoPai) {
-    setNivel(tipo);
-    setPai(novoPai || null);
-    setAchado(null);
-    setBusca("");
-    setMarcados(new Set());
-  }
-
-  async function escolher() {
-    const ids = [...marcados];
-    if (!ids.length) return;
-    const resposta = await post(`${api("/resources")}/select`, {
-      provider: provedor.provider,
-      kind: nivel,
-      parent: pai ? pai.ref : "",
-      ids,
-    });
-    if (!resposta.ok) {
-      diga.erro(digaOErro(resposta));
-      return;
-    }
-    diga.ok(
-      `${ids.length} ${ids.length === 1 ? "recurso passou" : "recursos passaram"}` +
-        " a fazer parte deste workspace.",
-    );
-    setMarcados(new Set());
-    recarregar();
-    // Relê do serviço para as situações da lista pararem de mentir: o que
-    // acabou de ser escolhido precisa aparecer como "em uso" agora, e não na
-    // próxima vez que alguém clicar em buscar.
-    buscar(nivel, pai);
-  }
-
-  const filtro = busca.trim().toLowerCase();
-  const itens = (achado?.resources || []).filter((i) =>
-    filtro ? `${i.label} ${i.id}`.toLowerCase().includes(filtro) : true,
-  );
-  const marcaveis = itens.filter((i) => i.selectable && i.status !== "SELECIONADO");
-
-  return (
-    <Secao titulo={provedor.provider} hint={arvore.map(tipoPlural).join(" › ")}>
-      {aviso}
-
-      {arvore.length > 1 && (
-        <nav className="tabs" aria-label={`Níveis de ${provedor.provider}`}>
-          {arvore.map((t) => (
-            <a
-              key={t}
-              href="#"
-              aria-current={t === nivel ? "page" : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                irPara(t, null);
-              }}
-            >
-              {tipoPlural(t)}
-            </a>
-          ))}
-        </nav>
-      )}
-
-      {pai && (
-        <p className="muted">
-          Dentro de <strong>{pai.label}</strong>.{" "}
-          <a
-            href="#"
-            onClick={(e) => {
-              e.preventDefault();
-              irPara(nivel, null);
-            }}
-          >
-            Ver todos
-          </a>
-        </p>
-      )}
-
-      <div className="toolbar">
-        <Botao
-          variante="btn-primary"
-          icone="buscar"
-          disabled={buscando}
-          onClick={() => buscar(nivel, pai)}
-        >
-          {buscando
-            ? "Perguntando…"
-            : achado
-              ? "Buscar de novo"
-              : `Buscar ${tipoPlural(nivel).toLowerCase()}`}
-        </Botao>
-        {achado?.resources?.length > 0 && (
-          <input
-            className="input grow"
-            type="search"
-            placeholder="Filtrar por nome"
-            aria-label={`Filtrar ${tipoPlural(nivel).toLowerCase()}`}
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-          />
-        )}
-      </div>
-
-      {!achado && !buscando && (
-        <p className="muted">
-          Buscar pergunta ao {provedor.provider} o que a credencial deste
-          workspace alcança. Nada é escolhido por esta ação.
-        </p>
-      )}
+      {buscando && <p className="muted">Perguntando ao {servico.title}…</p>}
 
       {achado && !achado.ok && <Falhou achado={achado} />}
 
-      {achado?.ok && !itens.length && (
-        <Vazio
-          icone="buscar"
-          titulo={
-            filtro
-              ? "Nada com esse nome"
-              : `Este serviço não mostrou nenhum ${tipoPlural(nivel).toLowerCase()}`
-          }
-          texto={
-            filtro
-              ? "Ajuste o filtro."
-              : "A credencial deste workspace pode não alcançar nada aqui."
-          }
-        />
-      )}
-
-      {itens.length > 0 && (
+      {achado?.ok && (
         <>
-          <Painel flush>
-            <Lista
-              itens={itens}
-              arvore={arvore}
-              nivel={nivel}
-              marcados={marcados}
-              pode={pode}
-              aoMarcar={(id, ligado) => {
-                const proximo = new Set(marcados);
-                if (ligado) proximo.add(id);
-                else proximo.delete(id);
-                setMarcados(proximo);
-              }}
-              aoEntrar={(item) => {
-                const abaixo = arvore[arvore.indexOf(nivel) + 1];
-                if (abaixo) irPara(abaixo, item);
-              }}
-            />
-          </Painel>
+          <div className="toolbar">
+            <strong>{tipoPlural(folha)} disponíveis</strong>
+            {achado.resources.length > 6 && (
+              <input
+                className="input grow"
+                type="search"
+                placeholder="Filtrar por nome"
+                aria-label={`Filtrar ${tipoPlural(folha).toLowerCase()}`}
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+              />
+            )}
+            <span className="spacer" />
+            <Botao variante="btn-sm" icone="atualizar" onClick={onRebuscar}>
+              Atualizar
+            </Botao>
+          </div>
 
-          {pode && marcaveis.length > 0 && (
-            <div className="toolbar">
-              <Botao
-                variante="btn-sm"
-                onClick={() => setMarcados(new Set(marcaveis.map((i) => i.id)))}
-              >
-                Marcar {marcaveis.length}
-              </Botao>
-              {marcados.size > 0 && (
-                <Botao variante="btn-sm" onClick={() => setMarcados(new Set())}>
-                  Limpar
-                </Botao>
+          {!itens.length ? (
+            <Vazio
+              icone="buscar"
+              titulo={
+                filtro
+                  ? "Nada com esse nome"
+                  : `Esta conta não tem ${tipoPlural(folha).toLowerCase()}`
+              }
+              texto={filtro ? "Ajuste o filtro." : "Nada a escolher aqui."}
+            />
+          ) : (
+            <>
+              <Painel flush>
+                <Lista
+                  itens={itens}
+                  marcados={marcados}
+                  pode={pode}
+                  aoMarcar={(id, ligado) => {
+                    const proximo = new Set(marcados);
+                    if (ligado) proximo.add(id);
+                    else proximo.delete(id);
+                    setMarcados(proximo);
+                  }}
+                />
+              </Painel>
+
+              {pode && marcaveis.length > 0 && (
+                <div className="toolbar">
+                  <Botao
+                    variante="btn-sm"
+                    onClick={() =>
+                      setMarcados(new Set(marcaveis.map((i) => i.id)))
+                    }
+                  >
+                    Marcar {marcaveis.length}
+                  </Botao>
+                  {marcados.size > 0 && (
+                    <Botao
+                      variante="btn-sm"
+                      onClick={() => setMarcados(new Set())}
+                    >
+                      Limpar
+                    </Botao>
+                  )}
+                  <span className="spacer" />
+                  <Botao
+                    variante="btn-primary"
+                    icone="mais"
+                    disabled={!marcados.size}
+                    onClick={adicionar}
+                  >
+                    Adicionar ao workspace
+                    {marcados.size ? ` (${marcados.size})` : ""}
+                  </Botao>
+                </div>
               )}
-              <span className="spacer" />
-              <Botao
-                variante="btn-primary"
-                icone="mais"
-                disabled={!marcados.size}
-                onClick={escolher}
-              >
-                Adicionar ao workspace
-                {marcados.size ? ` (${marcados.size})` : ""}
-              </Botao>
-            </div>
+            </>
           )}
         </>
       )}
-    </Secao>
+    </>
   );
 }
-
-// ---------------------------------------------------------------------------
 
 /**
  * A busca não respondeu.
@@ -426,9 +625,9 @@ function Falhou({ achado }) {
   );
 }
 
-function Lista({ itens, arvore, nivel, marcados, pode, aoMarcar, aoEntrar }) {
-  const temFilho = arvore.indexOf(nivel) < arvore.length - 1;
-  const situacaoDe = (i) => SITUACAO[i.status] || { texto: i.status, tone: "muted" };
+function Lista({ itens, marcados, pode, aoMarcar }) {
+  const situacaoDe = (i) =>
+    SITUACAO[i.status] || { texto: i.status, tone: "muted" };
 
   return (
     <Tabela
@@ -459,40 +658,22 @@ function Lista({ itens, arvore, nivel, marcados, pode, aoMarcar, aoEntrar }) {
           corpo: (i) => (
             <>
               <strong>{i.label}</strong>
-              {i.label !== i.id && <div className="muted">{i.id}</div>}
-              {!i.selectable && (
-                <div className="muted">
-                  {i.note || "Só para navegar — escolha o que está dentro."}
-                </div>
-              )}
+              {!i.selectable && i.note && <div className="muted">{i.note}</div>}
             </>
           ),
         },
         {
           rot: "Situação",
           corpo: (i) =>
-            // "Disponível" quer dizer "existe e você não escolheu". Num nó que
-            // não se escolhe isso não significa nada, e a etiqueta convidaria a
-            // procurar a caixa que não está lá.
+            // "Disponível" quer dizer "existe e você não escolheu". Num item
+            // que não se escolhe isso não significa nada, e a etiqueta
+            // convidaria a procurar a caixa que não está lá.
             i.selectable ? (
               <Badge tone={situacaoDe(i).tone} texto={situacaoDe(i).texto} />
             ) : (
               <span className="dim">—</span>
             ),
         },
-        ...(temFilho
-          ? [
-              {
-                rot: "Abrir",
-                oculto: true,
-                corpo: (i) => (
-                  <Botao variante="btn-sm" icone="seta" onClick={() => aoEntrar(i)}>
-                    Abrir
-                  </Botao>
-                ),
-              },
-            ]
-          : []),
       ]}
       linhas={itens}
     />

@@ -87,8 +87,20 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"nao serializavel: {type(value).__name__}")
 
 
-def _error(status: int, code: str, detail: str) -> Response:
-    return Response(status, {"error": code, "detail": detail})
+def _error(status: int, code: str, detail: str,
+           extra: dict | None = None) -> Response:
+    """Uma recusa. `extra` acrescenta o que a tela precisa para OFERECER a saida.
+
+    Existe por um caso concreto: conectar recusa porque ja ha uma credencial
+    sem a permissao de listar. Sem o id dela junto, a tela so consegue dizer
+    "resolva isso em outro lugar" -- e quem le vai procurar.
+    """
+    corpo = {"error": code, "detail": detail}
+    if extra:
+        # `error` e `detail` mandam. Um `extra` nao pode reescrever a recusa.
+        corpo.update({k: v for k, v in extra.items()
+                      if k not in ("error", "detail")})
+    return Response(status, corpo)
 
 
 #: Como cada recusa do Core vira HTTP.
@@ -227,11 +239,19 @@ class Api:
     #: administra -- e a tela mostra que integracoes nao sao editaveis aqui,
     #: em vez de oferecer um botao que responde 500.
     resources: "ResourceService | None" = None
-    #: `{provedor: (tipos que ele descobre)}`. Vem da COMPOSICAO pelo mesmo
-    #: motivo que `catalog`: saber que o Jira tem projetos e boards e o GitHub
-    #: tem contas e repositorios e conhecimento de fornecedor, e esta camada
-    #: nao importa adapter nenhum.
-    discovery_trees: dict | None = None
+    #: Conectar um servico em um clique. `None` quando a composicao nao o
+    #: entrega -- e a tela mostra os servicos como nao conectaveis daqui, em vez
+    #: de oferecer um botao que responde 500.
+    connections: "ConnectService | None" = None
+    #: `() -> {provedor: (tipos que ele descobre)}`. Vem da COMPOSICAO pelo
+    #: mesmo motivo que `catalog`: saber que o Jira tem projetos e boards e o
+    #: GitHub tem contas e repositorios e conhecimento de fornecedor, e esta
+    #: camada nao importa adapter nenhum.
+    #:
+    #: E uma FUNCAO, e nao um dicionario: conectar um servico muda a resposta,
+    #: e um dicionario montado no `serve()` deixaria a tela mostrando o mundo de
+    #: quando o processo subiu.
+    discovery_trees: object = None
     #: Sessao declarada somente-leitura pela composicao.
     #:
     #: NAO substitui nenhuma barreira: e uma recusa ADICIONAL, antes das do
@@ -278,6 +298,11 @@ class Api:
             if (len(parts) >= 4 and parts[:2] == ["api", "workspaces"]
                     and parts[3] == "resources"):
                 return self._resource_write(method, parts, body, who)
+            if (method == "POST" and len(parts) == 6
+                    and parts[:2] == ["api", "workspaces"]
+                    and parts[3] == "connectors"):
+                return self._connector_write(parts[2], parts[4], parts[5],
+                                             body, who)
             return _error(405, "read_only",
                           "esta API e somente leitura; autoridade de escrita "
                           "pertence ao motor e ao humano, nao a uma tela")
@@ -436,6 +461,20 @@ class Api:
             return Response(200, {"credentials": [_credential_dict(c, at)
                                                   for c in found]})
 
+        if head == "connectors" and not tail:
+            # O que da para conectar, e o que falta em cada um. Sem servico, a
+            # lista e vazia -- a pagina continua desenhavel.
+            if self.connections is None:
+                return Response(200, {"connectors": []})
+            return Response(200,
+                            {"connectors": self.connections.listar(who, workspace_id)})
+
+        if head == "connectors" and len(tail) == 2 and tail[1] == "accounts":
+            if self.connections is None:
+                return Response(200, {"accounts": []})
+            return Response(200, {"accounts": self.connections.contas(
+                who, workspace_id, tail[0])})
+
         if head == "resources":
             return self._resources_read(workspace_id, tail, query, who)
 
@@ -518,7 +557,8 @@ class Api:
             # O que cada provedor SABE descobrir, e em que ordem de arvore.
             # A tela precisa disto para navegar sem conhecer fornecedor: ela le
             # a arvore daqui em vez de trazer um `if provider === 'github'`.
-            arvores = self.discovery_trees or {}
+            arvores = (self.discovery_trees() if callable(self.discovery_trees)
+                       else (self.discovery_trees or {}))
             return Response(200, {"providers": [
                 {"provider": nome, "tree": list(tipos),
                  "root": (list(tipos)[0] if tipos else "")}
@@ -626,6 +666,43 @@ class Api:
                 [str(i) for i in ids], pai))
 
         return _error(405, "read_only", "rota inexistente")
+
+    def _connector_write(self, workspace_id: str, nome: str, acao: str,
+                         body: dict | None, who: Principal) -> Response:
+        """`POST .../connectors/{nome}/autorizar` e `.../conectar`.
+
+        Duas acoes, e a diferenca importa: AUTORIZAR abre o navegador e nao
+        grava nada; CONECTAR grava a configuracao e registra a credencial --
+        pelos servicos de sempre, que e onde as barreiras moram.
+        """
+        if self.connections is None:
+            return _error(403, "no_authority",
+                          "esta composicao nao conecta servicos")
+        if not who.may_read(workspace_id):
+            return _not_found("workspace")
+
+        if acao == "autorizar":
+            return Response(200, self.connections.autorizar(who, workspace_id,
+                                                            nome))
+        if acao != "conectar":
+            return _error(405, "read_only", "rota inexistente")
+
+        corpo = body if isinstance(body, dict) else {}
+        for proibido in ("actor", "workspace_id", "client_id", "secret",
+                         "material", "token", "secret_ref"):
+            if proibido in corpo:
+                return _error(400, "invalid_body",
+                              f"'{proibido}' nao e aceito: ator, escopo e "
+                              f"material secreto nao vem da requisicao")
+
+        saida = self.connections.conectar(
+            who, workspace_id, nome, str(corpo.get("account") or ""),
+            substituir=bool(corpo.get("replace")))
+        if not saida.accepted:
+            return _error(RESOURCE_STATUS.get(saida.refusal, 400),
+                          saida.refusal.value.lower() if saida.refusal
+                          else "recusado", saida.reason, extra=saida.as_dict())
+        return Response(200, saida.as_dict())
 
     def _resource_outcome(self, saida) -> Response:
         if not saida.accepted:
@@ -1315,7 +1392,8 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
           needs_credential: object | None = None,
           catalog: dict | None = None,
           resources: "ResourceService | None" = None,
-          discovery_trees: dict | None = None,
+          connections: "ConnectService | None" = None,
+          discovery_trees: object = None,
           session_token: str = "",
           read_only: bool = False) -> ThreadingHTTPServer:
     """Sobe o servidor. Loopback por padrao, e isso continua sendo uma decisao.
@@ -1330,7 +1408,8 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
               credentials=credentials, operations=operations,
               settings=settings, probe_for=probe_for, config=config,
               needs_credential=needs_credential, catalog=catalog,
-              resources=resources, discovery_trees=discovery_trees,
+              resources=resources, connections=connections,
+              discovery_trees=discovery_trees,
               read_only=read_only, session_token=session_token,
               identity_note=(identity.describe() if identity is not None
                              else "sem provedor de identidade"),

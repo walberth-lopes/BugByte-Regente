@@ -453,6 +453,69 @@ def test_no_user_facing_string_shouts():
     assert not gritos, "frases em caixa alta na interface:\n  " + "\n  ".join(gritos)
 
 
+SEM_ACENTO = {
+    "nao ": "não", "voce": "você", "configuracao": "configuração",
+    "organizacao": "organização", "autorizacao": "autorização",
+    "seguranca": "segurança", "codigo": "código", "unico": "único",
+    "credencia": None, "permissao": "permissão", "conexao": "conexão",
+    "usuario": "usuário", "proximo": "próximo", "servico": "serviço",
+    "enderec": "endereç", "e-mail nao": "e-mail não",
+}
+
+
+def _sem_acento(frases) -> list[str]:
+    achados = []
+    for onde, frase in frases:
+        baixo = str(frase).lower()
+        for errada, certa in SEM_ACENTO.items():
+            if certa and errada in baixo:
+                achados.append(f"{onde}: '{errada}' deveria ser '{certa}' "
+                               f"em {frase!r}")
+    return achados
+
+
+def test_the_python_product_copy_is_also_portuguese():
+    """O texto que vem do PACOTE tambem aparece na tela, e tambem precisa.
+
+    A guarda le o que e RENDERIZADO, e nao o codigo-fonte. A primeira versao
+    lia os arquivos `.py` inteiros e acusou uma docstring e a mensagem de um
+    `KeyError` -- nenhum dos dois vai para tela nenhuma. Uma guarda que acusa o
+    inocente ensina a ignorar a guarda, e foi a terceira vez neste marco.
+
+    O defeito real que ela pega: "Onde o Regente le o codigo e abre pull
+    requests" apareceu na interface, em portugues capenga, vindo de um conector.
+    """
+    from regente.adapters.registry import catalogo, conectores
+
+    frases = []
+    for nome, c in conectores().items():
+        frases.append((f"conector {nome}.titulo", c.titulo))
+        frases.append((f"conector {nome}.descricao", c.descricao))
+        passo = c.estado()
+        frases.append((f"conector {nome}.estado.titulo", passo.titulo))
+        frases.append((f"conector {nome}.estado.detalhe", passo.detalhe))
+
+    for papel, dados in (catalogo().get("roles") and
+                         {r["role"]: r for r in catalogo()["roles"]} or {}
+                         ).items():
+        frases.append((f"catalogo {papel}.label", dados.get("label", "")))
+        frases.append((f"catalogo {papel}.help", dados.get("help", "")))
+        for oferta in dados.get("options", []):
+            frases.append((f"catalogo {papel}/{oferta.get('name')}",
+                           oferta.get("label", "")))
+            frases.append((f"catalogo {papel}/{oferta.get('name')} ajuda",
+                           oferta.get("help", "")))
+            for campo in oferta.get("fields", []):
+                frases.append((f"catalogo campo {campo.get('key')}",
+                               campo.get("label", "")))
+                frases.append((f"catalogo campo {campo.get('key')} ajuda",
+                               campo.get("help", "")))
+
+    achados = _sem_acento(frases)
+    assert not achados, ("portugues sem acento vindo do pacote:\n  "
+                         + "\n  ".join(achados))
+
+
 def test_the_interface_writes_portuguese_with_accents():
     """Portugues sem acento numa tela le-se como descuido.
 
@@ -474,7 +537,7 @@ def test_the_interface_writes_portuguese_with_accents():
             # da casa; caminho de import, chave de rota e valor comparado com o
             # motor nao sao texto de produto -- e uma guarda que acusa o
             # inocente ensina a ignorar a guarda.
-            if linha.lstrip().startswith(("//", "*", "/*")):
+            if linha.lstrip().startswith(("//", "*", "/*", "#")):
                 continue
             if re.search(r'\bimport\b|\bfrom\s+"|===|!==|startsWith\(', linha):
                 continue

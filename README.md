@@ -123,6 +123,46 @@ uv tool upgrade regente
 uv tool uninstall regente
 ```
 
+> **Instale por um caminho só.** `pip install regente` também funciona, mas se
+> você usar os dois você fica com dois executáveis — e o que vier primeiro no
+> `PATH` ganha, mesmo sendo o mais velho. Se `regente --version` mostrar uma
+> versão que você não instalou, `where regente` mostra quem está respondendo.
+
+### Depois de atualizar: `regente atualizar`
+
+O `policies.yaml` de um workspace é escrito uma vez, quando você roda `init`, e
+nunca mais — e é assim de propósito: **o arquivo é seu**, e trocar de versão não
+pode ampliar o que o Regente pode fazer sem alguém decidir.
+
+O efeito colateral é que uma versão nova pode saber fazer coisas que o seu
+arquivo nunca ouviu falar. Isso não vira um erro claro: vira uma recusa por
+omissão — a policy não diz não, ela simplesmente não conhece a ação.
+
+O `doctor` percebe:
+
+```
+  FALHA  policy em dia   policies.yaml nao conhece 4 acao(oes) desta versao:
+                         repo.discover, task.discover, workspace.resource.select…
+                         Ponha em dia com: regente atualizar
+```
+
+E `regente atualizar` mostra exatamente o que falta, **com a razão de cada
+regra**, sem escrever nada:
+
+```bash
+regente atualizar
+```
+
+Se você concordar:
+
+```bash
+regente atualizar --aplicar
+```
+
+Ele **acrescenta**, nunca remove: o que a sua organização escreveu continua
+valendo, inclusive um `DENY` que contrarie o modelo. Detectar é automático;
+ampliar continua sendo uma decisão sua.
+
 ### O Regente usa outros programas da sua máquina
 
 Ele não os instala, e diz claramente quando falta algum. `regente doctor`
@@ -624,78 +664,55 @@ Depois registre a credencial (passo 10) e prove:
 regente credentials testar --provider tasks --uso task.read
 ```
 
-### 14b. Escolher o que o Regente usa de cada serviço
+### 14b. Conectar o GitHub, e escolher o que ele traz
 
-Conectar um serviço dá ao Regente permissão para **perguntar** o que existe
-nele. Não dá permissão para trabalhar em tudo o que ele alcança.
+Abra **Configuração › Integrações** e clique em **Conectar GitHub**.
 
-Essa distinção é o assunto desta etapa. Uma credencial que enxerga 47
+Ele abre o navegador se você ainda não tiver autorizado, pergunta de qual conta
+ou organização, e traz a lista dos seus repositórios. Você marca os que este
+workspace vai usar. Acabou.
+
+Pelo terminal é o mesmo caminho, e o mesmo serviço por baixo:
+
+```bash
+regente conectar github
+```
+
+```
+de qual conta?
+  walberth-lopes               pessoal
+  silverguard-br               organizacao
+
+conecte com: regente conectar github --conta <id>
+```
+
+```bash
+regente conectar github --conta silverguard-br
+```
+
+O que aconteceu num pedido só: o provider ficou configurado, a credencial foi
+registrada, e o Regente ganhou autorização para usar a conexão nos ciclos
+automáticos — tudo pelo mesmo caminho governado que o resto usa, e tudo na
+trilha com o seu nome.
+
+> **O Regente não guardou segredo nenhum.** O `gh` mantém o token no chaveiro do
+> seu sistema; o que ficou gravado é o endereço `helper:gh`, e o material é
+> pedido no momento do uso. É a mesma regra de sempre, e conectar com um clique
+> não abriu exceção.
+
+**Só o que você marcar é alcançável.** Uma credencial que enxerga 47
 repositórios autoriza *listar* 47 — quem decide em quais o Regente pode mexer é
-você, e a escolha fica gravada com seu nome e a data.
+você, e a escolha fica gravada com seu nome e a data. Enquanto você não escolher
+nada, um workspace que já existia continua enxergando o que enxergava.
 
-Veja o que o serviço mostra:
-
-```bash
-regente integracoes descobrir --provider github --tipo repository
-```
-
-```
-  [ ] acme/api
-  [ ] acme/site
-  [x] acme/backend
-  [ ] acme/infra
-
-escolha com: regente integracoes escolher --provider github --tipo repository <id> [<id>...]
-```
-
-`[x]` é o que este workspace já usa. `[ ]` é o que existe e **o Regente não
-alcança**. Escolha:
+Para ver e mexer depois:
 
 ```bash
-regente integracoes escolher --provider github --tipo repository acme/api acme/site
+regente integracoes listar
+regente integracoes remover --provider github --tipo repository acme/api
 ```
 
-```
-2 recurso(s) passaram a pertencer a este workspace
-  github:repository:acme/api
-  github:repository:acme/site
-```
-
-A partir daí o motor só enxerga esses. `regente integracoes listar` mostra o que
-está em uso, e `remover` tira — o Regente deixa de alcançar na hora, sem
-reiniciar nada.
-
-O mesmo vale do lado do trabalho. No Jira, o que se escolhe é o **projeto**:
-
-```bash
-regente integracoes descobrir --provider jira --tipo project
-regente integracoes escolher --provider jira --tipo project 10001
-```
-
-Tasks de projetos que ninguém escolheu não entram na fila.
-
-> **Enquanto você não escolher nada, nada muda.** Um workspace sem seleção
-> continua enxergando tudo o que enxergava antes. Isso é de propósito: a
-> atualização não pode parar o motor de quem já estava rodando por uma decisão
-> que ninguém tomou. A partir da primeira escolha, vale a escolha.
-
-**Listar e ler são permissões separadas.** A credencial precisa de
-`repo.discover` (ou `task.discover`) para a busca funcionar — ter `repo.read`
-não basta, e a recusa diz exatamente isso. Se você registrou credenciais antes
-desta versão, registre-as de novo incluindo a permissão de listar:
-
-```bash
-regente credentials registrar principal \
-    --provider repository \
-    --referencia helper:github \
-    --capacidades repo.discover,repo.read
-```
-
-Sem isso, buscar responde *"esta credencial não foi autorizada a listar"* — e o
-resto continua funcionando normalmente, porque ler o que já foi escolhido é
-outra permissão.
-
-Pela tela, o mesmo caminho está em **Configuração › Integrações**.
+O `remover` tira na hora: o motor deixa de alcançar sem reiniciar nada.
 
 ### 15. Configurar tudo pela tela
 
@@ -811,7 +828,7 @@ superior direito; por padrão ela segue o tema do seu sistema).
 | Ver commits, pull requests e o resultado do CI | **Entregas** |
 | Conectar o Jira, o GitHub, o agente | **Configuração › Conexões** |
 | Autorizar o Regente a usar um serviço | **Configuração › Credenciais** |
-| Escolher quais repositórios e projetos o Regente usa | **Configuração › Integrações** |
+| Conectar o GitHub e escolher seus repositórios | **Configuração › Integrações** |
 | Dizer o que os status do seu board significam | **Configuração › Status do board** |
 | Dizer o que deve rodar primeiro | **Configuração › Regras e prioridade** |
 | Dar acesso a outra pessoa | **Configuração › Acesso** |
@@ -962,6 +979,8 @@ Tudo também funciona como `python -m regente ...` e `uv run regente ...`.
 | `ui` | Mission Control: o estado do motor numa tela, no seu computador |
 | `access` | quem pode agir neste workspace, quem concedeu e quando |
 | `credentials` | credenciais de provider: endereço, capacidades, validade |
+| `conectar` | liga um serviço (GitHub, board, agente) num pedido só |
+| `atualizar` | mostra e aplica o que a versão instalada sabe fazer e o seu `policies.yaml` ainda não |
 | `integracoes` | o que cada serviço alcança, e o que este workspace escolheu usar |
 | `mission` | seleciona uma task, mostra o briefing, opcionalmente executa |
 
