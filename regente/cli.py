@@ -653,6 +653,7 @@ def cmd_ui(args) -> int:
     real; a fronteira ja existe, vazia de proposito.
     """
     from .adapters.identity.dev_token import DevTokenIdentity
+    from .adapters.registry import catalogo as catalogo_de_provedores
     from .app.api import serve
     from .engine.access import AccessService
     from .app.config import load_policies
@@ -754,6 +755,7 @@ def cmd_ui(args) -> int:
                   operations=operations, settings=settings, config=cfg,
                   probe_for=lambda provider: _probe(provider, cfg),
                   needs_credential=_needs_credential,
+                  catalog=catalogo_de_provedores(),
                   session_token=identity.token,
                   read_only=args.read_only)
     where = f"http://{args.host}:{args.port}/"

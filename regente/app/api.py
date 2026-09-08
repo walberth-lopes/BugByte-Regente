@@ -195,6 +195,17 @@ class Api:
     #: que um provider de arquivos nao alcanca nada fora da maquina e
     #: conhecimento de fornecedor, e a API nao pode te-lo.
     needs_credential: object | None = None
+    #: O catalogo de provedores: o que existe, e o que cada um precisa saber.
+    #:
+    #: Vem da COMPOSICAO pelo mesmo motivo que `needs_credential` e `probe_for`:
+    #: saber que o Jira quer um endereco de site e um email e conhecimento de
+    #: fornecedor, e esta camada nao pode importar adapter nenhum.
+    #:
+    #: Ele existe para a tela poder OFERECER um formulario em vez de uma caixa
+    #: de JSON. Sem ele, a lista de campos de cada provedor viveria no frontend
+    #: -- uma segunda definicao do formato, que divergiria da primeira e
+    #: aceitaria o que o motor recusa.
+    catalog: dict | None = None
     #: Sessao declarada somente-leitura pela composicao.
     #:
     #: NAO substitui nenhuma barreira: e uma recusa ADICIONAL, antes das do
@@ -261,6 +272,16 @@ class Api:
             return Response(200, {"workspaces": [
                 w.as_dict() for w in self.read.workspaces()
                 if who.may_read(w.id)]})
+
+        if rest == ["catalog"]:
+            # Leitura publica desta origem, e sem escopo de workspace: o
+            # catalogo diz o que o Regente SABE FAZER, e nao o que alguem tem.
+            # Nao ha nada aqui que pertenca a um cliente.
+            if self.catalog is None:
+                return _error(501, "no_catalog",
+                              "esta composicao nao entregou catalogo de "
+                              "provedores; configure pelo arquivo regente.yaml")
+            return Response(200, self.catalog)
 
         if len(rest) >= 2 and rest[0] == "workspaces":
             return self._workspace_route(rest[1], rest[2:], query, who)
@@ -1128,6 +1149,7 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
           probe_for: object | None = None,
           config: object | None = None,
           needs_credential: object | None = None,
+          catalog: dict | None = None,
           session_token: str = "",
           read_only: bool = False) -> ThreadingHTTPServer:
     """Sobe o servidor. Loopback por padrao, e isso continua sendo uma decisao.
@@ -1141,7 +1163,7 @@ def serve(read: ReadModel, host: str = "127.0.0.1", port: int = 8787,
     api = Api(read=read, decisions=decisions, access=access,
               credentials=credentials, operations=operations,
               settings=settings, probe_for=probe_for, config=config,
-              needs_credential=needs_credential,
+              needs_credential=needs_credential, catalog=catalog,
               read_only=read_only, session_token=session_token,
               identity_note=(identity.describe() if identity is not None
                              else "sem provedor de identidade"),

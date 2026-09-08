@@ -612,7 +612,9 @@ def test_the_api_has_no_route_that_returns_material():
 
     # A prosa da tela PODE dizer "material secreto" -- e ali que a regra fica
     # escrita para quem le. O que nao pode e um campo ou uma rota que o carregue.
-    tela = Path("regente/app/ui/app.js").read_text(encoding="utf-8")
+    from uifonte import texto
+
+    tela = texto()
     for proibido in ("secret_value", "use_secret", "/secret", ".material",
                      'c.secret"', "credential.secret"):
         assert proibido not in tela, f"a tela alcanca material: {proibido}"

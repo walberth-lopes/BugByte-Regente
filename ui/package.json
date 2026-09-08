@@ -1,0 +1,22 @@
+{
+  "name": "regente-mission-control",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "A Mission Control do Regente. O build publicado vai versionado em regente/app/ui para que instalar o pacote Python nao exija Node.",
+  "scripts": {
+    "dev": "vite",
+    "build": "node scripts/gerar-icones.mjs && vite build",
+    "preview": "vite preview",
+    "icons": "node scripts/gerar-icones.mjs"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@iconify-json/solar": "^1.2.10",
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}

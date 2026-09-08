@@ -582,19 +582,24 @@ class ReadModel:
         outra: isto anda sozinho, ou esta esperando por mim? As quatro respostas
         vem de conjuntos que o Core ja mantem, nao de uma lista paralela aqui.
         """
+        # O PROXIMO PASSO, dito para quem vai le-lo -- e nao para quem escreveu
+        # o motor. "tick" e vocabulario interno: quem abre a tela ou o terminal
+        # nao sabe que o processamento acontece em ciclos, e nao precisa saber
+        # para entender que a task vai ser pega. As frases sao curtas de
+        # proposito: elas aparecem numa celula de tabela, ao lado do estado.
         state = task.state
         if state is TaskState.WAITING_HUMAN:
-            owner, action = "human", "uma decisao esta na fila"
+            owner, action = "human", "uma decisao sua esta na fila"
         elif state in TERMINAL:
             owner, action = "nobody", ""
         elif state in AWAITING_EXTERNAL:
-            owner, action = "external", "o motor le o resultado a cada tick"
+            owner, action = "external", "o Regente le o resultado a cada ciclo"
         elif is_terminus(state):
             owner, action = ("nobody",
-                             "este motor nao tem etapa que avance daqui; "
+                             "o Regente nao tem etapa que avance daqui; "
                              "precisa de uma pessoa")
         elif engine_can_advance(state):
-            owner, action = "engine", "o proximo tick pega"
+            owner, action = "engine", "o Regente pega no proximo ciclo"
         else:
             owner, action = "engine", ""
 

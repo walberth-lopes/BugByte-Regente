@@ -305,11 +305,13 @@ def test_a_corrupt_overlay_falls_back_to_the_file_instead_of_dying(
 
 def test_the_ui_never_talks_to_the_database():
     """A tela chama a API. A API chama o servico. O servico chama o Core."""
-    from pathlib import Path
+    from uifonte import arquivos
 
-    js = Path("regente/app/ui/app.js").read_text(encoding="utf-8")
-    for proibido in ("sqlite", "SqliteStore", "store.", "SELECT ", "INSERT "):
-        assert proibido not in js, f"a tela fala com o banco: {proibido}"
+    for arquivo in arquivos():
+        js = arquivo.read_text(encoding="utf-8")
+        for proibido in ("sqlite", "SqliteStore", "store.", "SELECT ", "INSERT "):
+            assert proibido not in js, (
+                f"a tela fala com o banco em {arquivo.name}: {proibido}")
 
 
 def test_the_ui_never_receives_secret_material():
@@ -323,7 +325,9 @@ def test_the_ui_never_receives_secret_material():
     import re
     from pathlib import Path
 
-    js = Path("regente/app/ui/app.js").read_text(encoding="utf-8")
+    from uifonte import texto
+
+    js = texto()
     formas = {
         r"\.\s*(secret|material|token|password)": "le um campo de segredo",
         r"""["'`][^"'`]*/(secret|material|reveal)[^"'`]*["'`]""":

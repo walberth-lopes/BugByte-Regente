@@ -551,6 +551,11 @@ def test_12_a_restart_does_not_rebuild_a_context_from_defaults(pair):
 #: explicit decision rather than an accident.
 GLOBAL_BY_DESIGN = {
     ("registry.py", "_REGISTRO"),          # capability -> factory, no tenant data
+    # O catalogo de provedores: o que cada adapter E, e o que ele precisa
+    # saber. Vocabulario de fornecedor, nao estado -- nada de tenant, sem
+    # escrita depois da importacao. Quem escolhe o provedor de CADA
+    # workspace continua sendo a configuracao daquele workspace.
+    ("registry.py", "CATALOGO"), ("registry.py", "CAPACIDADE_DO_PAPEL"),
     ("claude_code.py", "OUTCOME_SCHEMA"),  # a JSON schema
     ("jira.py", "STATUS_MAP"), ("jira.py", "CATEGORY_MAP"),
     ("jira.py", "PRIORITY_MAP"), ("jira.py", "LINK_MAP"),

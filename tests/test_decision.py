@@ -459,9 +459,10 @@ def test_the_ui_holds_no_authorisation_logic():
     opcoes que o motor nunca ofereceu.
     """
     import re
-    from pathlib import Path
 
-    source = Path("regente/app/ui/app.js").read_text(encoding="utf-8")
+    from uifonte import texto
+
+    source = texto()
     proibidos = [
         (r"state\s*===?\s*[\"'](WAITING_HUMAN|OPEN|APPROVED)",
          "a tela comparou estado para liberar acao"),
@@ -480,11 +481,13 @@ def test_the_ui_holds_no_authorisation_logic():
 
 
 def test_the_ui_never_talks_to_the_store():
-    from pathlib import Path
+    from uifonte import arquivos
 
-    source = Path("regente/app/ui/app.js").read_text(encoding="utf-8")
-    for proibido in ("sqlite", "SELECT ", "INSERT ", "store."):
-        assert proibido not in source, f"a tela alcancou '{proibido}'"
+    for arquivo in arquivos():
+        source = arquivo.read_text(encoding="utf-8")
+        for proibido in ("sqlite", "SELECT ", "INSERT ", "store."):
+            assert proibido not in source, (
+                f"a tela alcancou '{proibido}' em {arquivo.name}")
 
 
 def test_the_api_module_never_imports_sqlite_nor_an_adapter():

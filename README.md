@@ -594,6 +594,149 @@ motivo — ele é específico. `NOT_FOUND` quer dizer que falta concessão.
 Nada disso é excesso de zelo. É a diferença entre um sistema que trabalha por
 você e um que age em seu nome sem você saber.
 
+## Usando o Regente pela interface
+
+A Mission Control é a forma principal de usar o Regente. Ela é uma página web
+que o próprio Regente serve, na sua máquina, em `127.0.0.1`. Não há nuvem, não
+há conta para criar e nada sai daqui.
+
+```bash
+regente ui
+```
+
+Abra o endereço que ele imprimir. A tela funciona em qualquer navegador atual,
+no computador ou no telefone, e tem tema claro e escuro (o botão fica no canto
+superior direito; por padrão ela segue o tema do seu sistema).
+
+### O que dá para fazer sem sair da tela
+
+| Você quer | Onde |
+|---|---|
+| Ver o que está acontecendo agora | **Painel** |
+| Ligar, pausar e parar o processamento | **Painel**, os botões no topo |
+| Decidir quando o Regente não consegue seguir | **Precisa de você** |
+| Ver e filtrar o trabalho | **Tasks** |
+| Ver o que o agente executou, e quanto custou | **Execuções** |
+| Ver commits, pull requests e o resultado do CI | **Entregas** |
+| Conectar o Jira, o GitHub, o agente | **Configuração › Conexões** |
+| Autorizar o Regente a usar um serviço | **Configuração › Credenciais** |
+| Dizer o que os status do seu board significam | **Configuração › Status do board** |
+| Dizer o que deve rodar primeiro | **Configuração › Regras e prioridade** |
+| Dar acesso a outra pessoa | **Configuração › Acesso** |
+| Descobrir por que algo não anda | **Saúde** e **Atividade** |
+
+Nada disso pede que você edite YAML ou escreva JSON. O arquivo `regente.yaml`
+continua existindo e continua sendo a base — o que você configurar pela tela
+fica por cima dele, e a tela **diz em cada campo** de onde o valor veio. Quando
+os dois discordam, ela avisa com todas as letras que editar o arquivo não vai
+adiantar enquanto a definição da tela existir, e oferece removê-la.
+
+### A primeira vez
+
+Depois de `regente init`, dois comandos no terminal — e só estes dois:
+
+```bash
+regente access inicial
+```
+
+Esse comando dá a posse do workspace à sua conta do sistema operacional. Ele só
+funciona pelo terminal, de propósito: quem já roda o processo controla o banco e
+o arquivo de configuração, então isso não concede nada que essa pessoa não
+pudesse fazer com um editor de SQL — e é a única concessão que não passa por
+outra pessoa.
+
+O segundo comando existe porque **o terminal e a tela se autenticam por caminhos
+diferentes**: o terminal é a sua conta do sistema, e a Mission Control desta
+versão é um token local nomeado pelo cliente. Sem ele, a tela abre autenticada e
+sem poder fazer nada.
+
+```bash
+regente access conceder dev-token:SEU-CLIENTE --papel owner
+```
+
+Se você não souber o nome exato a usar, não precisa adivinhar: abra a tela, vá
+em **Configuração › Acesso**, e ela mostra o comando já preenchido com a
+identidade daquela janela.
+
+### O caminho de quem acabou de instalar
+
+O **Painel** mostra um checklist enquanto houver coisa por fazer. Cada item leva
+à tela exata que o resolve:
+
+1. **Workspace criado** — feito por `regente init`.
+2. **Board de tasks conectado** — escolha Jira ou uma pasta de arquivos, e
+   preencha o que ele pedir. A tela pergunta pelo endereço e pelo seu email; ela
+   **não** pergunta pelo seu token.
+3. **Credenciais registradas** — aqui você diz *onde* o segredo está: uma
+   variável de ambiente, um arquivo, ou um gerenciador de credenciais. O Regente
+   guarda o endereço e vai buscar o valor na hora de usar. **Não existe tela nem
+   rota que devolva um segredo**, e este campo não aceita um.
+4. **Agente configurado** — o modelo que vai escrever as mudanças.
+5. **Regras de prioridade** — opcional.
+
+Um provedor com configuração e sem credencial válida aparece como
+`Falta credencial`, e nunca como "conectado". A diferença importa: configuração
+é o que você escreveu, e prontidão é o que o Regente consegue alcançar.
+
+### Regras de prioridade sem escrever nada
+
+Em **Configuração › Regras e prioridade**, o botão *Criar regra* abre um
+formulário de três escolhas:
+
+> **Quando** `o título` `contém` `FAXINA` → **Prioridade alta**
+
+A tela mostra logo abaixo a regra escrita em português, quantas tasks ela pega
+**agora**, e a fila resultante já reordenada. É assim que se percebe um erro de
+digitação antes de ligar o Regente, e não depois.
+
+As regras podem ser editadas, duplicadas, reordenadas e removidas. Elas somam à
+prioridade que veio do board, e "ignorar" vence tudo.
+
+### Status do board
+
+O Regente só pega uma task se souber o que o status dela significa. Em
+**Configuração › Status do board**, a tela parte dos status que ele **realmente
+encontrou** no seu board e pergunta o que fazer com cada um — em vez de pedir
+que você adivinhe a grafia exata de cada coluna. Se sobrar algum sem
+configuração, ela avisa quantos são e quais.
+
+### O que a tela nunca faz
+
+A Mission Control consome as mesmas rotas e os mesmos serviços que o terminal.
+Ela não fala com o banco, não decide autoridade e não cria processos.
+
+* Toda escrita passa por **identidade → concessão → capacidade → policy →
+  auditoria**, igual ao terminal. Um botão que aparece por engano e é clicado
+  recebe uma recusa — e está certo assim.
+* Os botões de ligar e parar gravam uma **intenção**. Quem executa é o processo
+  do `regente run`. Se você pedir para rodar e nenhum processo responder, a tela
+  diz exatamente isso e mostra o comando.
+* Depois de gravar, ela **relê o estado**. `200` significa que o servidor
+  aceitou, e não que a tela sabe o que ficou gravado.
+* Nenhum segredo aparece em tela, em resposta HTTP, em evento ou em log.
+
+### Se você preferir o terminal
+
+A CLI continua sendo oficial e completa. Tudo o que a tela faz tem comando
+equivalente, e os dois passam pelo mesmo serviço — `regente config mostrar`
+mostra, do terminal, o que você configurou pela tela.
+
+### Para quem for mexer na interface
+
+A tela é um projeto React + Vite em `ui/`. O build vai **versionado** dentro do
+pacote Python (`regente/app/ui/`), para que instalar o Regente não exija Node na
+máquina de quem só quer abrir a tela.
+
+```bash
+cd ui
+npm install
+npm run dev     # Vite em :5173, com a API do Python em :8787
+npm run build   # regrava regente/app/ui/
+```
+
+O `npm run dev` espera um `regente ui --port 8787` rodando ao lado: um processo
+por responsabilidade, sem CORS e sem uma segunda origem.
+
 ## Referência de comandos
 
 ```bash

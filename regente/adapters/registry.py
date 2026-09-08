@@ -336,3 +336,284 @@ register(Capability.RUNNER, "headless-agent", _agent_headless)
 register(Capability.RUNNER, "claude-code", _agent_claude_code)
 register(Capability.RUNNER, "codex-cli", _agent_codex_cli)
 register(Capability.RUNNER, "deterministic-agent", _agent_deterministic)
+
+
+# =========================================================================
+# CATALOGO
+#
+# O que cada adapter E, e o que ele precisa saber para funcionar.
+#
+# Isto existe para que uma TELA possa oferecer um formulario em vez de uma
+# caixa de JSON. A alternativa seria o frontend carregar a lista de campos de
+# cada fornecedor -- e nesse dia haveria duas definicoes do formato do Jira, a
+# do motor e a da tela, e a que divergisse aceitaria o que o motor recusa.
+#
+# Mora AQUI, e nao em `core/` ou `engine/`, pelo mesmo motivo que
+# `LOCAL_ADAPTERS`: saber que o Jira precisa de um endereco de site e de um
+# email e conhecimento de fornecedor, e fornecedor mora nesta camada.
+#
+# O catalogo NAO substitui a validacao. Ele descreve o que perguntar; quem
+# recusa continua sendo o motor, com as mensagens dele.
+#
+# E ele e a UNICA parte do pacote que escreve portugues acentuado. O resto usa
+# ASCII porque suas mensagens vao parar num console do Windows, que nem sempre
+# esta em UTF-8. Estes textos nao sao impressos em lugar nenhum: sao
+# serializados em JSON e lidos por uma tela. Texto de produto sem acento numa
+# interface em portugues le-se como descuido.
+# =========================================================================
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class Campo:
+    """Uma coisa que a pessoa precisa informar para este adapter funcionar.
+
+    `ajuda` nao e enfeite: quem instala o Regente pela primeira vez nao sabe o
+    que e um "site do Jira" nem onde encontrar o proprio. Um formulario com
+    rotulos e sem explicacao apenas move o problema do YAML para a tela.
+    """
+    chave: str
+    rotulo: str
+    ajuda: str = ""
+    tipo: str = "texto"          # texto | numero | booleano | caminho | lista
+    obrigatorio: bool = False
+    exemplo: str = ""
+    padrao: object = None
+    #: Quando verdadeiro, este campo e para quem ja sabe o que esta fazendo, e a
+    #: tela o guarda atras de "opcoes avancadas".
+    avancado: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class Oferta:
+    """Um adapter do ponto de vista de quem ESCOLHE, e nao de quem o escreve."""
+    nome: str
+    rotulo: str
+    descricao: str
+    campos: tuple = ()
+    #: O uso de credencial que este adapter exige, ou vazio se nao exige nenhum.
+    #: E o valor de `Use`, e nao um nome novo: uma segunda nomenclatura aqui
+    #: seria a tabela de traducao onde as duas divergem em silencio.
+    uso: str = ""
+    #: Um adapter local nao alcanca nada fora desta maquina.
+    local: bool = False
+
+    def as_dict(self) -> dict:
+        return {
+            "name": self.nome, "label": self.rotulo,
+            "description": self.descricao,
+            "needs_credential": not self.local,
+            "credential_use": self.uso,
+            "fields": [
+                {"key": c.chave, "label": c.rotulo, "help": c.ajuda,
+                 "kind": c.tipo, "required": c.obrigatorio,
+                 "example": c.exemplo, "default": c.padrao,
+                 "advanced": c.avancado}
+                for c in self.campos],
+        }
+
+
+#: O que cada PAPEL faz no Regente, dito para quem nunca leu a arquitetura.
+PAPEIS: tuple[tuple[str, str, str, bool], ...] = (
+    ("tasks", "Board de tasks",
+     "De onde o Regente lê o trabalho a fazer.", True),
+    ("repository", "Repositório",
+     "Para o Regente enxergar o código, as branches e o histórico.", False),
+    ("repository_write", "Publicação de mudanças",
+     "Para enviar commits e abrir pull requests com o trabalho pronto.", False),
+    ("cicd", "Integração contínua",
+     "Para acompanhar os checks que rodam em cada commit.", False),
+    ("runner", "Agente",
+     "O modelo que lê a task e escreve a mudança.", True),
+    ("workspace_provider", "Área de trabalho",
+     "Onde cada execução fica isolada, nesta máquina.", False),
+)
+
+#: Qual `Capability` do registro atende cada papel da configuracao.
+CAPACIDADE_DO_PAPEL: dict[str, Capability] = {
+    "tasks": Capability.TASKS,
+    "repository": Capability.REPOSITORY,
+    "repository_write": Capability.REPOSITORY,
+    "cicd": Capability.CICD,
+    "runner": Capability.RUNNER,
+    "workspace_provider": Capability.WORKSPACE,
+}
+
+_TIMEOUT = Campo("timeout", "Tempo limite por chamada (s)", tipo="numero",
+                 padrao=30, avancado=True)
+
+CATALOGO: dict[str, tuple[Oferta, ...]] = {
+    "tasks": (
+        Oferta(
+            "jira", "Jira",
+            "Lê as tasks de um projeto no Jira Cloud. Somente leitura: o "
+            "Regente nunca altera o seu board.",
+            uso="task.read",
+            campos=(
+                Campo("site", "Endereço do seu Jira",
+                      "O endereço que você usa no navegador, sem barra no fim.",
+                      obrigatorio=True,
+                      exemplo="https://suaempresa.atlassian.net"),
+                Campo("user", "Seu email no Jira",
+                      "O email da conta a que a credencial pertence. Um email é "
+                      "um identificador, e não um segredo — o segredo fica na "
+                      "credencial.",
+                      obrigatorio=True, exemplo="voce@suaempresa.com"),
+                Campo("jql", "Quais tasks buscar (JQL)",
+                      "A busca que o Regente executa no Jira. O padrão traz "
+                      "tudo que não está concluído.",
+                      exemplo="project = SG AND statusCategory != Done",
+                      padrao="statusCategory != Done ORDER BY updated DESC"),
+                Campo("per_page", "Tasks por página", tipo="numero",
+                      padrao=100, avancado=True),
+                Campo("max_pages", "Máximo de páginas por ciclo", tipo="numero",
+                      padrao=10, avancado=True),
+                _TIMEOUT,
+            )),
+        Oferta(
+            "filesystem", "Arquivos nesta máquina",
+            "Lê tasks de arquivos YAML numa pasta. Serve para experimentar o "
+            "Regente sem conectar nada, e não precisa de credencial.",
+            local=True,
+            campos=(
+                Campo("directory", "Pasta das tasks",
+                      "Cada arquivo .yaml nesta pasta vira uma task.",
+                      obrigatorio=True, tipo="caminho", exemplo="tasks"),
+            )),
+    ),
+    "repository": (
+        Oferta(
+            "github", "GitHub",
+            "Lê repositórios, branches e arquivos de uma organização no GitHub.",
+            uso="repo.read",
+            campos=(
+                Campo("org", "Organização ou usuário",
+                      "A parte antes da barra no endereço do repositório.",
+                      obrigatorio=True, exemplo="suaempresa"),
+                Campo("cli", "Caminho do gh",
+                      "Onde está a ferramenta de linha de comando do GitHub.",
+                      padrao="gh", avancado=True),
+                Campo("limit", "Máximo de repositórios listados", tipo="numero",
+                      padrao=200, avancado=True),
+            )),
+        Oferta(
+            "git-local", "Repositórios nesta máquina",
+            "Lê clones que já existem numa pasta local. Não alcança a rede.",
+            local=True,
+            campos=(
+                Campo("root", "Pasta com os repositórios", obrigatorio=True,
+                      tipo="caminho", exemplo="C:/repos"),
+            )),
+    ),
+    "repository_write": (
+        Oferta(
+            "github-write", "GitHub",
+            "Envia commits e abre pull requests. Esta é a única conexão que "
+            "escreve fora desta máquina.",
+            uso="repo.pr",
+            campos=(
+                Campo("org", "Organização ou usuário", obrigatorio=True,
+                      exemplo="suaempresa"),
+                Campo("cli", "Caminho do gh", padrao="gh", avancado=True),
+            )),
+    ),
+    "cicd": (
+        Oferta(
+            "github-checks", "GitHub Actions",
+            "Lê o resultado dos checks de cada commit. O Regente nunca decide "
+            "que um CI passou: ele lê o veredito de quem executou.",
+            uso="ci.read",
+            campos=(
+                Campo("org", "Organização ou usuário", obrigatorio=True,
+                      exemplo="suaempresa"),
+                Campo("cli", "Caminho do gh", padrao="gh", avancado=True),
+            )),
+    ),
+    "runner": (
+        Oferta(
+            "claude-code", "Claude Code",
+            "Usa o Claude Code instalado nesta máquina para executar as tasks.",
+            uso="agent.run",
+            campos=(
+                Campo("cli", "Caminho do executável", obrigatorio=True,
+                      tipo="caminho", exemplo="claude"),
+                Campo("model", "Modelo", padrao="sonnet"),
+                Campo("max_cost_usd", "Custo máximo por execução (US$)",
+                      tipo="numero", padrao=2.0),
+                Campo("auth", "Como autenticar",
+                      "“session” usa a sessão já aberta na máquina; “credential” "
+                      "usa uma credencial registrada aqui.",
+                      padrao="session", avancado=True),
+            )),
+        Oferta(
+            "codex-cli", "Codex CLI",
+            "Usa o Codex CLI instalado nesta máquina para executar as tasks.",
+            uso="agent.run",
+            campos=(
+                Campo("cli", "Caminho do executável", obrigatorio=True,
+                      tipo="caminho", exemplo="codex"),
+                Campo("model", "Modelo"),
+                Campo("max_cost_usd", "Custo máximo por execução (US$)",
+                      tipo="numero", padrao=2.0),
+                Campo("auth", "Como autenticar", padrao="session",
+                      avancado=True),
+            )),
+        Oferta(
+            "script", "Um programa seu",
+            "Chama um programa que você escreveu. Serve para experimentar o "
+            "fluxo do Regente sem um modelo, e não precisa de credencial.",
+            local=True,
+            campos=(
+                Campo("command", "Comando", tipo="lista", obrigatorio=True,
+                      exemplo="python meu_agente.py"),
+            )),
+    ),
+    "workspace_provider": (
+        Oferta(
+            "directory", "Uma pasta por execução",
+            "Cada execução recebe uma pasta isolada. Não clona repositório "
+            "nenhum — serve para experimentar.",
+            local=True,
+            campos=(
+                Campo("root", "Pasta raiz", obrigatorio=True, tipo="caminho",
+                      exemplo="areas"),
+            )),
+        Oferta(
+            "clone", "Um clone por execução",
+            "Clona o repositório da task numa pasta isolada. É o que permite "
+            "commit, push e pull request.",
+            local=True,
+            campos=(
+                Campo("root", "Pasta raiz dos clones", obrigatorio=True,
+                      tipo="caminho", exemplo="areas"),
+            )),
+        Oferta(
+            "worktree", "Um worktree por execução",
+            "Usa `git worktree` sobre clones que já existem. Mais rápido que "
+            "clonar, e exige que os clones já estejam na máquina.",
+            local=True,
+            campos=(
+                Campo("root", "Pasta raiz dos worktrees", obrigatorio=True,
+                      tipo="caminho", exemplo="areas"),
+            )),
+    ),
+}
+
+
+def catalogo() -> dict:
+    """O catalogo inteiro, pronto para a API.
+
+    So aparecem ofertas cujo adapter esta REGISTRADO: uma tela que oferecesse
+    um provedor que o motor nao sabe criar transformaria uma escolha razoavel
+    numa falha no primeiro ciclo.
+    """
+    papeis = []
+    for papel, rotulo, descricao, essencial in PAPEIS:
+        cap = CAPACIDADE_DO_PAPEL[papel]
+        ofertas = [o.as_dict() for o in CATALOGO.get(papel, ())
+                   if (cap, o.nome) in _REGISTRO]
+        papeis.append({"role": papel, "label": rotulo,
+                       "description": descricao, "essential": essencial,
+                       "options": ofertas})
+    return {"roles": papeis}

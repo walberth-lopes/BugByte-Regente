@@ -289,10 +289,24 @@ def test_only_the_declared_extensions_are_served(bench, tmp_path):
 
 
 def test_the_root_serves_the_mission_control(bench):
+    """A raiz serve a CASCA da Mission Control, e nao um HTML qualquer.
+
+    A versao anterior deste teste procurava a marca escrita em caixa alta.
+    Isso amarrava o contrato da rota a uma escolha de tipografia: trocar
+    "REGENTE" por "Regente" na tela derrubava um teste que nao fala de
+    tipografia nenhuma. O que a rota promete e o esqueleto onde a aplicacao
+    monta -- o alvo do JS, o ponto de entrada e a folha de estilo.
+    """
     r = get(bench, "/")
     assert r.status == 200
     assert r.content_type.startswith("text/html")
-    assert b"REGENTE" in r.rendered()
+    corpo = r.rendered()
+    # O alvo onde a aplicacao monta, e um script de modulo. Os nomes dos
+    # arquivos levam hash do build e mudam a cada alteracao -- prende-los aqui
+    # faria a guarda quebrar em toda troca de CSS, sem falar de nada.
+    assert b'id="raiz"' in corpo, "a casca perdeu o ponto de montagem"
+    assert b'type="module"' in corpo, "a casca perdeu o script da aplicacao"
+    assert b".js" in corpo and b".css" in corpo, "a casca perdeu os assets"
 
 
 def test_an_unknown_api_route_is_not_silently_a_page(bench):

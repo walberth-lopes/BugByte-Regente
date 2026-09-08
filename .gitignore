@@ -6,8 +6,15 @@ __pycache__/
 regente.yaml
 *.egg-info/
 sombra-sg/
+meu-teste/
 
 # soak and restart-proof scratch
 tests/.soak/
 tests/.restart/
 tests/child.py
+
+# A Mission Control: as dependencias do front, e nao o que ele gera.
+#
+# O BUILD (regente/app/ui/) vai versionado de proposito -- instalar o pacote
+# Python nao pode exigir Node na maquina de quem so quer abrir a tela.
+ui/node_modules/
