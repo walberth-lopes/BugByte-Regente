@@ -413,7 +413,13 @@ class ResourceService:
             return _no(Refusal.UNAUTHENTICATED,
                        "esta requisicao nao foi autenticada")
         if not actor.can(workspace_id, ability):
-            return _no(Refusal.NOT_FOUND, "recurso nao encontrado neste escopo",
+            if not actor.may_read(workspace_id):
+                # DE FORA: nem confirma que o workspace existe.
+                return _no(Refusal.NOT_FOUND,
+                           "recurso nao encontrado neste escopo",
+                           actor=actor.label)
+            return _no(Refusal.FORBIDDEN,
+                       self._por_que_nao(actor, workspace_id, ability),
                        actor=actor.label)
         if self.store.workspace(workspace_id) is None:
             return _no(Refusal.NOT_FOUND, "recurso nao encontrado neste escopo",
@@ -429,6 +435,32 @@ class ResourceService:
             return _no(Refusal.POLICY_DENIED, f"policy DENY: {decisao.reason}",
                        actor=actor.label)
         return None
+
+    def _por_que_nao(self, actor: Principal, workspace_id: str,
+                     ability: Ability) -> str:
+        """Falta capacidade -- mas por que? A resposta muda o que a pessoa faz.
+
+        Uma concessao ANTERIOR a esta capacidade e o caso mais confuso que
+        existe: tudo o mais funciona, e so a coisa nova recusa. Sem esta frase,
+        a pessoa procura o problema na credencial, no provedor e na rede -- em
+        tudo, menos onde ele esta.
+        """
+        try:
+            minhas = [g for g in self.store.grants(workspace_id)
+                      if g.principal.key == actor.ref.key]
+        except Exception:                                 # noqa: BLE001
+            minhas = []
+
+        if minhas and getattr(minhas[0], "defasada", False) \
+                and ability in minhas[0].faltando:
+            return (f"a sua concessao ('{minhas[0].role}') e anterior a esta "
+                    f"capacidade e por isso nao a inclui. Ponha em dia com: "
+                    f"regente atualizar")
+        if minhas:
+            return (f"o seu acesso a este workspace nao inclui "
+                    f"'{ability.value}'; peca a quem administra")
+        return (f"voce nao tem concessao neste workspace; peca acesso a quem "
+                f"administra")
 
     def _audit_selection(self, kind: str, actor: Principal, workspace_id: str,
                          refs: tuple[ResourceRef, ...]) -> None:

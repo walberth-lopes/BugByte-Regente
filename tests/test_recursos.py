@@ -1044,12 +1044,40 @@ def test_the_api_cannot_choose_what_the_provider_never_showed(tmp_path):
 
 
 def test_choosing_through_the_api_needs_the_same_ability(tmp_path):
+    """Quem esta DENTRO recebe o motivo; quem esta de FORA nem sabe que existe.
+
+    A distincao nao e detalhe. `NOT_FOUND` para falta de capacidade existe para
+    nao confirmar a existencia de um workspace alheio a quem tentou adivinhar --
+    e isso so vale para quem esta de fora.
+
+    Para quem ja le o workspace, a existencia nao e segredo, e "recurso nao
+    encontrado neste escopo" vira uma frase que nao aponta para lugar nenhum.
+    Foi o que apareceu na tela de quem tentou escolher repositorios com uma
+    concessao anterior a capacidade de escolher.
+    """
     b = _bancada(tmp_path)
+    corpo = {"provider": "fake", "kind": "repository", "ids": ["org/a"]}
+
+    # DENTRO: le o workspace, e falta a capacidade.
     operador = _quem(b.workspace, *abilities_of("operator"))
     r = _pede(b, "POST", f"/api/workspaces/{b.workspace}/resources/select",
-              {"provider": "fake", "kind": "repository", "ids": ["org/a"]},
-              quem=operador)
-    assert r.status == 404, "confirmou a existencia do workspace a quem nao pode"
+              corpo, quem=operador)
+    assert r.status == 403
+    # A frase precisa apontar para ALGUM lugar. Qual lugar depende de haver ou
+    # nao concessao gravada -- e as duas respostas sao uteis; "recurso nao
+    # encontrado neste escopo" nao e nenhuma das duas.
+    assert "recurso nao encontrado" not in r.payload["detail"]
+    assert ("concessao" in r.payload["detail"]
+            or "workspace.resource.select" in r.payload["detail"])
+    assert b.store.resources(b.workspace) == []
+
+    # FORA: nem confirma que o workspace existe.
+    de_fora = Principal(subject="os:9", display="outro", method="teste",
+                        provider="os", authenticated_at=T0,
+                        workspaces=frozenset({"wks_OUTRO"}))
+    r = _pede(b, "POST", f"/api/workspaces/{b.workspace}/resources/select",
+              corpo, quem=de_fora)
+    assert r.status == 404, "confirmou a existencia do workspace a quem esta fora"
     assert b.store.resources(b.workspace) == []
 
 

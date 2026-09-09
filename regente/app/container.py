@@ -743,6 +743,46 @@ def _policy_em_dia(cfg: Config) -> tuple[str, bool, str]:
             + ". Ponha em dia com: regente atualizar")
 
 
+def _concessoes_em_dia(cfg: Config) -> tuple[str, bool, str]:
+    """As concessoes deste workspace conhecem o que os papeis valem hoje?
+
+    Uma concessao viva feita antes de um papel ganhar capacidade continua
+    valendo o que valia -- e a pessoa descobre isso quando um botao recusa com
+    "recurso nao encontrado neste escopo", que nao explica nada.
+    """
+    from ..core import ids as _ids
+    from ..engine.access import AccessService
+
+    try:
+        store = SqliteStore(cfg.banco)
+        store.migrate()
+        ws = _stable_id(_ids.WORKSPACE, cfg.organization, cfg.client,
+                        cfg.workspace)
+        servico = AccessService(
+            store=store, policy=PolicyEngine.from_config([]),
+            organization=cfg.organization, client=cfg.client,
+            workspace_name=cfg.workspace)
+        defasadas = servico.defasadas(ws)
+        sem_papel = [g for g in store.grants(ws) if not g.role]
+        store.close()
+    except Exception as e:                                # noqa: BLE001
+        return ("concessoes em dia", False, f"{type(e).__name__}: {e}"[:200])
+
+    if not defasadas and not sem_papel:
+        return ("concessoes em dia", True, "os papeis valem o que valem hoje")
+
+    partes = []
+    for g in defasadas:
+        ganha = ", ".join(sorted(a.value for a in g.faltando))
+        partes.append(f"{g.principal.key} ({g.role}) ganharia {ganha}")
+    for g in sem_papel:
+        partes.append(f"{g.principal.key} nao registrou papel")
+    return ("concessoes em dia", False,
+            "; ".join(partes[:3])
+            + (f" (+{len(partes) - 3})" if len(partes) > 3 else "")
+            + ". Ponha em dia com: regente atualizar")
+
+
 def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
     """Checagens do `regente doctor`. Cada aposta provada, nenhuma suposta."""
     output: list[tuple[str, bool, str]] = []
@@ -803,6 +843,7 @@ def diagnose(cfg: Config) -> list[tuple[str, bool, str]]:
 
     expect_prefix("policies", lambda: f"{len(load_policies(cfg.policies))} regra(s)")
     output.append(_policy_em_dia(cfg))
+    output.append(_concessoes_em_dia(cfg))
 
     # Seis eixos, um por linha. Reportar "falta a variavel X" seria conselho
     # errado para quem autentica o agente de outra forma -- e a maioria dos

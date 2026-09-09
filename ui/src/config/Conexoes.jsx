@@ -93,8 +93,19 @@ function Conteudo({ conexoes, campo, papeis, conectores, recursos, arvores }) {
           // aqui mesmo.
           const escolhido = (configurado[p.role] || {}).name
             || daConexao(p.role).adapter;
-          const conector = conectores.find(
-            (c) => c.role === p.role && c.connector === escolhido);
+          // Casa pelo PAPEL, e pode haver mais de um: o agente tem Claude Code
+          // e Codex. O serviço já escolhido vem primeiro; depois, os que estão
+          // INSTALADOS nesta máquina.
+          //
+          // Não se anuncia o que não está instalado: seria um botão que só sabe
+          // dizer "instale", e o cartão já tem "Escolher serviço" para quem
+          // quiser ir por outro caminho.
+          const doPapel = conectores.filter((c) => c.role === p.role);
+          const oEscolhido = doPapel.find((c) => c.connector === escolhido);
+          const prontos = doPapel.filter(
+            (c) => c.connector !== escolhido && c.step.code !== "instalar",
+          );
+          const oferecidos = oEscolhido ? [oEscolhido] : prontos;
           return (
             <Cartao
               key={p.role}
@@ -102,11 +113,13 @@ function Conteudo({ conexoes, campo, papeis, conectores, recursos, arvores }) {
               conexao={daConexao(p.role)}
               atual={configurado[p.role] || null}
               pode={pode}
-              conector={conector}
-              arvore={
-                arvores.find((a) => a.provider === escolhido)?.tree || []
+              conectores={oferecidos}
+              arvoreDe={(nome) =>
+                arvores.find((a) => a.provider === nome)?.tree || []
               }
-              escolhidos={recursos.filter((r) => r.provider === escolhido)}
+              escolhidosDe={(nome) =>
+                recursos.filter((r) => r.provider === nome)
+              }
               aoConfigurar={() => setEditando(p.role)}
             />
           );
@@ -124,8 +137,8 @@ function Conteudo({ conexoes, campo, papeis, conectores, recursos, arvores }) {
   );
 }
 
-function Cartao({ papel, conexao, atual, pode, conector, arvore, escolhidos,
-                 aoConfigurar }) {
+function Cartao({ papel, conexao, atual, pode, conectores, arvoreDe,
+                 escolhidosDe, aoConfigurar }) {
   const { api } = useRegente();
   const [prova, setProva] = useState(null);
   const [indo, setIndo] = useState(false);
@@ -198,13 +211,16 @@ function Cartao({ papel, conexao, atual, pode, conector, arvore, escolhidos,
 
       {/* Com conector, conectar JA registra a credencial -- mandar a pessoa
           para outra aba seria devolver o passo que este marco veio apagar. */}
-      {conector ? (
-        <Conectar
-          servico={conector}
-          arvore={arvore}
-          escolhidos={escolhidos}
-          pode={pode}
-        />
+      {conectores.length ? (
+        conectores.map((c) => (
+          <Conectar
+            key={c.connector}
+            servico={c}
+            arvore={arvoreDe(c.connector)}
+            escolhidos={escolhidosDe(c.connector)}
+            pode={pode}
+          />
+        ))
       ) : (
         conexao.state === "SEM_CREDENCIAL" && (
           <Alerta

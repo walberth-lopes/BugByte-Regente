@@ -208,10 +208,15 @@ class GitHubConector(Conector):
     #: respondeu sobre a sessao de quem esta na maquina.
     _lembrado: tuple[float, Passo] | None = None
     nome: str = "github"
+    #: O ADAPTER que este conector configura. Muda por papel: ler e `github`,
+    #: empurrar e `github-write`, acompanhar checks e `github-checks`.
     name: str = "github"
     titulo: str = "GitHub"
     descricao: str = "Onde o Regente lê o código e abre pull requests."
     papel: str = "repository"
+    #: O que a credencial DESTE papel passa a poder. Ler nao autoriza empurrar,
+    #: e empurrar nao autoriza ler checks -- tres credenciais, tres capacidades.
+    capacidades: tuple[str, ...] = ("repo.discover", "repo.read")
 
     # ------------------------------------------------------------------
     def estado(self) -> Passo:
@@ -290,16 +295,36 @@ class GitHubConector(Conector):
             raise AdapterError("escolha uma conta ou organização")
         return Proposta(
             papel=self.papel,
-            provider={"name": "github", "org": str(conta).strip()},
+            provider={"name": self.name, "org": str(conta).strip()},
             # A REFERENCIA, e nunca o token. `gh` continua sendo quem guarda.
             secret_ref="helper:gh",
-            # Listar e ler. Escrever -- empurrar, abrir pull request -- e outra
-            # conexao, com outra credencial: conectar para ver nao deveria, por
-            # tabela, autorizar a mexer.
-            capacidades=("repo.discover", "repo.read"),
-            nome_credencial="github")
+            capacidades=self.capacidades,
+            nome_credencial=self.name)
 
     # ------------------------------------------------------------------
+    @classmethod
+    def os_tres(cls) -> tuple["GitHubConector", ...]:
+        """Um conector por papel que o GitHub preenche.
+
+        Tres instancias da MESMA classe, e nao tres classes: o que muda entre
+        elas e o adapter, a capacidade e a frase. A conversa com o `gh` -- que e
+        onde mora o risco -- e uma so.
+        """
+        return (
+            cls(nome="github", name="github", papel="repository",
+                titulo="GitHub",
+                descricao="Onde o Regente lê o código e abre pull requests.",
+                capacidades=("repo.discover", "repo.read")),
+            cls(nome="github-write", name="github-write",
+                papel="repository_write", titulo="GitHub (publicar)",
+                descricao="Para enviar commits e abrir pull requests.",
+                capacidades=("repo.push", "repo.pr")),
+            cls(nome="github-checks", name="github-checks", papel="cicd",
+                titulo="GitHub Actions",
+                descricao="Para acompanhar os checks que rodam a cada commit.",
+                capacidades=("ci.read",)),
+        )
+
     def _conta_atual(self) -> str:
         try:
             saida = _rodar([self.cli, "api", "user"])
@@ -320,3 +345,100 @@ class GitHubConector(Conector):
             # e a conta pessoal ja basta para trabalhar.
             return []
         return [str(o.get("login")) for o in bruto if o.get("login")]
+
+# ===========================================================================
+# O agente
+# ===========================================================================
+
+@dataclass(slots=True)
+class AgenteConector(Conector):
+    """O agente que ja esta instalado nesta maquina.
+
+    "Onde eu acho o executavel?" era uma pergunta que o formulario fazia e o
+    computador sabia responder. Quem instala o Claude Code nao guarda o caminho
+    -- ele entra no PATH, e e o PATH que sabe onde.
+
+    NAO PRECISA DE CREDENCIAL, e a ausencia e a resposta a outra duvida: quem
+    entrou no Claude Code com a propria conta ja esta autenticado, e o Regente
+    usa a sessao que esta la. Nao ha token para registrar, nao ha cofre para
+    encher, e conectar e so dizer "use este".
+    """
+    #: O comando, como ele aparece no PATH.
+    cli: str = "claude"
+    _lembrado: "tuple[float, Passo] | None" = None
+    nome: str = "claude-code"
+    name: str = "claude-code"
+    titulo: str = "Claude Code"
+    descricao: str = "O modelo que lê a task e escreve a mudança."
+    papel: str = "runner"
+    #: O modelo que a conexao grava. Um so, e o do meio: quem quiser trocar
+    #: troca em Configurar, com a lista que a tela ja oferece.
+    modelo: str = "sonnet"
+
+    def describe(self) -> dict[str, str]:
+        return {"capability": self.capability.value, "adapter": self.name,
+                "cli": self.cli}
+
+    # ------------------------------------------------------------------
+    def estado(self) -> Passo:
+        import time
+
+        if self._lembrado is not None and time.monotonic() < self._lembrado[0]:
+            return self._lembrado[1]
+        passo = self._perguntar_estado()
+        self._lembrado = (time.monotonic() + VALIDADE_DO_ESTADO, passo)
+        return passo
+
+    def _perguntar_estado(self) -> Passo:
+        onde = shutil.which(self.cli)
+        if onde is None:
+            return Passo(
+                "instalar", f"Instale o {self.titulo}",
+                f"O Regente chama o `{self.cli}` que estiver no seu PATH. "
+                f"Depois de instalar, abra um terminal novo e volte aqui.",
+                comando=self.COMO_INSTALAR.get(self.nome, ""))
+        # Encontrado. NAO se pergunta se ele esta autenticado: o agente resolve
+        # a propria sessao, e o `doctor` ja tem uma checagem de prontidao que
+        # responde isso melhor do que um palpite daqui.
+        return Passo("escolher", f"{self.titulo} encontrado", onde)
+
+    def autorizar(self) -> Passo:
+        """Nao ha o que autorizar: quem autentica o agente e o proprio agente."""
+        self._lembrado = None
+        return self.estado()
+
+    def contas(self) -> list[Conta]:
+        """Uma "conta" so: a instalacao encontrada.
+
+        A tela pergunta de qual conta em todo conector, e responder com o
+        caminho encontrado mantem o mesmo fluxo -- em vez de um caso especial
+        que so este conector tem.
+        """
+        onde = shutil.which(self.cli)
+        return [Conta(id=self.cli, nome=onde or self.cli, tipo="programa")] if onde else []
+
+    def proposta(self, conta: str) -> Proposta:
+        return Proposta(
+            papel=self.papel,
+            provider={"name": self.name, "cli": str(conta).strip() or self.cli,
+                      "model": self.modelo},
+            # Sem credencial: a sessao do proprio agente e quem autentica.
+            secret_ref="", capacidades=())
+
+    #: Como instalar, por ferramenta. Comando, e nao link: quem esta no
+    #: terminal copia e cola; quem nao esta pesquisa o nome mesmo assim.
+    COMO_INSTALAR = {
+        "claude-code": "npm install -g @anthropic-ai/claude-code",
+        "codex-cli": "npm install -g @openai/codex",
+    }
+
+    @classmethod
+    def os_dois(cls) -> tuple["AgenteConector", ...]:
+        return (
+            cls(cli="claude", nome="claude-code", name="claude-code",
+                titulo="Claude Code",
+                descricao="O modelo que lê a task e escreve a mudança."),
+            cls(cli="codex", nome="codex-cli", name="codex-cli",
+                titulo="Codex CLI", modelo="",
+                descricao="O modelo que lê a task e escreve a mudança."),
+        )

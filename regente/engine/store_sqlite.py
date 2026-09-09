@@ -243,6 +243,11 @@ CREATE TABLE IF NOT EXISTS access_grants (
   principal_key TEXT NOT NULL,
   principal_provider TEXT NOT NULL, principal_subject TEXT NOT NULL,
   abilities TEXT NOT NULL DEFAULT '[]',
+  -- O PAPEL concedido, ao lado da foto das capacidades. As capacidades dizem o
+  -- que valia naquele dia; o papel diz o que foi DECIDIDO. Sem ele, por uma
+  -- concessao em dia depois de o papel ganhar uma capacidade nova vira
+  -- adivinhacao a partir de um conjunto.
+  role TEXT NOT NULL DEFAULT '',
   granted_by TEXT NOT NULL, granted_at TEXT NOT NULL,
   revoked_by TEXT NOT NULL DEFAULT '', revoked_at TEXT,
   note TEXT NOT NULL DEFAULT '');
@@ -286,7 +291,7 @@ CREATE TABLE IF NOT EXISTS counters (
   value INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (workspace_id, day, name));
 """
 
-SCHEMA_VERSION = "14"
+SCHEMA_VERSION = "15"
 
 
 def _v1_to_v2(c: sqlite3.Connection) -> None:
@@ -636,6 +641,44 @@ def _v13_to_v14(c: sqlite3.Connection) -> None:
                    ON workspace_resources (workspace_id, role)""")
 
 
+def _v14_to_v15(c: sqlite3.Connection) -> None:
+    """A concessao passa a lembrar o papel. Inferido so quando e inequivoco.
+
+    Uma concessao antiga guarda um conjunto de capacidades. Se hoje existe UM
+    unico papel cujas capacidades sao iguais a esse conjunto, ou um unico que o
+    contenha, o papel e aquele. Havendo duvida, fica em branco: escrever
+    autoridade no banco por palpite e pior do que admitir que nao se sabe.
+    """
+    import json as _json
+
+    from ..core.access import ROLES
+
+    # Idempotente de proposito. Um banco pode chegar aqui de dois jeitos: pela
+    # DDL completa (que ja traz a coluna) ou caminhando as migracoes. Um `ALTER`
+    # cego quebra o primeiro caso -- e um caminho de migracao que so funciona
+    # numa das duas rotas e o que falha na maquina de quem atualiza.
+    ja_tem = any(l[1] == "role" for l in
+                 c.execute("PRAGMA table_info(access_grants)").fetchall())
+    if not ja_tem:
+        c.execute(
+            "ALTER TABLE access_grants ADD COLUMN role TEXT NOT NULL DEFAULT ''")
+
+    hoje = {nome: {a.value for a in caps} for nome, caps in ROLES.items()}
+    for linha in c.execute(
+            "SELECT id, abilities FROM access_grants").fetchall():
+        try:
+            tinha = set(_json.loads(linha[1] or "[]"))
+        except ValueError:
+            continue
+        iguais = [n for n, caps in hoje.items() if caps == tinha]
+        contem = [n for n, caps in hoje.items() if tinha < caps]
+        papel = (iguais[0] if len(iguais) == 1
+                 else contem[0] if len(contem) == 1 else "")
+        if papel:
+            c.execute("UPDATE access_grants SET role=? WHERE id=?",
+                      (papel, linha[0]))
+
+
 MIGRATIONS: dict[str, tuple[str, Any]] = {
     "1": ("2", _v1_to_v2),
     "2": ("3", _v2_to_v3),
@@ -650,6 +693,7 @@ MIGRATIONS: dict[str, tuple[str, Any]] = {
     "11": ("12", _v11_to_v12),
     "12": ("13", _v12_to_v13),
     "13": ("14", _v13_to_v14),
+    "14": ("15", _v14_to_v15),
 }
 
 
@@ -1226,6 +1270,7 @@ class SqliteStore(Store):
             principal=PrincipalRef(provider=r["principal_provider"],
                                    subject=r["principal_subject"]),
             abilities=frozenset(Ability(a) for a in json.loads(r["abilities"])),
+            role=(r["role"] if "role" in r.keys() else ""),
             granted_by=r["granted_by"], granted_at=_dt(r["granted_at"]),
             revoked_by=r["revoked_by"], revoked_at=_dt(r["revoked_at"]),
             note=r["note"])
@@ -1244,13 +1289,13 @@ class SqliteStore(Store):
                 c.execute(
                     """INSERT INTO access_grants(id, client_id, workspace_id,
                          principal_key, principal_provider, principal_subject,
-                         abilities, granted_by, granted_at, revoked_by,
+                         abilities, role, granted_by, granted_at, revoked_by,
                          revoked_at, note)
-                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (grant.id, grant.client_id, grant.workspace_id,
                      grant.principal.key, grant.principal.provider,
                      grant.principal.subject,
-                     _j(sorted(a.value for a in grant.abilities)),
+                     _j(sorted(a.value for a in grant.abilities)), grant.role,
                      grant.granted_by, _iso(grant.granted_at),
                      grant.revoked_by, _iso(grant.revoked_at), grant.note))
             return True

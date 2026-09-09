@@ -163,6 +163,20 @@ Ele **acrescenta**, nunca remove: o que a sua organização escreveu continua
 valendo, inclusive um `DENY` que contrarie o modelo. Detectar é automático;
 ampliar continua sendo uma decisão sua.
 
+O mesmo vale para **quem tem acesso**. As capacidades de uma concessão são
+fotografadas no dia em que ela é feita — é isso que faz "operador" significar
+sempre a mesma coisa. Quando um papel ganha uma capacidade nova, quem já tinha o
+papel não a recebe sozinho, e o sintoma é traiçoeiro: tudo funciona, menos a
+coisa nova.
+
+`regente atualizar` mostra quais concessões ficaram para trás e o que cada uma
+ganharia. Com `--aplicar`, ele reconcede **o mesmo papel** — a decisão "esta
+pessoa é owner" não muda; muda o que "owner" significa hoje. A concessão antiga
+fica revogada na trilha, e não apagada.
+
+Uma concessão que não registrou o papel não é adivinhada: ela aparece no
+diagnóstico para alguém decidir.
+
 ### O Regente usa outros programas da sua máquina
 
 Ele não os instala, e diz claramente quando falta algum. `regente doctor`

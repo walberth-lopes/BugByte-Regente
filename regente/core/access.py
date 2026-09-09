@@ -181,6 +181,14 @@ class AccessGrant:
     revoked_at: datetime | None = None
     #: Por que foi concedida. Texto de quem concedeu, guardado como texto.
     note: str = ""
+    #: O papel concedido. As capacidades acima sao a FOTO dele no dia; este
+    #: campo e a DECISAO. Guardar so a foto fazia "por a concessao em dia",
+    #: depois de o papel ganhar uma capacidade nova, virar adivinhacao a partir
+    #: de um conjunto.
+    #:
+    #: Vazio numa concessao antiga cuja origem nao deu para inferir. Nao e
+    #: erro -- e a diferenca entre nao saber e chutar.
+    role: str = ""
 
     @property
     def active(self) -> bool:
@@ -189,3 +197,23 @@ class AccessGrant:
     def allows(self, ability: Ability) -> bool:
         """Revogada nao permite nada, por mais capacidades que carregue."""
         return self.active and ability in self.abilities
+
+    @property
+    def defasada(self) -> bool:
+        """O papel ganhou capacidades depois desta concessao?
+
+        Uma concessao viva cujo papel hoje vale mais do que a foto guardada.
+        Nao e defeito: e o preco de a foto existir. O que seria defeito e nao
+        haver como perceber -- foi assim que "escolher repositorios" recusou
+        numa tela onde tudo o mais funcionava.
+        """
+        if not self.active or not self.role:
+            return False
+        return bool(abilities_of(self.role) - self.abilities)
+
+    @property
+    def faltando(self) -> frozenset[Ability]:
+        """O que o papel ganhou desde que esta concessao foi feita."""
+        if not self.role:
+            return frozenset()
+        return abilities_of(self.role) - self.abilities

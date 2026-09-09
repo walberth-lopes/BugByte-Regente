@@ -95,7 +95,10 @@ export default function Conectar({ servico, arvore, escolhidos, pode }) {
     <>
       {aviso}
 
-      {servico.connected && servico.authorized && (
+      {/* Nem todo papel tem o que escolher: publicar mudanças e ler checks
+          usam a conta inteira, e não uma lista. Sem árvore, não há frase sobre
+          "itens em uso" — e prometê-la seria prometer uma tela que não existe. */}
+      {servico.connected && servico.authorized && arvore.length > 0 && (
         <p className="hint">
           {escolhidos.length
             ? `${escolhidos.length} ${
@@ -105,6 +108,10 @@ export default function Conectar({ servico, arvore, escolhidos, pode }) {
         </p>
       )}
 
+      {servico.connected && servico.authorized && arvore.length === 0 && (
+        <p className="hint">Conectado como {servico.current}.</p>
+      )}
+
       {pode && (
         <div className="row">
           <Botao
@@ -112,9 +119,13 @@ export default function Conectar({ servico, arvore, escolhidos, pode }) {
             icone={servico.authorized ? "buscar" : "conexao"}
             onClick={() => setAberta(true)}
           >
-            {servico.authorized
-              ? `Escolher ${tipoPlural(arvore[arvore.length - 1] || "").toLowerCase()}`
-              : `Conectar ${servico.title}`}
+            {!servico.authorized
+              ? `Conectar ${servico.title}`
+              : arvore.length
+                ? `Escolher ${tipoPlural(
+                    arvore[arvore.length - 1],
+                  ).toLowerCase()}`
+                : "Trocar conta"}
           </Botao>
         </div>
       )}
@@ -158,7 +169,8 @@ function GavetaDoServico({ servico, arvore, escolhidos, pode, aoFechar }) {
   useEffect(() => {
     if (partiu.current) return;
     partiu.current = true;
-    if (conectado) buscar();
+    // Sem árvore não há o que buscar: a gaveta é só a escolha da conta.
+    if (conectado && folha) buscar();
     else verContas();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -214,7 +226,8 @@ function GavetaDoServico({ servico, arvore, escolhidos, pode, aoFechar }) {
       );
     }
     recarregar();
-    buscar();
+    if (folha) buscar();
+    else aoFechar();
   }
 
   async function adicionar() {
@@ -315,7 +328,7 @@ function GavetaDoServico({ servico, arvore, escolhidos, pode, aoFechar }) {
         />
       )}
 
-      {conectado && !contas && (
+      {conectado && !contas && folha && (
         <>
           <div className="toolbar">
             <Botao variante="btn-sm" icone="editar" onClick={verContas}>

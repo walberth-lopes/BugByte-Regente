@@ -377,8 +377,10 @@ def conectores() -> dict[str, Port]:
     perguntar a ferramenta local o que falta, e PROPOR o que gravar. Quem grava
     e o motor.
     """
-    from .connectors import GitHubConector
-    return {"github": GitHubConector()}
+    from .connectors import AgenteConector, GitHubConector
+
+    todos = list(GitHubConector.os_tres()) + list(AgenteConector.os_dois())
+    return {c.nome: c for c in todos}
 
 
 register(Capability.DISCOVERY, "github", _discovery_github)
@@ -438,10 +440,17 @@ class Campo:
     chave: str
     rotulo: str
     ajuda: str = ""
-    tipo: str = "texto"          # texto | numero | booleano | caminho | lista
+    #: texto | numero | booleano | caminho | lista | escolha
+    tipo: str = "texto"
     obrigatorio: bool = False
     exemplo: str = ""
     padrao: object = None
+    #: As opcoes de um campo `escolha`, como `(valor, rotulo)`.
+    #:
+    #: Existe porque texto livre para um nome de modelo e uma armadilha: quem
+    #: digita `sonet` so descobre o erro na primeira execucao, longe daqui, como
+    #: uma falha do agente. Uma lista fechada nao tem como ser digitada errada.
+    opcoes: tuple = ()
     #: Quando verdadeiro, este campo e para quem ja sabe o que esta fazendo, e a
     #: tela o guarda atras de "opcoes avancadas".
     avancado: bool = False
@@ -471,7 +480,8 @@ class Oferta:
                 {"key": c.chave, "label": c.rotulo, "help": c.ajuda,
                  "kind": c.tipo, "required": c.obrigatorio,
                  "example": c.exemplo, "default": c.padrao,
-                 "advanced": c.avancado}
+                 "advanced": c.avancado,
+                 "options": [{"value": v, "label": r} for v, r in c.opcoes]}
                 for c in self.campos],
         }
 
@@ -598,14 +608,34 @@ CATALOGO: dict[str, tuple[Oferta, ...]] = {
             "Usa o Claude Code instalado nesta máquina para executar as tasks.",
             uso="agent.run",
             campos=(
-                Campo("cli", "Caminho do executável", obrigatorio=True,
-                      tipo="caminho", exemplo="claude"),
-                Campo("model", "Modelo", padrao="sonnet"),
-                Campo("max_cost_usd", "Custo máximo por execução (US$)",
-                      tipo="numero", padrao=2.0),
+                Campo("cli", "Onde está o Claude Code", tipo="caminho",
+                      ajuda="Deixe como está para usar o `claude` que já veio "
+                            "no seu PATH — é o normal depois de instalar. "
+                            "Só mude se você o guardou noutro lugar.",
+                      exemplo="claude", padrao="claude"),
+                # Lista fechada, e nao texto livre: quem digita `sonet` so
+                # descobre o erro na primeira execucao, longe daqui, como uma
+                # falha do agente.
+                Campo("model", "Modelo", tipo="escolha", padrao="sonnet",
+                      ajuda="Qual modelo o agente usa em cada execução.",
+                      opcoes=(("sonnet", "Sonnet — equilíbrio entre custo e "
+                                         "capacidade"),
+                              ("opus", "Opus — o mais capaz"),
+                              ("haiku", "Haiku — o mais rápido"))),
+                # O rotulo antigo dizia "custo maximo por execucao (US$)", e
+                # quem paga assinatura nao e cobrado por execucao -- a frase
+                # prometia uma fatura que nao existe. O que o campo faz e parar
+                # uma execucao que nao termina, medindo pelo numero que a
+                # propria ferramenta reporta.
+                Campo("max_cost_usd", "Parar a execução se passar de (US$)",
+                      ajuda="Freio contra execução que não termina. O valor é o "
+                            "que a ferramenta reporta ter gasto; em plano por "
+                            "assinatura ele mede esforço, e não fatura.",
+                      tipo="numero", padrao=2.0, avancado=True),
                 Campo("auth", "Como autenticar",
-                      "“session” usa a sessão já aberta na máquina; “credential” "
-                      "usa uma credencial registrada aqui.",
+                      "“session” usa a sessão já aberta na máquina — é o caso "
+                      "de quem entrou no Claude Code com a própria conta. "
+                      "“credential” usa uma credencial registrada aqui.",
                       padrao="session", avancado=True),
             )),
         Oferta(
@@ -613,11 +643,19 @@ CATALOGO: dict[str, tuple[Oferta, ...]] = {
             "Usa o Codex CLI instalado nesta máquina para executar as tasks.",
             uso="agent.run",
             campos=(
-                Campo("cli", "Caminho do executável", obrigatorio=True,
-                      tipo="caminho", exemplo="codex"),
-                Campo("model", "Modelo"),
-                Campo("max_cost_usd", "Custo máximo por execução (US$)",
-                      tipo="numero", padrao=2.0),
+                Campo("cli", "Onde está o Codex", tipo="caminho",
+                      ajuda="Deixe como está para usar o `codex` do seu PATH.",
+                      exemplo="codex", padrao="codex"),
+                # Sem lista aqui: nao sei, com confianca, quais nomes esta
+                # versao do Codex aceita. Oferecer uma lista errada seria pior
+                # que oferecer um campo livre que diz onde conferir.
+                Campo("model", "Modelo",
+                      ajuda="Vazio usa o padrão do Codex. Os nomes aceitos "
+                            "saem em `codex --help`."),
+                Campo("max_cost_usd", "Parar a execução se passar de (US$)",
+                      ajuda="Freio contra execução que não termina. O valor é o "
+                            "que a ferramenta reporta ter gasto.",
+                      tipo="numero", padrao=2.0, avancado=True),
                 Campo("auth", "Como autenticar", padrao="session",
                       avancado=True),
             )),

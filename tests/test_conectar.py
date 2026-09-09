@@ -32,7 +32,7 @@ import pytest
 import yaml
 
 from regente.adapters.connectors import Conta, Passo, Proposta
-from regente.core.access import Ability, abilities_of
+from regente.core.access import Ability, PrincipalRef, abilities_of
 from regente.core.credential import Status, Use
 from regente.core.model import Workspace
 from regente.core.policy import PolicyEngine
@@ -587,3 +587,288 @@ def _config_falsa(raiz, policies):
 
     return SimpleNamespace(policies=str(policies), organization="acme",
                            client="acme", workspace="main", root=raiz)
+
+# ===========================================================================
+# 8. A CONCESSAO QUE FICOU PARA TRAS
+# ===========================================================================
+#
+# Capacidades sao FOTOGRAFADAS no momento da concessao -- de proposito, porque e
+# o que faz uma concessao significar sempre a mesma coisa. O preco: um papel que
+# ganha capacidade nao alcanca quem ja tinha o papel.
+#
+# O sintoma e cruel, e apareceu na tela de quem usa: descobrir funcionava,
+# listar funcionava, configurar funcionava, e ESCOLHER recusava com "recurso nao
+# encontrado neste escopo" -- uma frase que nao aponta para lugar nenhum.
+
+def _com_acesso(tmp_path):
+    from regente.adapters.secrets import ScopedSecrets
+
+    store = SqliteStore(tmp_path / "acesso.db")
+    store.migrate()
+    store.save_client("cli_1", "acme", "acme")
+    store.save_workspace(Workspace(id="wks_A", client_id="cli_1", name="main",
+                                   root=str(tmp_path)))
+    return store, AccessService(
+        store=store, policy=POLICY, organization="acme", client="acme",
+        workspace_name="main", clock=lambda: T0)
+
+
+def _envelhecer(store, tirando: str) -> None:
+    """Tira uma capacidade da foto, como se a concessao fosse mais antiga."""
+    import json as _json
+
+    for g in store.grants("wks_A"):
+        caps = sorted(a.value for a in g.abilities)
+        if tirando in caps:
+            caps.remove(tirando)
+            store._con.execute(
+                "UPDATE access_grants SET abilities=? WHERE id=?",
+                (_json.dumps(caps), g.id))
+    store._con.commit()
+
+
+def test_a_grant_made_before_a_role_grew_is_reported_as_behind(tmp_path):
+    store, acesso = _com_acesso(tmp_path)
+    dono = _dono()
+    alvo = PrincipalRef(provider="os", subject="os:2")
+    assert acesso.grant(dono, "wks_A", alvo, "owner").accepted
+
+    assert acesso.defasadas("wks_A") == []
+    _envelhecer(store, "workspace.resource.select")
+
+    atrasadas = acesso.defasadas("wks_A")
+    assert len(atrasadas) == 1
+    assert atrasadas[0].role == "owner"
+    assert {a.value for a in atrasadas[0].faltando} == {"workspace.resource.select"}
+
+
+def test_bringing_a_grant_up_to_date_applies_the_role_that_was_granted(tmp_path):
+    """Nao amplia alem do papel. A decisao "esta pessoa e owner" nao muda.
+
+    O que muda e o que "owner" significa hoje -- e por isso por em dia reaplica
+    o PAPEL, e nao um conjunto escolhido na hora.
+    """
+    store, acesso = _com_acesso(tmp_path)
+    dono = _dono()
+    alvo = PrincipalRef(provider="os", subject="os:2")
+    acesso.grant(dono, "wks_A", alvo, "operator")
+    _envelhecer(store, "workspace.engine.control")
+
+    saida = acesso.por_em_dia(dono, "wks_A", alvo)
+    assert saida.accepted, saida.reason
+
+    viva = [g for g in store.grants("wks_A") if g.principal.key == alvo.key]
+    assert len(viva) == 1, "por em dia deixou duas concessoes vivas"
+    assert viva[0].abilities == abilities_of("operator")
+    assert viva[0].abilities != abilities_of("owner"), (
+        "por em dia ampliou para alem do papel concedido")
+
+
+def test_bringing_up_to_date_leaves_the_old_grant_in_the_trail(tmp_path):
+    """Revoga e reconcede, e nao edita a linha.
+
+    Uma concessao e um fato datado. Reescrever as capacidades dela apagaria o
+    que valia antes, e a trilha precisa poder responder "o que esta pessoa podia
+    em marco?".
+    """
+    store, acesso = _com_acesso(tmp_path)
+    dono = _dono()
+    alvo = PrincipalRef(provider="os", subject="os:2")
+    acesso.grant(dono, "wks_A", alvo, "owner")
+    _envelhecer(store, "workspace.resource.select")
+    acesso.por_em_dia(dono, "wks_A", alvo)
+
+    todas = store.grants("wks_A", include_revoked=True)
+    revogadas = [g for g in todas if not g.active
+                 and g.principal.key == alvo.key]
+    assert revogadas, "a concessao antiga sumiu em vez de ficar revogada"
+
+
+def test_a_behind_grant_explains_itself_instead_of_saying_not_found(tmp_path):
+    """A frase que a pessoa realmente viu, e por que ela era inutil.
+
+    "recurso nao encontrado neste escopo" nao aponta para lugar nenhum: quem a
+    le procura o problema na credencial, no provedor e na rede -- em tudo menos
+    onde ele esta. Com concessao gravada e defasada, a recusa diz qual papel,
+    que a foto e antiga, e o comando que resolve.
+    """
+    from regente.core.resource import Kind, Resource, ResourceRef
+    from regente.engine.resources import ResourceService
+
+    store, acesso = _com_acesso(tmp_path)
+    alvo = PrincipalRef(provider="os", subject="os:2")
+    assert acesso.grant(_dono(), "wks_A", alvo, "owner").accepted
+    _envelhecer(store, "workspace.resource.select")
+
+    # O principal, montado como o motor o monta: a partir do que foi gravado.
+    concedidas = acesso.abilities_for(alvo)["wks_A"]
+    pessoa = Principal(subject=alvo.subject, display=alvo.subject,
+                       method="teste", provider=alvo.provider,
+                       authenticated_at=T0, workspaces=frozenset({"wks_A"}),
+                       abilities={"wks_A": concedidas})
+
+    servico = ResourceService(
+        store=store, policy=POLICY, organization="acme", client="acme",
+        workspace_name="main", clock=lambda: T0,
+        discovery_for=lambda _p, _a=None: None)
+    saida = servico.select(pessoa, "wks_A", [Resource(
+        ref=ResourceRef("fake", "repository", "org/a"), name="org/a",
+        role=Kind.CODE)])
+
+    assert not saida.accepted
+    assert saida.refusal is Refusal.FORBIDDEN
+    assert "owner" in saida.reason
+    assert "regente atualizar" in saida.reason
+
+
+def test_a_grant_without_a_recorded_role_is_never_guessed(tmp_path):
+    """Sem papel gravado, por em dia RECUSA -- e nao adivinha.
+
+    Escrever autoridade no banco com base num palpite sobre um conjunto de
+    capacidades e pior do que admitir que nao se sabe.
+    """
+    store, acesso = _com_acesso(tmp_path)
+    dono = _dono()
+    alvo = PrincipalRef(provider="os", subject="os:2")
+    acesso.grant(dono, "wks_A", alvo, "owner")
+    store._con.execute("UPDATE access_grants SET role='' WHERE principal_key=?",
+                       (alvo.key,))
+    store._con.commit()
+
+    saida = acesso.por_em_dia(dono, "wks_A", alvo)
+    assert not saida.accepted
+    assert "papel" in saida.reason
+
+
+def test_bringing_up_to_date_needs_the_authority_to_grant(tmp_path):
+    store, acesso = _com_acesso(tmp_path)
+    alvo = PrincipalRef(provider="os", subject="os:2")
+    acesso.grant(_dono(), "wks_A", alvo, "owner")
+    _envelhecer(store, "workspace.resource.select")
+
+    saida = acesso.por_em_dia(_quem(Ability.SETTINGS_WRITE), "wks_A", alvo)
+    assert not saida.accepted
+
+
+# ===========================================================================
+# 9. UM SERVICO, OS PAPEIS QUE ELE PREENCHE
+# ===========================================================================
+
+def test_github_fills_every_role_it_actually_fills():
+    """Publicar mudancas e ler checks tambem sao GitHub.
+
+    Ter conector so no papel de repositorio deixava dois cartoes pedindo
+    "escolher servico" e "registrar credencial" ao lado de um que conectava num
+    clique -- a mesma conta, a mesma ferramenta, tres experiencias.
+    """
+    from regente.adapters.connectors import GitHubConector
+
+    por_papel = {c.papel: c for c in GitHubConector.os_tres()}
+    assert set(por_papel) == {"repository", "repository_write", "cicd"}
+
+    # O adapter e a capacidade mudam por papel: ler nao autoriza empurrar.
+    caps = {p: set(c.proposta("acme").capacidades) for p, c in por_papel.items()}
+    assert caps["repository"] == {"repo.discover", "repo.read"}
+    assert caps["repository_write"] == {"repo.push", "repo.pr"}
+    assert caps["cicd"] == {"ci.read"}
+    assert not caps["repository"] & caps["repository_write"], (
+        "ler e empurrar viraram a mesma credencial")
+
+    adapters = {c.proposta("acme").provider["name"] for c in por_papel.values()}
+    assert len(adapters) == 3, "dois papeis apontam para o mesmo adapter"
+
+
+def test_every_connector_names_an_adapter_that_exists():
+    """Um conector que grave um adapter inexistente quebra no proximo tick.
+
+    E quebra longe: a configuracao e aceita, e o erro aparece quando o motor
+    tenta montar o provider -- sem nada ligando uma coisa a outra.
+    """
+    from regente.adapters.registry import conectores, has
+    from regente.ports import Capability
+
+    POR_PAPEL = {
+        "repository": Capability.REPOSITORY,
+        "repository_write": Capability.REPOSITORY,
+        "cicd": Capability.CICD,
+        "tasks": Capability.TASKS,
+        "runner": Capability.RUNNER,
+    }
+    for nome, c in conectores().items():
+        cap = POR_PAPEL.get(c.papel)
+        assert cap is not None, f"{nome} preenche um papel desconhecido: {c.papel}"
+        adapter = c.proposta("x").provider["name"]
+        assert has(cap, adapter), (
+            f"{nome} gravaria o adapter '{adapter}', que nao existe para {cap}")
+
+
+# ===========================================================================
+# 10. O AGENTE
+# ===========================================================================
+
+def test_connecting_an_agent_asks_for_no_credential():
+    """Quem entrou no Claude Code com a propria conta ja esta autenticado.
+
+    Pedir uma credencial aqui seria pedir um token que nao existe -- e foi
+    exatamente a duvida de quem usa: "como conecto o agente por assinatura?".
+    """
+    from regente.adapters.connectors import AgenteConector
+
+    for c in AgenteConector.os_dois():
+        p = c.proposta("claude")
+        assert not p.precisa_credencial
+        assert p.capacidades == ()
+
+
+def test_an_agent_that_is_not_installed_says_how_to_install_it():
+    """"Caminho do executavel" era uma pergunta que o computador sabe responder."""
+    from regente.adapters.connectors import AgenteConector
+
+    c = AgenteConector(cli="programa-que-nao-existe-aqui", nome="claude-code",
+                       name="claude-code", titulo="Claude Code")
+    passo = c.estado()
+    assert passo.codigo == "instalar"
+    assert passo.comando, "disse para instalar e nao disse como"
+    assert c.contas() == [], "ofereceu conectar algo que nao esta instalado"
+
+
+def test_the_agent_model_is_a_closed_list_not_free_text():
+    """Um nome digitado errado so falha na primeira execucao, longe daqui."""
+    from regente.adapters.registry import catalogo
+
+    for papel in catalogo()["roles"]:
+        if papel["role"] != "runner":
+            continue
+        for oferta in papel["options"]:
+            if oferta["name"] != "claude-code":
+                continue
+            modelo = next(c for c in oferta["fields"] if c["key"] == "model")
+            assert modelo["kind"] == "escolha"
+            assert len(modelo["options"]) >= 2
+            assert modelo["default"] in [o["value"] for o in modelo["options"]], (
+                "o padrao nao esta entre as opcoes oferecidas")
+            return
+    raise AssertionError("nao achei a oferta claude-code no catalogo")
+
+
+def test_the_cost_field_does_not_promise_a_bill():
+    """Quem paga assinatura nao e cobrado por execucao.
+
+    O rotulo antigo -- "Custo maximo por execucao (US$)" -- prometia uma fatura
+    que nao existe nesse caso, e nao dizia o que o numero faz.
+    """
+    from regente.adapters.registry import catalogo
+
+    achou = False
+    for papel in catalogo()["roles"]:
+        for oferta in papel["options"]:
+            for campo in oferta["fields"]:
+                if campo["key"] != "max_cost_usd":
+                    continue
+                achou = True
+                assert "Custo máximo por execução" not in campo["label"], (
+                    "o rótulo continua prometendo uma fatura por execução")
+                assert campo["help"], "o freio não explica o que ele faz"
+                assert campo["advanced"], (
+                    "um freio de segurança não é passo de instalação")
+    assert achou, "nao achei o campo de custo em oferta nenhuma"

@@ -44,6 +44,16 @@ export function Campo({ campo, valor, aoMudar }) {
         </label>
       ) : campo.kind === "numero" ? (
         <input {...comum} type="number" inputMode="decimal" />
+      ) : campo.kind === "escolha" ? (
+        /* Lista fechada. Um nome de modelo digitado à mão só falha na primeira
+           execução — longe de quem digitou, e parecendo defeito do agente. */
+        <select {...comum} value={valor ?? campo.default ?? ""}>
+          {(campo.options || []).map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
       ) : campo.kind === "lista" ? (
         // Uma lista é digitada como texto separado por espaços, e a tela monta
         // o array. Pedir `["python", "app.py"]` a quem instalou o Regente hoje

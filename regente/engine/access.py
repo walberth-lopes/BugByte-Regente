@@ -149,7 +149,7 @@ class AccessService:
                        actor=actor.label, target=target.key)
 
         return self._open(actor, workspace_id, target, abilities, note,
-                          kind=GRANTED)
+                          kind=GRANTED, role=role)
 
     def bootstrap(self, actor: Principal, workspace_id: str,
                   note: str = "") -> AccessOutcome:
@@ -187,11 +187,61 @@ class AccessService:
                        actor=actor.label)
 
         return self._open(actor, workspace_id, actor.ref,
-                          abilities_of("owner"), note, kind=BOOTSTRAPPED)
+                          abilities_of("owner"), note, kind=BOOTSTRAPPED,
+                          role="owner")
+
+    def defasadas(self, workspace_id: str) -> list:
+        """As concessoes vivas cujo papel hoje vale mais do que a foto delas.
+
+        Leitura sem ator: e diagnostico de configuracao, como contar regras de
+        policy. Quem PODE por em dia continua sendo conferido na hora de gravar.
+        """
+        return [g for g in self.store.grants(workspace_id) if g.defasada]
+
+    def por_em_dia(self, actor: Principal, workspace_id: str,
+                   alvo: PrincipalRef) -> AccessOutcome:
+        """Reconcede o MESMO papel, com o que ele significa hoje.
+
+        Revoga e concede de novo, e nao edita a linha: uma concessao e um fato
+        datado, e reescrever as capacidades dela apagaria o que valia antes. A
+        trilha precisa poder responder "o que esta pessoa podia em marco?".
+
+        Nao inventa papel. Uma concessao sem papel conhecido nao e posta em dia
+        por adivinhacao -- ela aparece no diagnostico e alguem decide.
+        """
+        guard = self._may(actor, workspace_id, Ability.GRANT)
+        if guard is not None:
+            return guard
+
+        viva = [g for g in self.store.grants(workspace_id)
+                if g.principal.key == alvo.key]
+        if not viva:
+            return _no(Refusal.NOT_FOUND, "esta pessoa nao tem concessao viva",
+                       actor=actor.label, target=alvo.key)
+        atual = viva[0]
+        if not atual.role:
+            return _no(Refusal.INVALID,
+                       "esta concessao nao registrou o papel; revogue e conceda "
+                       "de novo escolhendo o papel",
+                       actor=actor.label, target=alvo.key)
+        if not atual.defasada:
+            return _no(Refusal.CONFLICT, "esta concessao ja esta em dia",
+                       actor=actor.label, target=alvo.key)
+
+        ganha = ", ".join(sorted(a.value for a in atual.faltando))
+        if not self.store.revoke_grant(workspace_id, alvo.key,
+                                       revoked_by=actor.ref.key,
+                                       when=self.clock()):
+            return _no(Refusal.CONFLICT, "nao havia concessao viva para trocar",
+                       actor=actor.label, target=alvo.key)
+        return self._open(
+            actor, workspace_id, alvo, abilities_of(atual.role),
+            note=f"papel '{atual.role}' posto em dia; ganhou {ganha}",
+            kind=GRANTED, role=atual.role)
 
     def _open(self, actor: Principal, workspace_id: str, target: PrincipalRef,
               abilities: frozenset[Ability], note: str,
-              kind: str) -> AccessOutcome:
+              kind: str, role: str = "") -> AccessOutcome:
         workspace = self.store.workspace(workspace_id)
         if workspace is None:
             return _no(Refusal.NOT_FOUND, "workspace nao encontrado")
@@ -199,6 +249,8 @@ class AccessService:
         grant = AccessGrant(
             id=ids.new_id(ids.GRANT), client_id=workspace.client_id,
             workspace_id=workspace_id, principal=target, abilities=abilities,
+            # O PAPEL, ao lado da foto. Ver `AccessGrant.role`.
+            role=str(role).strip().lower(),
             granted_by=actor.ref.key, granted_at=self.clock(), note=note)
 
         if not self.store.open_grant(grant):

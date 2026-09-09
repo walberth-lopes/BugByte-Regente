@@ -559,29 +559,71 @@ def cmd_atualizar(args) -> int:
     """
     cfg = _load_config(args)
     faltando = _regras_faltando(cfg)
-    if not faltando:
-        print(f"{cfg.policies} ja conhece tudo o que esta versao sabe fazer")
+    motor = container.build(cfg)
+    try:
+        acesso = motor.access()
+        quem = motor.terminal_principal()
+        ws = motor.workspace.id
+        defasadas = acesso.defasadas(ws)
+        sem_papel = [g for g in motor.store.grants(ws) if not g.role]
+
+        if not faltando and not defasadas and not sem_papel:
+            print("este workspace ja conhece tudo o que esta versao sabe fazer")
+            return 0
+
+        if faltando:
+            print(f"{cfg.policies} nao conhece {len(faltando)} regra(s) "
+                  f"desta versao:")
+            print()
+            for _, texto in faltando:
+                print(texto)
+                print()
+
+        if defasadas:
+            print(f"{len(defasadas)} concessao(oes) foram feitas antes de o "
+                  f"papel ganhar capacidade:")
+            for g in defasadas:
+                ganha = ", ".join(sorted(a.value for a in g.faltando))
+                print(f"  {g.principal.key}  ({g.role})")
+                print(f"    ganharia: {ganha}")
+            print()
+
+        if sem_papel:
+            # Sem papel registrado nao ha o que reconceder: a decisao original
+            # nao ficou gravada, e adivinha-la seria escrever autoridade por
+            # palpite. Quem decide e uma pessoa.
+            print(f"{len(sem_papel)} concessao(oes) nao registraram o papel e "
+                  f"NAO serao mexidas:")
+            for g in sem_papel:
+                print(f"  {g.principal.key} -- revogue e conceda de novo "
+                      f"escolhendo o papel")
+            print()
+
+        if not args.aplicar:
+            print("para aplicar: regente atualizar --aplicar")
+            return 0
+
+        if faltando:
+            from pathlib import Path
+
+            caminho = Path(cfg.policies)
+            atual = caminho.read_text(encoding="utf-8").rstrip()
+            bloco = "\n\n".join(texto for _, texto in faltando)
+            caminho.write_text(f"{atual}\n\n{bloco}\n", encoding="utf-8")
+            print(f"acrescentadas {len(faltando)} regra(s) a {cfg.policies}")
+
+        for g in defasadas:
+            saida = acesso.por_em_dia(quem, ws, g.principal)
+            if saida.accepted:
+                print(f"concessao de {g.principal.key} posta em dia "
+                      f"({g.role})")
+            else:
+                print(f"{g.principal.key}: {saida.reason}", file=sys.stderr)
+
+        print("confira com: regente doctor")
         return 0
-
-    print(f"{cfg.policies} nao conhece {len(faltando)} regra(s) desta versao:")
-    print()
-    for nome, texto in faltando:
-        print(texto)
-        print()
-
-    if not args.aplicar:
-        print(f"para acrescentar: regente atualizar --aplicar")
-        return 0
-
-    from pathlib import Path
-
-    caminho = Path(cfg.policies)
-    atual = caminho.read_text(encoding="utf-8").rstrip()
-    bloco = "\n\n".join(texto for _, texto in faltando)
-    caminho.write_text(f"{atual}\n\n{bloco}\n", encoding="utf-8")
-    print(f"acrescentadas {len(faltando)} regra(s) a {cfg.policies}")
-    print("confira com: regente doctor")
-    return 0
+    finally:
+        motor.close()
 
 
 def cmd_conectar(args) -> int:
