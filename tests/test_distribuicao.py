@@ -305,6 +305,7 @@ def test_the_version_is_not_one_already_published():
         "0.1.1",               # a primeira no indice real
         "0.2.0",               # integracoes autodescobriveis
         "0.3.0",               # conectar em um clique
+        "0.3.1",               # a fusao das telas
     }
     versao = _pyproject()["project"]["version"]
     assert versao not in ja_usadas, (
